@@ -45,6 +45,11 @@ enum L10n {
     }
     static var playSound: String { text("Play sound on paste", "粘贴时播放声音") }
     static var launchAtLogin: String { text("Launch at login", "登录时启动") }
+    static var showMenuBarIcon: String { text("Show menu bar icon", "显示菜单栏图标") }
+    static var showMenuBarIconDescription: String {
+        text("When hidden, open Pesty again from Applications to show Settings.",
+             "隐藏后，从“应用程序”中再次打开 Pesty 即可显示设置。")
+    }
     static var barHeight: String { text("Bar height", "面板高度") }
     static var px: String { text("px", "像素") }
     static var selectClip: String {
@@ -162,4 +167,6 @@ enum L10n {
 
 extension Notification.Name {
     static let pestyLanguageDidChange = Notification.Name("PestyLanguageDidChange")
+    static let pestyMenuBarIconVisibilityDidChange =
+        Notification.Name("PestyMenuBarIconVisibilityDidChange")
 }

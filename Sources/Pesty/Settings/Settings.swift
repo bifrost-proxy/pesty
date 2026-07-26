@@ -15,6 +15,7 @@ final class Settings {
         static let hotkeyKeyCode = "hotkeyKeyCode"
         static let hotkeyModifiers = "hotkeyModifiers"
         static let launchAtLogin = "launchAtLogin"
+        static let showMenuBarIcon = "showMenuBarIcon"
         static let pasteDirectly = "pasteDirectly"
         static let playSound = "playSound"
         static let ignoreConcealed = "ignoreConcealed"
@@ -46,6 +47,14 @@ final class Settings {
     var launchAtLogin: Bool {
         didSet { guard isLoaded else { return }
             d.set(launchAtLogin, forKey: Keys.launchAtLogin); LaunchAtLogin.set(enabled: launchAtLogin) }
+    }
+
+    var showMenuBarIcon: Bool {
+        didSet {
+            guard isLoaded else { return }
+            d.set(showMenuBarIcon, forKey: Keys.showMenuBarIcon)
+            NotificationCenter.default.post(name: .pestyMenuBarIconVisibilityDidChange, object: nil)
+        }
     }
 
     var pasteDirectly: Bool {
@@ -91,6 +100,7 @@ final class Settings {
             Keys.hotkeyKeyCode: kVK_ANSI_V,
             Keys.hotkeyModifiers: cmdKey | shiftKey,
             Keys.launchAtLogin: false,
+            Keys.showMenuBarIcon: true,
             Keys.pasteDirectly: true,
             Keys.playSound: false,
             Keys.ignoreConcealed: true,
@@ -103,6 +113,7 @@ final class Settings {
         hotkeyKeyCode = d.integer(forKey: Keys.hotkeyKeyCode)
         hotkeyModifiers = d.integer(forKey: Keys.hotkeyModifiers)
         launchAtLogin = d.bool(forKey: Keys.launchAtLogin)
+        showMenuBarIcon = d.bool(forKey: Keys.showMenuBarIcon)
         pasteDirectly = d.bool(forKey: Keys.pasteDirectly)
         playSound = d.bool(forKey: Keys.playSound)
         ignoreConcealed = d.bool(forKey: Keys.ignoreConcealed)
