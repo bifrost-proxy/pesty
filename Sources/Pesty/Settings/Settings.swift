@@ -21,6 +21,7 @@ final class Settings {
         static let barHeight = "barHeight"
         static let onboarded = "onboarded"
         static let iCloudSync = "iCloudSync"
+        static let language = "language"
     }
 
     var historyLimit: Int {
@@ -76,6 +77,14 @@ final class Settings {
         didSet { guard isLoaded else { return }; d.set(iCloudSync, forKey: Keys.iCloudSync) }
     }
 
+    var language: AppLanguage {
+        didSet {
+            guard isLoaded else { return }
+            d.set(language.rawValue, forKey: Keys.language)
+            NotificationCenter.default.post(name: .pestyLanguageDidChange, object: nil)
+        }
+    }
+
     private init() {
         d.register(defaults: [
             Keys.historyLimit: 500,
@@ -87,7 +96,8 @@ final class Settings {
             Keys.ignoreConcealed: true,
             Keys.barHeight: 430.0,
             Keys.onboarded: false,
-            Keys.iCloudSync: false
+            Keys.iCloudSync: false,
+            Keys.language: AppLanguage.systemDefault.rawValue
         ])
         historyLimit = d.integer(forKey: Keys.historyLimit)
         hotkeyKeyCode = d.integer(forKey: Keys.hotkeyKeyCode)
@@ -99,6 +109,7 @@ final class Settings {
         barHeight = d.double(forKey: Keys.barHeight)
         onboarded = d.bool(forKey: Keys.onboarded)
         iCloudSync = d.bool(forKey: Keys.iCloudSync)
+        language = AppLanguage(rawValue: d.string(forKey: Keys.language) ?? "") ?? .systemDefault
         isLoaded = true
     }
 

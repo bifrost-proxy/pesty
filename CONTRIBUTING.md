@@ -10,7 +10,7 @@ Thanks for your interest. Pesty is a small, native macOS app with no third-party
 ## Build and run
 
 ```bash
-git clone https://github.com/momenbasel/pesty.git
+git clone https://github.com/bifrost-proxy/pesty.git
 cd pesty
 swift build          # compile
 swift run            # run in place

@@ -9,14 +9,7 @@ enum ClipType: String, Codable, CaseIterable {
     case color
 
     var label: String {
-        switch self {
-        case .text:     return "Text"
-        case .richText: return "Rich Text"
-        case .link:     return "Link"
-        case .image:    return "Image"
-        case .file:     return "File"
-        case .color:    return "Color"
-        }
+        L10n.clipType(self)
     }
 
     var accent: Color {

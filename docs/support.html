@@ -5,23 +5,23 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Pesty — Support &amp; Help</title>
 <meta name="description" content="Support for Pesty, the free clipboard manager for macOS. Get help, troubleshoot pasting, permissions, iCloud sync, and history, or contact the developer." />
-<meta name="author" content="Moamen Basel" />
+<meta name="author" content="Bifrost Proxy" />
 <meta name="theme-color" content="#5B6CFF" />
-<link rel="canonical" href="https://www.moamenbasel.com/pesty/support.html" />
+<link rel="canonical" href="https://bifrost-proxy.github.io/pesty/support.html" />
 <link rel="icon" type="image/png" href="assets/icon.png" />
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="Pesty" />
 <meta property="og:title" content="Pesty — Support &amp; Help" />
 <meta property="og:description" content="Get help with Pesty for macOS: pasting, permissions, iCloud sync, history, and how to contact support." />
-<meta property="og:url" content="https://www.moamenbasel.com/pesty/support.html" />
+<meta property="og:url" content="https://bifrost-proxy.github.io/pesty/support.html" />
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
   "@type": "FAQPage",
   "mainEntity": [
-    {"@type":"Question","name":"How do I paste a clip?","acceptedAnswer":{"@type":"Answer","text":"Open Pesty with your shortcut (default Shift-Command-V), use the arrow keys to pick a clip, then press Return. On the Mac App Store version this copies the clip and returns focus to your app, so press Command-V to paste. The open-source build can also paste directly for you if you enable Accessibility."}},
+    {"@type":"Question","name":"How do I paste a clip?","acceptedAnswer":{"@type":"Answer","text":"Open Pesty with your shortcut (default Shift-Command-V), use the arrow keys to pick a clip, then press Return. Enable Accessibility permission if you want Pesty to paste directly."}},
     {"@type":"Question","name":"Where is my clipboard history stored?","acceptedAnswer":{"@type":"Answer","text":"Entirely on your Mac, inside the app's private container. Pesty has no servers and makes no network calls. Nothing is uploaded unless you turn on optional iCloud Drive sync."}},
-    {"@type":"Question","name":"How do I contact Pesty support?","acceptedAnswer":{"@type":"Answer","text":"Email ceo@greycorelabs.com or open an issue at github.com/momenbasel/pesty/issues. Most questions are answered within two business days."}}
+    {"@type":"Question","name":"How do I contact Pesty support?","acceptedAnswer":{"@type":"Answer","text":"Open an issue at github.com/bifrost-proxy/pesty/issues."}}
   ]
 }
 </script>
@@ -63,13 +63,11 @@
 
 <section>
   <h2>Get help</h2>
-  <p>Have a question, hit a bug, or want to request a feature? Reach out any of these ways and we will get back to you, usually within two business days.</p>
+  <p>Have a question, hit a bug, or want to request a feature? Open a GitHub issue.</p>
   <div class="contact">
-    <a class="btn" href="mailto:ceo@greycorelabs.com?subject=Pesty%20Support">Email support</a>
-    <a class="btn alt" href="https://github.com/momenbasel/pesty/issues">Open a GitHub issue</a>
-    <a class="btn alt" href="https://github.com/momenbasel/pesty/issues/new">Report a bug</a>
+    <a class="btn" href="https://github.com/bifrost-proxy/pesty/issues">Open a GitHub issue</a>
+    <a class="btn alt" href="https://github.com/bifrost-proxy/pesty/issues/new">Report a bug</a>
   </div>
-  <p style="margin-top:14px;color:var(--muted);font-size:15px;">Email: <a href="mailto:ceo@greycorelabs.com">ceo@greycorelabs.com</a></p>
 </section>
 
 <section>
@@ -78,10 +76,7 @@
   <details open>
     <summary>How do I paste a clip?</summary>
     <p>Open Pesty with your keyboard shortcut (default <kbd>⇧⌘V</kbd>). Use the arrow keys to pick a clip and press <kbd>Return</kbd>, or press <kbd>⌘1</kbd>–<kbd>⌘9</kbd> to grab one of the first nine clips.</p>
-    <ul>
-      <li><strong>Mac App Store version:</strong> selecting a clip copies it and returns focus to the app you were using — then press <kbd>⌘V</kbd> to paste. This version is fully sandboxed and needs no special permissions.</li>
-      <li><strong>Open-source / direct-download version:</strong> it can paste directly into the active app for you. Turn on <em>Paste directly into the active app</em> in Settings and grant Accessibility when prompted.</li>
-    </ul>
+    <p>Pesty can paste directly into the active app. Turn on <em>Paste directly into the active app</em> in Settings and grant Accessibility when prompted.</p>
   </details>
 
   <details>
@@ -116,7 +111,6 @@
   <details>
     <summary>How do I uninstall Pesty?</summary>
     <ul>
-      <li><strong>Mac App Store:</strong> delete Pesty from Launchpad or the Applications folder.</li>
       <li><strong>Homebrew:</strong> run <code>brew uninstall --cask pesty</code>.</li>
       <li><strong>DMG install:</strong> drag Pesty from Applications to the Trash.</li>
     </ul>
@@ -131,7 +125,7 @@
 <footer>
   Pesty is free and open source under the MIT License ·
   <a href="index.html">Home</a> · <a href="privacy.html">Privacy</a> ·
-  <a href="https://github.com/momenbasel/pesty">GitHub</a><br />
+  <a href="https://github.com/bifrost-proxy/pesty">GitHub</a><br />
   Not affiliated with Paste (Wonder Warp / FIPLAB).
 </footer>
 </div>

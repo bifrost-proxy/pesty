@@ -2,11 +2,12 @@ import SwiftUI
 
 struct PinboardTabs: View {
     @Bindable private var store = ClipboardStore.shared
+    @Bindable private var settings = Settings.shared
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                pill(title: "Clipboard",
+                pill(title: L10n.clipboard,
                      dot: nil,
                      icon: "clock",
                      selected: store.source == .history) {
@@ -20,8 +21,8 @@ struct PinboardTabs: View {
                         store.source = .pinboard(board.id); store.selectFirst()
                     }
                     .contextMenu {
-                        Button("Rename…") { rename(board) }
-                        Button("Delete Pinboard", role: .destructive) {
+                        Button(L10n.rename) { rename(board) }
+                        Button(L10n.deletePinboard, role: .destructive) {
                             store.deletePinboard(board.id)
                         }
                     }
@@ -35,9 +36,10 @@ struct PinboardTabs: View {
                         .background(Theme.fieldBG, in: Circle())
                 }
                 .buttonStyle(.plain)
-                .help("New Pinboard")
+                .help(L10n.newPinboard)
             }
         }
+        .id(settings.language)
     }
 
     private func pill(title: String, dot: Color?, icon: String? = nil,
@@ -66,13 +68,13 @@ struct PinboardTabs: View {
     }
 
     private func addPinboard() {
-        let board = store.addPinboard(name: "New Pinboard")
+        let board = store.addPinboard(name: L10n.newPinboard)
         store.source = .pinboard(board.id)
     }
 
     private func rename(_ board: Pinboard) {
-        if let name = TextPrompt.run(title: "Rename Pinboard",
-                                     message: "Enter a new name",
+        if let name = TextPrompt.run(title: L10n.rename,
+                                     message: L10n.enterNewName,
                                      defaultValue: board.name) {
             store.renamePinboard(board.id, to: name)
         }
@@ -87,8 +89,8 @@ enum TextPrompt {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: L10n.ok)
+        alert.addButton(withTitle: L10n.cancel)
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
         field.stringValue = defaultValue
         alert.accessoryView = field

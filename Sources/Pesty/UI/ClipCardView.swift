@@ -7,6 +7,7 @@ struct ClipCardView: View {
 
     @State private var hovering = false
     private var store: ClipboardStore { ClipboardStore.shared }
+    @Bindable private var settings = Settings.shared
     private var headerColor: Color { SourceColor.color(for: item.sourceBundleID) }
 
     var body: some View {
@@ -31,6 +32,7 @@ struct ClipCardView: View {
         .onTapGesture(count: 2) { AppController.shared.pasteItem(item) }
         .onTapGesture { store.selectedID = item.id }
         .contextMenu { menu }
+        .id(settings.language)
     }
 
     private var header: some View {
@@ -158,44 +160,44 @@ struct ClipCardView: View {
     private var metaLeft: String {
         switch item.type {
         case .text, .richText:
-            return "\(item.charCount) characters"
+            return L10n.characterCount(item.charCount)
         case .link:
             return (item.text ?? "").replacingOccurrences(of: "https://", with: "")
                                     .replacingOccurrences(of: "http://", with: "")
         case .file:
-            return "\(item.fileURLs.count) file\(item.fileURLs.count == 1 ? "" : "s")"
+            return L10n.fileCount(item.fileURLs.count)
         case .image:
-            return "Image"
+            return L10n.image
         case .color:
-            return item.colorHex ?? "Color"
+            return item.colorHex ?? L10n.color
         }
     }
 
     @ViewBuilder
     private var menu: some View {
-        Button("Paste") { AppController.shared.pasteItem(item) }
-        Button("Copy") { AppController.shared.copyItem(item) }
+        Button(L10n.paste) { AppController.shared.pasteItem(item) }
+        Button(L10n.copy) { AppController.shared.copyItem(item) }
         Divider()
         if !store.pinboards.isEmpty {
-            Menu("Save to Pinboard") {
+            Menu(L10n.saveToPinboard) {
                 ForEach(store.pinboards) { b in
                     Button(b.name) { store.saveToPinboard(item, boardID: b.id) }
                 }
             }
         }
-        Button("Save to New Pinboard…") {
-            if let name = TextPrompt.run(title: "New Pinboard", message: "Name") {
+        Button(L10n.saveToNewPinboard) {
+            if let name = TextPrompt.run(title: L10n.newPinboard, message: L10n.name) {
                 let b = store.addPinboard(name: name)
                 store.saveToPinboard(item, boardID: b.id)
             }
         }
-        Button("Edit Title…") {
-            if let t = TextPrompt.run(title: "Edit Title", message: "Card title",
+        Button(L10n.editTitle) {
+            if let t = TextPrompt.run(title: L10n.text("Edit Title", "编辑标题"), message: L10n.cardTitle,
                                       defaultValue: item.customTitle ?? "") {
                 store.setTitle(t, for: item)
             }
         }
         Divider()
-        Button("Delete", role: .destructive) { store.delete(item) }
+        Button(L10n.delete, role: .destructive) { store.delete(item) }
     }
 }

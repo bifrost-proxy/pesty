@@ -13,6 +13,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
     private var keyMonitor: Any?
+    private var languageObserver: NSObjectProtocol?
 
     private(set) var previousApp: NSRunningApplication?
     private(set) var lastActiveApp: NSRunningApplication?
@@ -32,6 +33,14 @@ final class AppController: NSObject, NSApplicationDelegate {
         HotKeyCenter.shared.start()
 
         setupStatusItem()
+        languageObserver = NotificationCenter.default.addObserver(
+            forName: .pestyLanguageDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.rebuildStatusItemMenu()
+                self?.settingsWindow?.title = L10n.settingsWindowTitle
+            }
+        }
 
         if Settings.shared.launchAtLogin { LaunchAtLogin.set(enabled: true) }
 
@@ -68,18 +77,23 @@ final class AppController: NSObject, NSApplicationDelegate {
             button.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "Pesty")
             button.image?.isTemplate = true
         }
+        statusItem = item
+        rebuildStatusItemMenu()
+    }
+
+    private func rebuildStatusItemMenu() {
+        guard let item = statusItem else { return }
         let menu = NSMenu()
-        menu.addItem(withTitle: "Open Pesty   \(Settings.shared.hotkeyDisplay)",
+        menu.addItem(withTitle: "\(L10n.openPesty)   \(Settings.shared.hotkeyDisplay)",
                      action: #selector(menuOpen), keyEquivalent: "").target = self
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Settings…", action: #selector(menuSettings), keyEquivalent: ",").target = self
-        menu.addItem(withTitle: "Clear History", action: #selector(menuClear), keyEquivalent: "").target = self
+        menu.addItem(withTitle: L10n.settings, action: #selector(menuSettings), keyEquivalent: ",").target = self
+        menu.addItem(withTitle: L10n.clearHistory, action: #selector(menuClear), keyEquivalent: "").target = self
         menu.addItem(.separator())
-        let about = menu.addItem(withTitle: "About Pesty", action: #selector(menuAbout), keyEquivalent: "")
+        let about = menu.addItem(withTitle: L10n.aboutPesty, action: #selector(menuAbout), keyEquivalent: "")
         about.target = self
-        menu.addItem(withTitle: "Quit Pesty", action: #selector(menuQuit), keyEquivalent: "q").target = self
+        menu.addItem(withTitle: L10n.quitPesty, action: #selector(menuQuit), keyEquivalent: "q").target = self
         item.menu = menu
-        statusItem = item
     }
 
     @objc private func menuOpen() { showBar() }
@@ -94,7 +108,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             .applicationName: "Pesty",
             .applicationVersion: Bundle.main.appVersion,
             .credits: NSAttributedString(
-                string: "A free, open-source clipboard manager for macOS.\nInspired by Paste.",
+                string: L10n.aboutDescription,
                 attributes: [.font: NSFont.systemFont(ofSize: 11)])
         ])
     }
@@ -103,8 +117,8 @@ final class AppController: NSObject, NSApplicationDelegate {
         let enabling = !Settings.shared.iCloudSync
         if enabling && !ClipboardStore.shared.iCloudAvailable {
             let alert = NSAlert()
-            alert.messageText = "iCloud Drive Unavailable"
-            alert.informativeText = "Sign in to iCloud and enable iCloud Drive in System Settings to sync your clipboard across your Macs."
+            alert.messageText = L10n.iCloudUnavailable
+            alert.informativeText = L10n.iCloudUnavailableMessage
             alert.runModal()
             return
         }
@@ -176,7 +190,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         let view = SettingsView()
         let host = NSHostingController(rootView: view)
         let win = NSWindow(contentViewController: host)
-        win.title = "Pesty Settings"
+        win.title = L10n.settingsWindowTitle
         win.styleMask = [.titled, .closable, .miniaturizable]
         win.setContentSize(NSSize(width: 520, height: 560))
         win.center()

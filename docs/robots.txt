@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://www.moamenbasel.com/pesty/sitemap.xml
+Sitemap: https://bifrost-proxy.github.io/pesty/sitemap.xml

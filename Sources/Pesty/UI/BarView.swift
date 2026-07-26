@@ -17,6 +17,7 @@ struct BarView: View {
         }
         .clipShape(RoundedCorners(radius: Theme.cornerRadius, corners: [.topLeft, .topRight]))
         .ignoresSafeArea()
+        .id(settings.language)
     }
 
     private var topBar: some View {
@@ -41,7 +42,7 @@ struct BarView: View {
                 .foregroundStyle(settings.iCloudSync ? Theme.selection : Theme.textSecondary)
         }
         .buttonStyle(.plain)
-        .help(settings.iCloudSync ? "iCloud sync on" : "Turn on iCloud sync")
+        .help(settings.iCloudSync ? L10n.iCloudSyncOn : L10n.turnOnICloudSync)
     }
 
     private var searchIndicator: some View {
@@ -69,11 +70,11 @@ struct BarView: View {
 
     private var moreMenu: some View {
         Menu {
-            Button("Settings…") { AppController.shared.showSettings() }
-            Button("Clear History") { store.clearHistory() }
+            Button(L10n.settings) { AppController.shared.showSettings() }
+            Button(L10n.clearHistory) { store.clearHistory() }
             Divider()
-            Button("About Pesty") { AppController.shared.showAbout() }
-            Button("Quit Pesty") { NSApp.terminate(nil) }
+            Button(L10n.aboutPesty) { AppController.shared.showAbout() }
+            Button(L10n.quitPesty) { NSApp.terminate(nil) }
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 15, weight: .semibold))
@@ -122,8 +123,8 @@ struct BarView: View {
                 .font(.system(size: 34, weight: .light))
                 .foregroundStyle(Theme.textTertiary)
             Text(store.searchText.isEmpty
-                 ? "Nothing copied yet"
-                 : "No matches for “\(store.searchText)”")
+                 ? L10n.nothingCopied
+                 : L10n.noMatches(store.searchText))
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.textSecondary)
         }
