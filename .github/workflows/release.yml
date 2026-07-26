@@ -41,6 +41,9 @@ jobs:
       - name: Verify localization
         run: swift run Pesty --verify-localization
 
+      - name: Verify Settings recovery
+        run: swift run Pesty --verify-settings-access
+
       - name: Build ad-hoc signed release
         env:
           VERSION: ${{ steps.version.outputs.value }}

@@ -41,6 +41,9 @@ private struct GeneralSettings: View {
                 Toggle(L10n.ignorePasswords, isOn: $settings.ignoreConcealed)
                 Toggle(L10n.playSound, isOn: $settings.playSound)
                 Toggle(L10n.launchAtLogin, isOn: $settings.launchAtLogin)
+                Toggle(L10n.showMenuBarIcon, isOn: $settings.showMenuBarIcon)
+                Text(L10n.showMenuBarIconDescription)
+                    .font(.caption).foregroundStyle(.secondary)
                 VStack(alignment: .leading) {
                     LabeledContent(L10n.barHeight, value: "\(Int(settings.barHeight)) \(L10n.px)")
                     Slider(value: $settings.barHeight, in: 300...720, step: 10)

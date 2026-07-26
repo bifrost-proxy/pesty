@@ -4,6 +4,17 @@ All notable changes to Pesty are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] - 2026-07-27
+
+### Added
+
+- A setting to hide or restore the Pesty menu bar icon.
+- A recovery path that opens Settings when a hidden Pesty is launched or
+  reopened from Applications.
+- Automated verification for menu bar visibility and Settings recovery.
+
+[1.3.0]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.3.0
+
 ## [1.2.0] - 2026-07-27
 
 ### Added

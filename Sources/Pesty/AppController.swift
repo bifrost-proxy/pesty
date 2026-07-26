@@ -32,7 +32,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         HotKeyCenter.shared.onTrigger = { [weak self] in self?.toggleBar() }
         HotKeyCenter.shared.start()
 
-        setupStatusItem()
+        updateStatusItemVisibility()
         languageObserver = NotificationCenter.default.addObserver(
             forName: .pestyLanguageDidChange, object: nil, queue: .main
         ) { [weak self] _ in
@@ -41,8 +41,19 @@ final class AppController: NSObject, NSApplicationDelegate {
                 self?.settingsWindow?.title = L10n.settingsWindowTitle
             }
         }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(statusItemVisibilityDidChange),
+            name: .pestyMenuBarIconVisibilityDidChange,
+            object: nil
+        )
 
         if Settings.shared.launchAtLogin { LaunchAtLogin.set(enabled: true) }
+
+        if CommandLine.arguments.contains("--verify-settings-access") {
+            verifySettingsAccessAndExit()
+            return
+        }
 
         if CommandLine.arguments.contains("--demo") {
             store.seedDemo()
@@ -57,7 +68,19 @@ final class AppController: NSObject, NSApplicationDelegate {
                 self?.showSettings()
             }
             Settings.shared.onboarded = true
+        } else if !Settings.shared.showMenuBarIcon {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                self?.showSettings()
+            }
         }
+    }
+
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication,
+        hasVisibleWindows flag: Bool
+    ) -> Bool {
+        showSettings()
+        return false
     }
 
     @objc private func appActivated(_ note: Notification) {
@@ -72,6 +95,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func setupStatusItem() {
+        guard statusItem == nil else { return }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
             button.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "Pesty")
@@ -79,6 +103,19 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         statusItem = item
         rebuildStatusItemMenu()
+    }
+
+    private func updateStatusItemVisibility() {
+        if Settings.shared.showMenuBarIcon {
+            setupStatusItem()
+        } else if let item = statusItem {
+            NSStatusBar.system.removeStatusItem(item)
+            statusItem = nil
+        }
+    }
+
+    @objc private func statusItemVisibilityDidChange() {
+        updateStatusItemVisibility()
     }
 
     private func rebuildStatusItemMenu() {
@@ -197,6 +234,59 @@ final class AppController: NSObject, NSApplicationDelegate {
         win.isReleasedWhenClosed = false
         settingsWindow = win
         win.makeKeyAndOrderFront(nil)
+    }
+
+    private func verifySettingsAccessAndExit() {
+        do {
+            try verifySettingsAccess()
+        } catch {
+            verificationFailed(String(describing: error))
+        }
+
+        print("Settings access verification passed")
+        NSApp.terminate(nil)
+    }
+
+    private func verifySettingsAccess() throws {
+        let previousVisibility = Settings.shared.showMenuBarIcon
+        defer {
+            Settings.shared.showMenuBarIcon = previousVisibility
+            settingsWindow?.orderOut(nil)
+        }
+
+        Settings.shared.showMenuBarIcon = false
+        guard statusItem == nil else {
+            throw SettingsAccessVerificationFailure(
+                description: "menu bar icon remained visible after hiding it"
+            )
+        }
+
+        Settings.shared.showMenuBarIcon = true
+        guard statusItem != nil else {
+            throw SettingsAccessVerificationFailure(
+                description: "menu bar icon did not return after showing it"
+            )
+        }
+
+        Settings.shared.showMenuBarIcon = false
+        let shouldUseDefaultReopenBehavior = applicationShouldHandleReopen(
+            NSApp,
+            hasVisibleWindows: false
+        )
+        guard !shouldUseDefaultReopenBehavior, settingsWindow?.isVisible == true else {
+            throw SettingsAccessVerificationFailure(
+                description: "reopening Pesty did not show Settings"
+            )
+        }
+    }
+
+    private func verificationFailed(_ message: String) -> Never {
+        fputs("Settings access verification failed: \(message)\n", stderr)
+        exit(EXIT_FAILURE)
+    }
+
+    private struct SettingsAccessVerificationFailure: Error, CustomStringConvertible {
+        let description: String
     }
 
     private func startKeyMonitor() {
