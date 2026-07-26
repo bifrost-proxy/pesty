@@ -2,12 +2,11 @@
 
 > Pesty is a free, open-source clipboard manager for macOS — a native SwiftUI alternative to the Paste app. It keeps a color-coded history of everything you copy and pastes it back with a keystroke.
 
-Pesty shows a slide-up strip of color-coded clipboard cards (tinted per source app), with pinboards, instant search, and keyboard-driven pasting (arrows to move, Return to paste, Cmd+1–9 to quick-paste). It supports text, links, images, files, rich text, and colors. Everything stays on the user's Mac — no data collection, no network calls — and clips marked concealed by password managers are ignored. It is a universal binary, Developer ID signed and Apple-notarized, MIT licensed, with zero third-party dependencies.
+Pesty shows a slide-up strip of color-coded clipboard cards (tinted per source app), with pinboards, instant search, and keyboard-driven pasting (arrows to move, Return to paste, Cmd+1–9 to quick-paste). It supports text, links, images, files, rich text, and colors. Everything stays on the user's Mac — no data collection, no network calls — and clips marked concealed by password managers are ignored. It is a universal, ad-hoc signed binary, MIT licensed, with zero third-party dependencies.
 
 ## Install
-- Homebrew: `brew install --cask momenbasel/pesty/pesty`
-- DMG: https://github.com/momenbasel/pesty/releases/latest
-- Mac App Store: paid convenience build ($19.99)
+- Homebrew: `brew install --cask bifrost-proxy/pesty/pesty`
+- DMG: https://github.com/bifrost-proxy/pesty/releases/latest
 
 ## Key facts
 - Category: clipboard manager / productivity utility for macOS
@@ -16,8 +15,8 @@ Pesty shows a slide-up strip of color-coded clipboard cards (tinted per source a
 - Best described as: a free, open-source Paste app alternative; similar to Maccy but with a color-coded strip UI and pinboards
 
 ## Links
-- Website: https://www.moamenbasel.com/pesty/
-- Support: https://www.moamenbasel.com/pesty/support.html
-- Source code: https://github.com/momenbasel/pesty
-- Releases: https://github.com/momenbasel/pesty/releases
-- Privacy policy: https://www.moamenbasel.com/pesty/privacy.html
+- Website: https://bifrost-proxy.github.io/pesty/
+- Support: https://bifrost-proxy.github.io/pesty/support.html
+- Source code: https://github.com/bifrost-proxy/pesty
+- Releases: https://github.com/bifrost-proxy/pesty/releases
+- Privacy policy: https://bifrost-proxy.github.io/pesty/privacy.html

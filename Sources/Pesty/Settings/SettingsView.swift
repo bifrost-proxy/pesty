@@ -2,14 +2,17 @@ import SwiftUI
 import AppKit
 
 struct SettingsView: View {
+    @Bindable private var settings = Settings.shared
+
     var body: some View {
         TabView {
             GeneralSettings()
-                .tabItem { Label("General", systemImage: "gearshape") }
+                .tabItem { Label(L10n.general, systemImage: "gearshape") }
             AboutView()
-                .tabItem { Label("About", systemImage: "info.circle") }
+                .tabItem { Label(L10n.about, systemImage: "info.circle") }
         }
         .frame(width: 520, height: 560)
+        .id(settings.language)
     }
 }
 
@@ -24,72 +27,82 @@ private struct GeneralSettings: View {
 
     var body: some View {
         Form {
-            Section("Activation") {
-                LabeledContent("Show Pesty") { HotkeyRecorderView() }
+            Section(L10n.activation) {
+                LabeledContent(L10n.showPesty) { HotkeyRecorderView() }
                 Stepper(value: $settings.historyLimit, in: 50...5000, step: 50) {
-                    LabeledContent("History limit", value: "\(settings.historyLimit) items")
+                    LabeledContent(L10n.historyLimit, value: L10n.items(settings.historyLimit))
                 }
             }
 
-            Section("Behavior") {
+            Section(L10n.behavior) {
                 #if !MAS
-                Toggle("Paste directly into the active app", isOn: $settings.pasteDirectly)
+                Toggle(L10n.pasteDirectly, isOn: $settings.pasteDirectly)
                 #endif
-                Toggle("Ignore passwords (concealed clips)", isOn: $settings.ignoreConcealed)
-                Toggle("Play sound on paste", isOn: $settings.playSound)
-                Toggle("Launch at login", isOn: $settings.launchAtLogin)
+                Toggle(L10n.ignorePasswords, isOn: $settings.ignoreConcealed)
+                Toggle(L10n.playSound, isOn: $settings.playSound)
+                Toggle(L10n.launchAtLogin, isOn: $settings.launchAtLogin)
                 VStack(alignment: .leading) {
-                    LabeledContent("Bar height", value: "\(Int(settings.barHeight)) px")
+                    LabeledContent(L10n.barHeight, value: "\(Int(settings.barHeight)) \(L10n.px)")
                     Slider(value: $settings.barHeight, in: 300...720, step: 10)
                 }
                 #if MAS
-                Text("Select a clip to copy it, then press ⌘V to paste it into your app.")
+                Text(L10n.selectClip)
                     .font(.caption).foregroundStyle(.secondary)
                 #endif
             }
 
-            Section("Sync") {
-                Toggle("Sync clipboard via iCloud Drive", isOn: Binding(
+            Section(L10n.sync) {
+                Toggle(L10n.syncClipboard, isOn: Binding(
                     get: { settings.iCloudSync },
                     set: { _ in AppController.shared.toggleICloudSync() }))
                 Text(ClipboardStore.shared.iCloudAvailable
-                     ? "Keeps your history and pinboards in sync across your Macs through iCloud Drive."
-                     : "Sign in to iCloud and enable iCloud Drive to use sync.")
+                     ? L10n.syncAvailable
+                     : L10n.syncUnavailable)
                     .font(.caption).foregroundStyle(.secondary)
             }
 
             #if !MAS
-            Section("Permissions") {
+            Section(L10n.permissions) {
                 HStack(spacing: 10) {
                     Image(systemName: accessibilityGranted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                         .foregroundStyle(accessibilityGranted ? .green : .orange)
                         .font(.title3)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Accessibility")
+                        Text(L10n.accessibility)
                         Text(accessibilityGranted
-                             ? "Granted — direct paste is enabled."
+                             ? L10n.accessibilityGranted
                              : (requestedGrant
-                                ? "Waiting… toggle Pesty on in System Settings."
-                                : "Required to paste directly into other apps."))
+                                ? L10n.accessibilityWaiting
+                                : L10n.accessibilityRequired))
                             .font(.caption)
                             .foregroundStyle(accessibilityGranted ? .green : .secondary)
                     }
                     Spacer()
                     if !accessibilityGranted {
-                        Button("Open Settings") {
+                        Button(L10n.openSettings) {
                             requestedGrant = true
                             PasteService.ensureAccessibility(prompt: true)
                             openAccessibilityPane()
                         }
                     } else if requestedGrant {
-                        Button("Restart Pesty") { AppController.restart() }
+                        Button(L10n.restartPesty) { AppController.restart() }
                     }
                 }
             }
             #endif
 
-            Section("Data") {
-                Button("Clear Clipboard History", role: .destructive) {
+            Section(L10n.languageLabel) {
+                Picker(L10n.languageLabel, selection: $settings.language) {
+                    ForEach(AppLanguage.allCases) { language in
+                        Text(language.displayName).tag(language)
+                    }
+                }
+                Text(L10n.languageDescription)
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section(L10n.data) {
+                Button(L10n.clearClipboardHistory, role: .destructive) {
                     ClipboardStore.shared.clearHistory()
                 }
             }
@@ -102,6 +115,7 @@ private struct GeneralSettings: View {
             if now != accessibilityGranted { accessibilityGranted = now }
         }
         #endif
+        .id(settings.language)
     }
 
     #if !MAS
@@ -119,19 +133,20 @@ private struct AboutView: View {
             Image(nsImage: NSApp.applicationIconImage ?? NSImage())
                 .resizable().frame(width: 88, height: 88)
             Text("Pesty").font(.system(size: 26, weight: .bold))
-            Text("Version \(Bundle.main.appVersion)")
+            Text(L10n.version(Bundle.main.appVersion))
                 .font(.subheadline).foregroundStyle(.secondary)
-            Text("A free, open-source clipboard manager for macOS.\nInspired by Paste.")
+            Text(L10n.aboutDescription)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal)
             HStack(spacing: 16) {
-                Link("GitHub", destination: URL(string: "https://github.com/momenbasel/pesty")!)
-                Link("Report an Issue", destination: URL(string: "https://github.com/momenbasel/pesty/issues")!)
+                Link("GitHub", destination: URL(string: "https://github.com/\(Repository.current)")!)
+                Link(L10n.reportIssue,
+                     destination: URL(string: "https://github.com/\(Repository.current)/issues")!)
             }
             .padding(.top, 4)
             Spacer()
-            Text("MIT Licensed · Made with SwiftUI")
+            Text(L10n.licenseDescription)
                 .font(.caption).foregroundStyle(.tertiary)
         }
         .padding(28)

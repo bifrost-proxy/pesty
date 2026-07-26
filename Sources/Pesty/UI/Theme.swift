@@ -28,7 +28,7 @@ extension Date {
     var clipRelative: String {
         let secs = -timeIntervalSinceNow
         switch secs {
-        case ..<5:        return "Now"
+        case ..<5:        return L10n.now
         case ..<60:       return "\(Int(secs))s"
         case ..<3600:     return "\(Int(secs / 60))m"
         case ..<86_400:   return "\(Int(secs / 3600))h"
@@ -42,9 +42,10 @@ extension Date {
 
     var clipRelativeLong: String {
         let secs = -timeIntervalSinceNow
-        if secs < 8 { return "Just now" }
+        if secs < 8 { return L10n.justNow }
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .full
+        f.locale = Locale(identifier: L10n.localeIdentifier)
         return f.localizedString(for: self, relativeTo: Date())
     }
 }

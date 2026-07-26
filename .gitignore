@@ -4,11 +4,13 @@
 *.xcodeproj
 *.xcuserstate
 DerivedData/
+.vscode/
 
 packaging/Pesty.app/
 packaging/*.dmg
 packaging/*.zip
 packaging/*.icns
+packaging/pesty.rb
 packaging/icon_1024.png
 packaging/Pesty.iconset/
 

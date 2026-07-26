@@ -4,6 +4,26 @@ All notable changes to Pesty are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] - 2026-07-27
+
+### Added
+
+- English and Simplified Chinese user interfaces with live language switching.
+- A certificate-free release pipeline that builds and verifies an ad-hoc signed
+  universal DMG.
+- A generated Homebrew Cask for the `bifrost-proxy/pesty` tap.
+- Automated localization, release-package, architecture, signature, and Cask
+  validation in CI.
+
+### Changed
+
+- Moved repository, support, release, and documentation links to
+  `bifrost-proxy/pesty`.
+- Changed the application bundle identifier to `com.bifrostproxy.pesty`.
+- Rewrote the README in Chinese and removed unrelated marketing content.
+
+[1.2.0]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.2.0
+
 ## [1.1.0] - 2026-06-26
 
 Visual overhaul to match Paste, plus iCloud sync.
@@ -24,7 +44,7 @@ Visual overhaul to match Paste, plus iCloud sync.
 - Search input and keyboard navigation reliability.
 - Removed the unnecessary Apple Events entitlement.
 
-[1.1.0]: https://github.com/momenbasel/pesty/releases/tag/v1.1.0
+[1.1.0]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.1.0
 
 ## [1.0.0] - 2026-06-26
 
@@ -44,4 +64,4 @@ Initial public release.
 - Universal binary (Apple Silicon + Intel), signed with Developer ID and
   notarized by Apple.
 
-[1.0.0]: https://github.com/momenbasel/pesty/releases/tag/v1.0.0
+[1.0.0]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.0.0

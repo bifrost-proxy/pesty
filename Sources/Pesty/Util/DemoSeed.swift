@@ -9,7 +9,7 @@ extension ClipboardStore {
                      sourceBundleID: "com.apple.Notes", sourceAppName: "Notes",
                      createdAt: now.addingTimeInterval(-12)),
             ClipItem(type: .link,
-                     text: "https://github.com/momenbasel/pesty",
+                     text: "https://github.com/bifrost-proxy/pesty",
                      sourceBundleID: "com.apple.Safari", sourceAppName: "Safari",
                      createdAt: now.addingTimeInterval(-90)),
             ClipItem(type: .text,
@@ -20,7 +20,7 @@ extension ClipboardStore {
                      sourceBundleID: "com.apple.dt.Xcode", sourceAppName: "Xcode",
                      createdAt: now.addingTimeInterval(-600)),
             ClipItem(type: .text,
-                     text: "ceo@greycorelabs.com",
+                     text: "hello@example.com",
                      sourceBundleID: "com.apple.mail", sourceAppName: "Mail",
                      createdAt: now.addingTimeInterval(-1200)),
             ClipItem(type: .file,
@@ -33,7 +33,7 @@ extension ClipboardStore {
                      sourceBundleID: "com.apple.Safari", sourceAppName: "Safari",
                      createdAt: now.addingTimeInterval(-7200)),
             ClipItem(type: .text,
-                     text: "Remember to notarize the build before publishing the release.",
+                     text: "Remember to verify the release before publishing it.",
                      sourceBundleID: "com.apple.reminders", sourceAppName: "Reminders",
                      createdAt: now.addingTimeInterval(-9000))
         ]
