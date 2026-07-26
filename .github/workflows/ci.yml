@@ -11,7 +11,7 @@ jobs:
     name: Build (Swift 6, macOS)
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Show toolchain
         run: swift --version
@@ -34,4 +34,6 @@ jobs:
           ruby -c packaging/pesty.rb
 
       - name: Check shell scripts
-        run: shellcheck scripts/*.sh
+        run: |
+          brew install shellcheck
+          shellcheck scripts/*.sh
