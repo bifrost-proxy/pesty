@@ -68,7 +68,9 @@ final class AppController: NSObject, NSApplicationDelegate {
                 self?.showSettings()
             }
             Settings.shared.onboarded = true
-        } else if !Settings.shared.showMenuBarIcon {
+        } else if shouldShowSettingsAfterLaunch(
+            launchedAsLoginItem: wasLaunchedAsLoginItem
+        ) {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
                 self?.showSettings()
             }
@@ -112,6 +114,15 @@ final class AppController: NSObject, NSApplicationDelegate {
             NSStatusBar.system.removeStatusItem(item)
             statusItem = nil
         }
+    }
+
+    private var wasLaunchedAsLoginItem: Bool {
+        NSAppleEventManager.shared().currentAppleEvent?
+            .attributeDescriptor(forKeyword: AEKeyword(keyAELaunchedAsLogInItem)) != nil
+    }
+
+    private func shouldShowSettingsAfterLaunch(launchedAsLoginItem: Bool) -> Bool {
+        !Settings.shared.showMenuBarIcon && !launchedAsLoginItem
     }
 
     @objc private func statusItemVisibilityDidChange() {
@@ -258,6 +269,12 @@ final class AppController: NSObject, NSApplicationDelegate {
         guard statusItem == nil else {
             throw SettingsAccessVerificationFailure(
                 description: "menu bar icon remained visible after hiding it"
+            )
+        }
+        guard shouldShowSettingsAfterLaunch(launchedAsLoginItem: false),
+              !shouldShowSettingsAfterLaunch(launchedAsLoginItem: true) else {
+            throw SettingsAccessVerificationFailure(
+                description: "hidden-icon launch handling did not distinguish a login item"
             )
         }
 
