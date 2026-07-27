@@ -6,6 +6,12 @@ All notable changes to Pesty are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- Restored Command-Backspace as the only keyboard shortcut that deletes a
+  selected clipboard item, preventing plain Backspace or Forward Delete from
+  removing history when the search query is empty.
+
 ## [1.6.1] - 2026-07-27
 
 ### Changed

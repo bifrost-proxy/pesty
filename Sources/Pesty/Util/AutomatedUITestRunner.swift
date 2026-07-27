@@ -65,7 +65,11 @@ enum AutomatedUITestRunner {
         let searchBackspaceConsumed: Bool
         let searchBackspacePreservedHistory: Bool
         let rightArrowConsumed: Bool
-        let backspaceConsumed: Bool
+        let plainBackspaceConsumed: Bool
+        let plainBackspacePreservedHistory: Bool
+        let forwardDeleteConsumed: Bool
+        let forwardDeletePreservedHistory: Bool
+        let commandBackspaceConsumed: Bool
         let selectedFollowingItemAfterMiddleDelete: Bool
         let selectedFollowingItemAfterSecondDelete: Bool
         let selectedPreviousItemAfterTailDelete: Bool
@@ -397,23 +401,42 @@ enum AutomatedUITestRunner {
                 characters: "\u{F703}"
             ).map { controller.handleKey($0) == nil } ?? false
 
-            let firstBackspaceConsumed = makeKeyEvent(
+            let plainBackspaceConsumed = makeKeyEvent(
                 keyCode: UInt16(kVK_Delete),
                 characters: "\u{7F}"
+            ).map { controller.handleKey($0) == nil } ?? false
+            let plainBackspacePreservedHistory =
+                controller.store.history.map(\.id) == items.map(\.id)
+                && controller.store.selectedID == items[1].id
+
+            let forwardDeleteConsumed = makeKeyEvent(
+                keyCode: UInt16(kVK_ForwardDelete),
+                characters: "\u{F728}"
+            ).map { controller.handleKey($0) == nil } ?? false
+            let forwardDeletePreservedHistory =
+                controller.store.history.map(\.id) == items.map(\.id)
+                && controller.store.selectedID == items[1].id
+
+            let firstCommandBackspaceConsumed = makeKeyEvent(
+                keyCode: UInt16(kVK_Delete),
+                characters: "\u{7F}",
+                modifierFlags: [.command]
             ).map { controller.handleKey($0) == nil } ?? false
             let selectedFollowingItemAfterMiddleDelete =
                 controller.store.selectedID == items[2].id
 
-            let secondBackspaceConsumed = makeKeyEvent(
+            let secondCommandBackspaceConsumed = makeKeyEvent(
                 keyCode: UInt16(kVK_Delete),
-                characters: "\u{7F}"
+                characters: "\u{7F}",
+                modifierFlags: [.command]
             ).map { controller.handleKey($0) == nil } ?? false
             let selectedFollowingItemAfterSecondDelete =
                 controller.store.selectedID == items[3].id
 
-            let thirdBackspaceConsumed = makeKeyEvent(
+            let thirdCommandBackspaceConsumed = makeKeyEvent(
                 keyCode: UInt16(kVK_Delete),
-                characters: "\u{7F}"
+                characters: "\u{7F}",
+                modifierFlags: [.command]
             ).map { controller.handleKey($0) == nil } ?? false
             let selectedPreviousItemAfterTailDelete =
                 controller.store.selectedID == items[0].id
@@ -424,9 +447,13 @@ enum AutomatedUITestRunner {
                 success: rightArrowConsumed
                     && searchBackspaceConsumed
                     && searchBackspacePreservedHistory
-                    && firstBackspaceConsumed
-                    && secondBackspaceConsumed
-                    && thirdBackspaceConsumed
+                    && plainBackspaceConsumed
+                    && plainBackspacePreservedHistory
+                    && forwardDeleteConsumed
+                    && forwardDeletePreservedHistory
+                    && firstCommandBackspaceConsumed
+                    && secondCommandBackspaceConsumed
+                    && thirdCommandBackspaceConsumed
                     && selectedFollowingItemAfterMiddleDelete
                     && selectedFollowingItemAfterSecondDelete
                     && selectedPreviousItemAfterTailDelete
@@ -436,9 +463,13 @@ enum AutomatedUITestRunner {
                 searchBackspaceConsumed: searchBackspaceConsumed,
                 searchBackspacePreservedHistory: searchBackspacePreservedHistory,
                 rightArrowConsumed: rightArrowConsumed,
-                backspaceConsumed: firstBackspaceConsumed
-                    && secondBackspaceConsumed
-                    && thirdBackspaceConsumed,
+                plainBackspaceConsumed: plainBackspaceConsumed,
+                plainBackspacePreservedHistory: plainBackspacePreservedHistory,
+                forwardDeleteConsumed: forwardDeleteConsumed,
+                forwardDeletePreservedHistory: forwardDeletePreservedHistory,
+                commandBackspaceConsumed: firstCommandBackspaceConsumed
+                    && secondCommandBackspaceConsumed
+                    && thirdCommandBackspaceConsumed,
                 selectedFollowingItemAfterMiddleDelete:
                     selectedFollowingItemAfterMiddleDelete,
                 selectedFollowingItemAfterSecondDelete:
@@ -455,12 +486,13 @@ enum AutomatedUITestRunner {
 
     private static func makeKeyEvent(
         keyCode: UInt16,
-        characters: String
+        characters: String,
+        modifierFlags: NSEvent.ModifierFlags = []
     ) -> NSEvent? {
         NSEvent.keyEvent(
             with: .keyDown,
             location: .zero,
-            modifierFlags: [],
+            modifierFlags: modifierFlags,
             timestamp: 0,
             windowNumber: 0,
             context: nil,

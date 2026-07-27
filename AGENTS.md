@@ -262,10 +262,11 @@ filtering, or panel presentation lifecycle.
 
 ### Keyboard deletion regression
 
-Backspace with an empty search deletes the selected card. Selection must move
-to the following card that shifts into the deleted index; deleting the final
-card falls back to the preceding card. Backspace continues to edit the query
-instead of deleting a card while search is non-empty.
+Only Command-Backspace deletes the selected card. Plain Backspace and Forward
+Delete must never delete clipboard history when search is empty. Backspace
+continues to edit the query while search is active. After Command-Backspace,
+selection must move to the following card that shifts into the deleted index;
+deleting the final card falls back to the preceding card.
 
 Run the isolated keyboard regression for changes to keyboard handling,
 selection, deletion, filtering, or strip navigation:
