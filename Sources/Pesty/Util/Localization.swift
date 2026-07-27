@@ -70,8 +70,8 @@ enum L10n {
         text("Sync clipboard via iCloud Drive", "通过 iCloud Drive 同步剪贴板")
     }
     static var syncAvailable: String {
-        text("Keeps your history and pinboards in sync across your Macs through iCloud Drive.",
-             "通过 iCloud Drive 在你的 Mac 之间同步历史记录和 Pinboard。")
+        text("Keeps your history, pinboards, and history limit in sync across your Macs through iCloud Drive.",
+             "通过 iCloud Drive 在你的 Mac 之间同步历史记录、Pinboard 和历史记录上限。")
     }
     static var syncUnavailable: String {
         text("Sign in to iCloud and enable iCloud Drive to use sync.",
@@ -90,7 +90,16 @@ enum L10n {
         text("Required to paste directly into other apps.",
              "直接粘贴到其他应用需要此权限。")
     }
-    static var openSettings: String { text("Open Settings", "打开设置") }
+    static var repairAccessibility: String {
+        text("Repair Access", "修复权限")
+    }
+    static var accessibilityRepairing: String {
+        text("Removing the old authorization…", "正在移除旧授权……")
+    }
+    static func accessibilityRepairFailed(_ detail: String) -> String {
+        text("Couldn’t reset the old authorization: \(detail)",
+             "无法重置旧授权：\(detail)")
+    }
     static var restartPesty: String { text("Restart Pesty", "重启 Pesty") }
     static var data: String { text("Data", "数据") }
     static var clearClipboardHistory: String {

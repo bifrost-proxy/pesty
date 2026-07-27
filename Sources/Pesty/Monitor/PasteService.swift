@@ -3,6 +3,12 @@ import Carbon.HIToolbox
 
 @MainActor
 enum PasteService {
+    struct AccessibilityResetCommand: Equatable, Sendable {
+        let executable: String
+        let arguments: [String]
+    }
+
+    private static let applicationBundleIdentifier = "com.bifrostproxy.pesty"
 
     @discardableResult
     static func copy(_ item: ClipItem, to pasteboard: NSPasteboard = .general) -> Int {
@@ -87,6 +93,54 @@ enum PasteService {
         let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
         let opts = [key: prompt] as CFDictionary
         return AXIsProcessTrustedWithOptions(opts)
+    }
+
+    static func accessibilityResetCommand() -> AccessibilityResetCommand {
+        AccessibilityResetCommand(
+            executable: "/usr/bin/tccutil",
+            arguments: [
+                "reset",
+                "Accessibility",
+                applicationBundleIdentifier,
+            ]
+        )
+    }
+
+    /// Removes only Pesty's stale Accessibility authorization so macOS can
+    /// register the current ad-hoc-signed build. The user must still grant
+    /// access in System Settings.
+    static func resetAccessibilityAuthorization() async -> String? {
+        let command = accessibilityResetCommand()
+        return await Task.detached(priority: .userInitiated) {
+            let process = Process()
+            let stdout = Pipe()
+            let stderr = Pipe()
+            process.executableURL = URL(fileURLWithPath: command.executable)
+            process.arguments = command.arguments
+            process.standardOutput = stdout
+            process.standardError = stderr
+
+            do {
+                try process.run()
+                process.waitUntilExit()
+            } catch {
+                let detail = error.localizedDescription
+                NSLog("Pesty Accessibility reset failed to start: %@", detail)
+                return detail
+            }
+
+            guard process.terminationStatus == 0 else {
+                let data = stderr.fileHandleForReading.readDataToEndOfFile()
+                let detail = String(data: data, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                let message = detail?.isEmpty == false
+                    ? detail!
+                    : "tccutil exited with status \(process.terminationStatus)"
+                NSLog("Pesty Accessibility reset failed: %@", message)
+                return message
+            }
+            return nil
+        }.value
     }
     #endif
 }

@@ -95,6 +95,18 @@ enum AutomatedUITestRunner {
         let expectedFinalCount: Int
     }
 
+    private struct RetentionSyncResult: Codable {
+        let phase: String
+        let success: Bool
+        let countBeforeDeadline: Int
+        let finalCount: Int
+        let expectedFinalCount: Int
+        let configuredLimit: Int
+        let unlimited: Bool
+        let hasSyncedConfiguration: Bool
+        let hasSharedEffectiveDate: Bool
+    }
+
     private struct ClearConfirmationResult: Codable {
         let phase: String
         let success: Bool
@@ -138,6 +150,14 @@ enum AutomatedUITestRunner {
         }
         if phase == "retention-restart-verify" {
             verifyRetentionRestartTest(controller: controller)
+            return
+        }
+        if phase == "retention-sync-seed" {
+            seedRetentionSyncTest(controller: controller, runID: runID)
+            return
+        }
+        if phase == "retention-sync-verify" {
+            verifyRetentionSyncTest(controller: controller)
             return
         }
         if phase == "clear-confirmation" {
@@ -307,6 +327,80 @@ enum AutomatedUITestRunner {
             )
             controller.store.saveNow()
             writeRetentionRestart(result)
+            exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+        }
+    }
+
+    private static func seedRetentionSyncTest(
+        controller: AppController,
+        runID: String
+    ) {
+        let items = (0..<150).map { index in
+            ClipItem(
+                type: .text,
+                text: "pesty-retention-sync-\(runID)-\(index)",
+                createdAt: Date(timeIntervalSinceNow: -Double(index))
+            )
+        }
+        controller.monitor.stop()
+        controller.store.replaceHistoryForAutomatedRetentionTest(items)
+        Settings.shared.setHistoryRetentionSliderPosition(0)
+        controller.store.saveNow()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            let configuration = Settings.shared.syncedHistoryRetention
+            let result = RetentionSyncResult(
+                phase: "retention-sync-seed",
+                success: controller.store.history.count == 150
+                    && Settings.shared.historyLimit == 100
+                    && !Settings.shared.historyLimitUnlimited
+                    && configuration?.limit == 100
+                    && configuration?.unlimited == false
+                    && configuration?.effectiveAt != nil
+                    && Settings.shared.historyLimitTrimAfter != nil,
+                countBeforeDeadline: controller.store.history.count,
+                finalCount: controller.store.history.count,
+                expectedFinalCount: 100,
+                configuredLimit: Settings.shared.historyLimit,
+                unlimited: Settings.shared.historyLimitUnlimited,
+                hasSyncedConfiguration: configuration != nil,
+                hasSharedEffectiveDate: configuration?.effectiveAt != nil
+            )
+            controller.store.saveNow()
+            writeRetentionSync(result)
+            exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+        }
+    }
+
+    private static func verifyRetentionSyncTest(controller: AppController) {
+        controller.monitor.stop()
+        let countBeforeDeadline = controller.store.history.count
+        let configuration = Settings.shared.syncedHistoryRetention
+        let remainingDelay = max(
+            0,
+            Settings.shared.historyLimitTrimAfter?.timeIntervalSinceNow ?? 0
+        )
+        DispatchQueue.main.asyncAfter(deadline: .now() + remainingDelay + 0.5) {
+            let finalCount = controller.store.history.count
+            let result = RetentionSyncResult(
+                phase: "retention-sync-verify",
+                success: countBeforeDeadline == 150
+                    && finalCount == 100
+                    && Settings.shared.historyLimit == 100
+                    && !Settings.shared.historyLimitUnlimited
+                    && configuration?.limit == 100
+                    && configuration?.unlimited == false
+                    && configuration?.effectiveAt != nil,
+                countBeforeDeadline: countBeforeDeadline,
+                finalCount: finalCount,
+                expectedFinalCount: 100,
+                configuredLimit: Settings.shared.historyLimit,
+                unlimited: Settings.shared.historyLimitUnlimited,
+                hasSyncedConfiguration: configuration != nil,
+                hasSharedEffectiveDate: configuration?.effectiveAt != nil
+            )
+            controller.store.saveNow()
+            writeRetentionSync(result)
             exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
         }
     }
@@ -736,6 +830,15 @@ enum AutomatedUITestRunner {
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(result) else { return }
         FileHandle.standardOutput.write(Data("AUTOMATED_RETENTION_RESTART_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeRetentionSync(_ result: RetentionSyncResult) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(Data("AUTOMATED_RETENTION_SYNC_RESULT ".utf8))
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data("\n".utf8))
     }

@@ -43,6 +43,34 @@ enum HistoryRetentionPolicy {
     }
 }
 
+struct SyncedHistoryRetentionConfiguration: Codable, Equatable, Sendable {
+    var limit: Int
+    var unlimited: Bool
+    var updatedAt: Date
+    var effectiveAt: Date?
+    var revisionID: UUID
+
+    func normalized() -> Self {
+        var copy = self
+        copy.limit = HistoryRetentionPolicy.normalized(limit)
+        if unlimited {
+            copy.effectiveAt = nil
+        }
+        return copy
+    }
+
+    func supersedes(_ other: Self) -> Bool {
+        if updatedAt != other.updatedAt {
+            return updatedAt > other.updatedAt
+        }
+        return revisionID.uuidString > other.revisionID.uuidString
+    }
+}
+
+struct SyncedConfiguration: Codable, Equatable, Sendable {
+    var historyRetention: SyncedHistoryRetentionConfiguration
+}
+
 enum BarLayoutPolicy {
     static let defaultHeight = 350.0
 }
@@ -59,6 +87,9 @@ final class Settings {
         static let historyLimit = "historyLimit"
         static let historyLimitUnlimited = "historyLimitUnlimited"
         static let historyLimitTrimAfter = "historyLimitTrimAfter"
+        static let historyRetentionUpdatedAt = "historyRetentionUpdatedAt"
+        static let historyRetentionEffectiveAt = "historyRetentionEffectiveAt"
+        static let historyRetentionRevisionID = "historyRetentionRevisionID"
         static let hotkeyKeyCode = "hotkeyKeyCode"
         static let hotkeyModifiers = "hotkeyModifiers"
         static let launchAtLogin = "launchAtLogin"
@@ -72,25 +103,12 @@ final class Settings {
         static let language = "language"
     }
 
-    var historyLimit: Int {
-        didSet {
-            guard isLoaded else { return }
-            let normalized = HistoryRetentionPolicy.normalized(historyLimit)
-            if historyLimit != normalized { historyLimit = normalized; return }
-            d.set(historyLimit, forKey: Keys.historyLimit)
-            ClipboardStore.shared.historyRetentionDidChange()
-        }
-    }
-
-    var historyLimitUnlimited: Bool {
-        didSet {
-            guard isLoaded else { return }
-            d.set(historyLimitUnlimited, forKey: Keys.historyLimitUnlimited)
-            ClipboardStore.shared.historyRetentionDidChange()
-        }
-    }
+    private(set) var historyLimit: Int
+    private(set) var historyLimitUnlimited: Bool
 
     private(set) var historyLimitTrimAfter: Date?
+    @ObservationIgnored private var syncedHistoryRetentionStorage:
+        SyncedHistoryRetentionConfiguration?
 
     var hotkeyKeyCode: Int {
         didSet { guard isLoaded else { return }
@@ -175,9 +193,26 @@ final class Settings {
             Keys.iCloudSync: false,
             Keys.language: AppLanguage.systemDefault.rawValue
         ])
-        historyLimit = HistoryRetentionPolicy.normalized(d.integer(forKey: Keys.historyLimit))
-        historyLimitUnlimited = d.bool(forKey: Keys.historyLimitUnlimited)
+        let loadedHistoryLimit = HistoryRetentionPolicy.normalized(
+            d.integer(forKey: Keys.historyLimit)
+        )
+        let loadedHistoryLimitUnlimited = d.bool(forKey: Keys.historyLimitUnlimited)
+        historyLimit = loadedHistoryLimit
+        historyLimitUnlimited = loadedHistoryLimitUnlimited
         historyLimitTrimAfter = d.object(forKey: Keys.historyLimitTrimAfter) as? Date
+        if let updatedAt = d.object(forKey: Keys.historyRetentionUpdatedAt) as? Date,
+           let revisionValue = d.string(forKey: Keys.historyRetentionRevisionID),
+           let revisionID = UUID(uuidString: revisionValue) {
+            syncedHistoryRetentionStorage = SyncedHistoryRetentionConfiguration(
+                limit: loadedHistoryLimit,
+                unlimited: loadedHistoryLimitUnlimited,
+                updatedAt: updatedAt,
+                effectiveAt: d.object(forKey: Keys.historyRetentionEffectiveAt) as? Date,
+                revisionID: revisionID
+            ).normalized()
+        } else {
+            syncedHistoryRetentionStorage = nil
+        }
         hotkeyKeyCode = d.integer(forKey: Keys.hotkeyKeyCode)
         hotkeyModifiers = d.integer(forKey: Keys.hotkeyModifiers)
         launchAtLogin = d.bool(forKey: Keys.launchAtLogin)
@@ -208,11 +243,92 @@ final class Settings {
     }
 
     func setHistoryRetentionSliderPosition(_ position: Double) {
-        if let limit = HistoryRetentionPolicy.selection(at: position) {
-            historyLimit = limit
-            historyLimitUnlimited = false
+        let selection = HistoryRetentionPolicy.selection(at: position)
+        let newLimit = selection ?? historyLimit
+        let newUnlimited = selection == nil
+        guard newLimit != historyLimit || newUnlimited != historyLimitUnlimited else {
+            return
+        }
+
+        let updatedAt = Date()
+        let configuration = SyncedHistoryRetentionConfiguration(
+            limit: newLimit,
+            unlimited: newUnlimited,
+            updatedAt: updatedAt,
+            effectiveAt: newUnlimited
+                ? nil
+                : updatedAt.addingTimeInterval(HistoryRetentionPolicy.trimDelay),
+            revisionID: UUID()
+        ).normalized()
+        storeHistoryRetention(configuration)
+        ClipboardStore.shared.historyRetentionDidChange(
+            effectiveAt: configuration.effectiveAt,
+            configurationChanged: true
+        )
+    }
+
+    var syncedHistoryRetention: SyncedHistoryRetentionConfiguration? {
+        syncedHistoryRetentionStorage
+    }
+
+    @discardableResult
+    func ensureSyncedHistoryRetention(effectiveAt: Date? = nil) -> Bool {
+        guard syncedHistoryRetentionStorage == nil else { return false }
+        let configuration = SyncedHistoryRetentionConfiguration(
+            limit: historyLimit,
+            unlimited: historyLimitUnlimited,
+            updatedAt: Date(),
+            effectiveAt: historyLimitUnlimited
+                ? nil
+                : (effectiveAt ?? historyLimitTrimAfter),
+            revisionID: UUID()
+        ).normalized()
+        storeHistoryRetention(configuration)
+        return true
+    }
+
+    @discardableResult
+    func publishCurrentHistoryRetention(
+        effectiveAt: Date?
+    ) -> SyncedHistoryRetentionConfiguration {
+        let configuration = SyncedHistoryRetentionConfiguration(
+            limit: historyLimit,
+            unlimited: historyLimitUnlimited,
+            updatedAt: Date(),
+            effectiveAt: historyLimitUnlimited ? nil : effectiveAt,
+            revisionID: UUID()
+        ).normalized()
+        storeHistoryRetention(configuration)
+        return configuration
+    }
+
+    @discardableResult
+    func adoptSyncedHistoryRetention(
+        _ incoming: SyncedHistoryRetentionConfiguration
+    ) -> Bool {
+        let normalized = incoming.normalized()
+        if let current = syncedHistoryRetentionStorage,
+           !normalized.supersedes(current) {
+            return false
+        }
+        storeHistoryRetention(normalized)
+        return true
+    }
+
+    private func storeHistoryRetention(
+        _ configuration: SyncedHistoryRetentionConfiguration
+    ) {
+        historyLimit = configuration.limit
+        historyLimitUnlimited = configuration.unlimited
+        syncedHistoryRetentionStorage = configuration
+        d.set(historyLimit, forKey: Keys.historyLimit)
+        d.set(historyLimitUnlimited, forKey: Keys.historyLimitUnlimited)
+        d.set(configuration.updatedAt, forKey: Keys.historyRetentionUpdatedAt)
+        d.set(configuration.revisionID.uuidString, forKey: Keys.historyRetentionRevisionID)
+        if let effectiveAt = configuration.effectiveAt {
+            d.set(effectiveAt, forKey: Keys.historyRetentionEffectiveAt)
         } else {
-            historyLimitUnlimited = true
+            d.removeObject(forKey: Keys.historyRetentionEffectiveAt)
         }
     }
 

@@ -56,6 +56,73 @@ enum HistorySettingsVerifier {
             throw Failure(description: "unlimited retention trimmed merged history")
         }
 
+        let legacySnapshot = try JSONDecoder().decode(
+            ClipboardStoreSnapshot.self,
+            from: Data(#"{"history":[],"pinboards":[]}"#.utf8)
+        )
+        guard legacySnapshot.configuration == nil else {
+            throw Failure(description: "legacy store unexpectedly decoded synchronized settings")
+        }
+
+        let earlier = Date(timeIntervalSince1970: 1_000)
+        let later = Date(timeIntervalSince1970: 2_000)
+        let effectiveAt = Date(timeIntervalSince1970: 2_010)
+        let olderConfiguration = SyncedHistoryRetentionConfiguration(
+            limit: 5_000,
+            unlimited: false,
+            updatedAt: earlier,
+            effectiveAt: nil,
+            revisionID: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        )
+        let newerConfiguration = SyncedHistoryRetentionConfiguration(
+            limit: 9_000,
+            unlimited: false,
+            updatedAt: later,
+            effectiveAt: effectiveAt,
+            revisionID: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+        )
+        guard newerConfiguration.supersedes(olderConfiguration),
+              !olderConfiguration.supersedes(newerConfiguration) else {
+            throw Failure(description: "history-setting conflict resolution is not last-writer-wins")
+        }
+
+        let lowerTieBreaker = SyncedHistoryRetentionConfiguration(
+            limit: 100,
+            unlimited: false,
+            updatedAt: later,
+            effectiveAt: effectiveAt,
+            revisionID: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        )
+        guard newerConfiguration.supersedes(lowerTieBreaker) else {
+            throw Failure(description: "equal-time history-setting conflicts are not deterministic")
+        }
+
+        let malformedUnlimited = SyncedHistoryRetentionConfiguration(
+            limit: 50_000,
+            unlimited: true,
+            updatedAt: later,
+            effectiveAt: effectiveAt,
+            revisionID: UUID()
+        ).normalized()
+        guard malformedUnlimited.limit == HistoryRetentionPolicy.maximumFiniteLimit,
+              malformedUnlimited.effectiveAt == nil else {
+            throw Failure(description: "synchronized history settings were not normalized safely")
+        }
+
+        let synchronizedSnapshot = ClipboardStoreSnapshot(
+            history: [],
+            pinboards: [],
+            configuration: SyncedConfiguration(historyRetention: newerConfiguration)
+        )
+        let roundTripData = try JSONEncoder().encode(synchronizedSnapshot)
+        let roundTrip = try JSONDecoder().decode(
+            ClipboardStoreSnapshot.self,
+            from: roundTripData
+        )
+        guard roundTrip.configuration?.historyRetention == newerConfiguration else {
+            throw Failure(description: "synchronized history settings did not survive JSON round-trip")
+        }
+
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("pesty-history-settings-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(

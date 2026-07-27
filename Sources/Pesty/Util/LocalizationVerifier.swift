@@ -23,6 +23,10 @@ enum LocalizationVerifier {
             [
                 (L10n.settings, "Settings…"),
                 (L10n.showMenuBarIcon, "Show menu bar icon"),
+                (
+                    L10n.syncAvailable,
+                    "Keeps your history, pinboards, and history limit in sync across your Macs through iCloud Drive."
+                ),
                 (L10n.searchClipboard, "Search"),
                 (L10n.checkForUpdates, "Check for Updates…"),
                 (L10n.updateToVersion("1.2.3"), "Update to Pesty 1.2.3"),
@@ -32,6 +36,12 @@ enum LocalizationVerifier {
                     "If a lower limit would remove existing items, deletion waits 10 seconds so you can undo it."
                 ),
                 (L10n.storageUsed, "Current storage used"),
+                (L10n.repairAccessibility, "Repair Access"),
+                (L10n.accessibilityRepairing, "Removing the old authorization…"),
+                (
+                    L10n.accessibilityRepairFailed("exit 1"),
+                    "Couldn’t reset the old authorization: exit 1"
+                ),
                 (L10n.clearHistoryConfirmationTitle, "Clear all clipboard history?"),
                 (
                     L10n.clearHistoryConfirmationMessage,
@@ -54,6 +64,10 @@ enum LocalizationVerifier {
             [
                 (L10n.settings, "设置…"),
                 (L10n.showMenuBarIcon, "显示菜单栏图标"),
+                (
+                    L10n.syncAvailable,
+                    "通过 iCloud Drive 在你的 Mac 之间同步历史记录、Pinboard 和历史记录上限。"
+                ),
                 (L10n.searchClipboard, "搜索"),
                 (L10n.checkForUpdates, "检查更新…"),
                 (L10n.updateToVersion("1.2.3"), "更新到 Pesty 1.2.3"),
@@ -63,6 +77,12 @@ enum LocalizationVerifier {
                     "如果降低上限会删除已有记录，Pesty 将等待 10 秒再清理，期间可以调高或切回无限。"
                 ),
                 (L10n.storageUsed, "当前占用空间"),
+                (L10n.repairAccessibility, "修复权限"),
+                (L10n.accessibilityRepairing, "正在移除旧授权……"),
+                (
+                    L10n.accessibilityRepairFailed("exit 1"),
+                    "无法重置旧授权：exit 1"
+                ),
                 (L10n.clearHistoryConfirmationTitle, "确定清除全部剪贴板历史记录吗？"),
                 (
                     L10n.clearHistoryConfirmationMessage,

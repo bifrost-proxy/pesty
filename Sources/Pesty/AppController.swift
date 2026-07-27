@@ -371,6 +371,18 @@ final class AppController: NSObject, NSApplicationDelegate {
             settingsWindow?.orderOut(nil)
         }
 
+        let resetCommand = PasteService.accessibilityResetCommand()
+        guard resetCommand.executable == "/usr/bin/tccutil",
+              resetCommand.arguments == [
+                  "reset",
+                  "Accessibility",
+                  "com.bifrostproxy.pesty",
+              ] else {
+            throw SettingsAccessVerificationFailure(
+                description: "Accessibility repair did not target only Pesty"
+            )
+        }
+
         UpdateManager.shared.injectAvailableReleaseForVerification(version: "99.0.0")
         Settings.shared.showMenuBarIcon = false
         guard statusItem == nil else {
