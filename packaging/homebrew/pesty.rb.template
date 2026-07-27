@@ -4,7 +4,7 @@ cask "pesty" do
 
   url "https://github.com/bifrost-proxy/pesty/releases/download/v#{version}/Pesty-#{version}.dmg"
   name "Pesty"
-  desc "Free, open-source clipboard manager for macOS"
+  desc "Free, open-source clipboard manager"
   homepage "https://github.com/bifrost-proxy/pesty"
 
   depends_on macos: :sonoma
@@ -16,14 +16,14 @@ cask "pesty" do
                    args: ["-dr", "com.apple.quarantine", "#{appdir}/Pesty.app"]
   end
 
+  zap trash: [
+    "~/Library/Application Support/Pesty",
+    "~/Library/Preferences/com.bifrostproxy.pesty.plist",
+  ]
+
   caveats <<~EOS
     This community build is ad-hoc signed because it is published without an
     Apple Developer ID certificate. The cask removes the quarantine attribute
     after verifying the release SHA-256 so macOS can open the app.
   EOS
-
-  zap trash: [
-    "~/Library/Application Support/Pesty",
-    "~/Library/Preferences/com.bifrostproxy.pesty.plist",
-  ]
 end
