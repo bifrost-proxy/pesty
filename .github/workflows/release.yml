@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-beta.N tag to publish"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -20,22 +26,31 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
 
       - name: Validate release tag and channel
         id: version
         shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]]; then
-            echo "Release tags must use vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-beta.N: $GITHUB_REF_NAME"
+            echo "Release tags must use vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-beta.N: $RELEASE_TAG"
             exit 1
           fi
-          git fetch origin main
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+          git fetch origin main --tags
+          if ! git rev-parse --verify "refs/tags/$RELEASE_TAG" >/dev/null; then
+            echo "Release tag does not exist: $RELEASE_TAG"
+            exit 1
+          fi
+          TAG_COMMIT="$(git rev-list -n 1 "$RELEASE_TAG")"
+          if ! git merge-base --is-ancestor "$TAG_COMMIT" origin/main; then
             echo "Release tag must point to a commit reachable from origin/main"
             exit 1
           fi
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "value=$VERSION" >> "$GITHUB_OUTPUT"
           if [[ "$VERSION" == *-beta.* ]]; then
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
@@ -95,6 +110,7 @@ jobs:
           offered only to installed Pesty Beta versions. It is not published to
           the stable Homebrew tap."
           else
+            RELEASE_ARGS+=(--latest)
             RELEASE_ASSETS=(
               "${{ steps.checksum.outputs.dmg }}"
               packaging/pesty.rb
@@ -111,7 +127,7 @@ jobs:
           This build is not Apple-notarized. The Homebrew cask verifies the
           SHA-256 and removes quarantine after installation."
           fi
-          gh release create "$GITHUB_REF_NAME" \
+          gh release create "${{ steps.version.outputs.tag }}" \
             "${RELEASE_ASSETS[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \

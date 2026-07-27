@@ -354,6 +354,12 @@ Read back the generated DMG and Cask rather than trusting command exit status
 alone. Publishing and tap updates remain separate, explicitly authorized
 actions.
 
+If a tag-triggered workflow fails before creating its GitHub Release, do not
+delete or move the published tag. Fix the workflow on `main`, then dispatch the
+Release workflow with the exact existing tag. The retry must check out that tag,
+verify that its commit is reachable from `main`, and rebuild all assets before
+publishing.
+
 ## Definition of Done
 
 A clipboard, history, iCloud, or panel change is not complete until:
