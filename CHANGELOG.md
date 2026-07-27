@@ -6,6 +6,11 @@ All notable changes to Pesty are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- Added automatic light and dark appearances that follow the macOS system
+  setting, with deterministic appearance and contrast verification in CI.
+
 ### Changed
 
 - Moved the user guide, support information, and privacy notice into Markdown

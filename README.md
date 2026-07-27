@@ -28,6 +28,7 @@ Pesty 会在本机保存剪贴板历史。按下全局快捷键后，屏幕底�
 - 启动时及每小时自动检查更新，也支持手动检查；发现新版本后可在菜单栏
   或剪贴板面板中一键安装并重启。
 - 正式版和 Beta 更新通道相互隔离，正式用户不会收到 Beta 版本。
+- 自动跟随 macOS 系统外观，在亮色和暗色主题间切换。
 - 支持中文和英文，并可在设置中即时切换。
 - 原生 Swift 和 SwiftUI 实现，不依赖第三方运行时。
 - 同时支持 Apple Silicon 和 Intel Mac。
@@ -78,6 +79,7 @@ git clone https://github.com/bifrost-proxy/pesty.git
 cd pesty
 swift build
 swift run Pesty --verify-localization
+swift run Pesty --verify-appearance
 swift run Pesty --verify-updater
 swift run
 ```
