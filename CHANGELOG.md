@@ -6,6 +6,24 @@ All notable changes to Pesty are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.6.2] - 2026-07-27
+
+### Changed
+
+- Made the clipboard panel substantially more transparent and switched to the
+  stronger native macOS sidebar material so background blur and vibrancy are
+  immediately visible.
+- Changed the default clipboard panel height for new installations to 350
+  pixels without overriding an existing saved height.
+
+### Fixed
+
+- Restored Command-Backspace as the only keyboard shortcut that deletes a
+  selected clipboard item, preventing plain Backspace or Forward Delete from
+  removing history when the search query is empty.
+
+[1.6.2]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.6.2
+
 ## [1.6.1] - 2026-07-27
 
 ### Changed

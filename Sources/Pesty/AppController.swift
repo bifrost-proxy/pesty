@@ -524,24 +524,17 @@ final class AppController: NSObject, NSApplicationDelegate {
                 store.deleteSelectedItem()
                 return nil
             }
+            if textEditor != nil {
+                return event
+            }
             if !store.searchText.isEmpty {
-                if textEditor != nil,
-                   ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"]
-                    != "keyboard-delete" {
-                    return event
-                }
                 store.searchText.removeLast()
                 store.selectFirst()
                 return nil
             }
-            store.deleteSelectedItem()
             return nil
         case kVK_ForwardDelete:
-            if !store.searchText.isEmpty, textEditor != nil {
-                return event
-            }
-            store.deleteSelectedItem()
-            return nil
+            return textEditor == nil ? nil : event
         default:
             break
         }

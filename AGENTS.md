@@ -95,6 +95,8 @@ prove either.
   discrete slider with 100-item nodes from 100 through 1,000, 1,000-item nodes
   from 2,000 through 10,000, and an unlimited node immediately after 10,000.
   Unlimited mode must also remain unlimited while merging iCloud snapshots.
+- New installations default to a 350-pixel clipboard panel height. Preserve
+  existing users' explicitly saved height instead of migrating it forcibly.
 - Lowering the limit must never trim immediately. Persist a deadline at least
   10 seconds in the future, keep all records during that grace period (including
   across restart and iCloud merge), and cancel or reschedule deletion when the
@@ -120,8 +122,8 @@ prove either.
   invalidation. Rebuilding the complete root `NSHostingView` after every panel
   presentation defeats reuse and is not allowed.
 - The clipboard panel uses one native `NSVisualEffectView` behind a lightly
-  tinted translucent overlay. Keep panel tint opacity between 0.12 and 0.30.
-  Cards must remain substantially more opaque (0.86 through 0.95) so desktop
+  tinted translucent overlay. Keep panel tint opacity between 0.005 and 0.06.
+  Cards must remain substantially more opaque (0.80 through 0.90) so desktop
   content never harms clipboard readability. Do not add one visual-effect view
   per card; that breaks the memory and scrolling budget.
 
@@ -262,10 +264,11 @@ filtering, or panel presentation lifecycle.
 
 ### Keyboard deletion regression
 
-Backspace with an empty search deletes the selected card. Selection must move
-to the following card that shifts into the deleted index; deleting the final
-card falls back to the preceding card. Backspace continues to edit the query
-instead of deleting a card while search is non-empty.
+Only Command-Backspace deletes the selected card. Plain Backspace and Forward
+Delete must never delete clipboard history when search is empty. Backspace
+continues to edit the query while search is active. After Command-Backspace,
+selection must move to the following card that shifts into the deleted index;
+deleting the final card falls back to the preceding card.
 
 Run the isolated keyboard regression for changes to keyboard handling,
 selection, deletion, filtering, or strip navigation:

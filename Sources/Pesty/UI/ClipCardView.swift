@@ -97,7 +97,7 @@ struct ClipCardView: View {
                 palette.cardBody.swiftUIColor
                 LinearGradient(
                     colors: [
-                        Color.white.opacity(colorScheme == .dark ? 0.045 : 0.15),
+                        Color.white.opacity(colorScheme == .dark ? 0.035 : 0.08),
                         Color.clear,
                     ],
                     startPoint: .top,

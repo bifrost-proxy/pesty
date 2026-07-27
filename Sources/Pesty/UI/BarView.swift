@@ -150,14 +150,15 @@ struct BarView: View {
     var body: some View {
         ZStack {
             VisualEffectView(
-                material: colorScheme == .dark ? .hudWindow : .underWindowBackground,
-                blending: .behindWindow
+                material: .sidebar,
+                blending: .behindWindow,
+                isEmphasized: true
             )
             palette.panelTint.swiftUIColor
             LinearGradient(
                 colors: [
-                    Color.white.opacity(colorScheme == .dark ? 0.035 : 0.09),
-                    Color.white.opacity(0.015),
+                    Color.white.opacity(colorScheme == .dark ? 0.06 : 0.13),
+                    Color.white.opacity(colorScheme == .dark ? 0.018 : 0.035),
                     Color.clear,
                 ],
                 startPoint: .top,
@@ -173,7 +174,7 @@ struct BarView: View {
         .clipShape(RoundedCorners(radius: Theme.cornerRadius, corners: [.topLeft, .topRight]))
         .overlay(alignment: .top) {
             Rectangle()
-                .fill(Color.white.opacity(colorScheme == .dark ? 0.12 : 0.42))
+                .fill(Color.white.opacity(colorScheme == .dark ? 0.18 : 0.55))
                 .frame(height: 1)
         }
         .ignoresSafeArea()
