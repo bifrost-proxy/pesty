@@ -19,6 +19,17 @@ agents.
 - Release builds are ad-hoc signed. They are not Developer ID signed or
   notarized.
 
+## Documentation Policy
+
+- Pesty does not maintain or deploy a standalone marketing or documentation
+  website.
+- Keep user and project documentation as Markdown in `README.md`, `docs/`, and
+  the repository's other top-level Markdown files.
+- Do not add GitHub Pages deployment, HTML landing pages, SEO/robots/sitemap
+  files, `llms.txt`, or site-only social-preview assets unless the user
+  explicitly reverses this decision.
+- Images used directly by Markdown documentation may remain in `docs/assets`.
+
 ## Source-of-Truth Layers
 
 Never collapse these layers into one conclusion:
