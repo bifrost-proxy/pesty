@@ -29,6 +29,11 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         monitor.start()
 
+        if ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"] != nil {
+            AutomatedUITestRunner.start(controller: self)
+            return
+        }
+
         HotKeyCenter.shared.onTrigger = { [weak self] in self?.toggleBar() }
         HotKeyCenter.shared.start()
 
@@ -196,6 +201,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         if front?.bundleIdentifier != Bundle.main.bundleIdentifier {
             previousApp = front
         }
+        store.reconcileFromDisk()
         store.searchText = ""
         store.source = .history
         store.selectFirst()
@@ -204,7 +210,9 @@ final class AppController: NSObject, NSApplicationDelegate {
             barController = BarWindowController()
         }
         barController?.show()
-        startKeyMonitor()
+        if ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"] == nil {
+            startKeyMonitor()
+        }
     }
 
     func hideBar() {

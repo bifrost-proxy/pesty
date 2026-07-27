@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import OSLog
 
 enum BarSource: Equatable {
     case history
@@ -30,10 +31,17 @@ final class ClipboardStore {
 
     private var fileWatch: DispatchSourceFileSystemObject?
     private var ignoreWatchUntil: Date = .distantPast
+    private let logger = Logger(subsystem: "com.bifrostproxy.pesty", category: "clipboard-store")
 
     static var localBase: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Pesty", isDirectory: true)
+    }
+
+    static var automatedTestBase: URL? {
+        guard let path = ProcessInfo.processInfo.environment["PESTY_AUTOMATED_TEST_DATA_DIR"],
+              !path.isEmpty else { return nil }
+        return URL(fileURLWithPath: path, isDirectory: true)
     }
 
     static var isSandboxed: Bool {
@@ -51,13 +59,17 @@ final class ClipboardStore {
     var iCloudAvailable: Bool { ClipboardStore.iCloudBase != nil }
 
     private init() {
-        let base = (Settings.shared.iCloudSync ? ClipboardStore.iCloudBase : nil) ?? ClipboardStore.localBase
+        let base = ClipboardStore.automatedTestBase
+            ?? (Settings.shared.iCloudSync ? ClipboardStore.iCloudBase : nil)
+            ?? ClipboardStore.localBase
         baseDir = base
         imagesDir = base.appendingPathComponent("images", isDirectory: true)
         storeURL = base.appendingPathComponent("store.json")
         prepareDirectories()
         load()
-        if Settings.shared.iCloudSync { startWatching() }
+        if Settings.shared.iCloudSync && ClipboardStore.automatedTestBase == nil {
+            startWatching()
+        }
     }
 
     private func prepareDirectories() {
@@ -126,6 +138,19 @@ final class ClipboardStore {
         selectedID = nil
         for item in old { deleteImageFile(item) }
         scheduleSave()
+    }
+
+    func removeAutomatedTestItems(withTexts texts: Set<String>) {
+        let removedIDs = Set<UUID>(history.compactMap { item in
+            guard let text = item.text, texts.contains(text) else { return nil }
+            return item.id
+        })
+        guard !removedIDs.isEmpty else { return }
+        history.removeAll { removedIDs.contains($0.id) }
+        if let selectedID, removedIDs.contains(selectedID) {
+            selectFirst()
+        }
+        saveNow()
     }
 
     @discardableResult
@@ -228,10 +253,11 @@ final class ClipboardStore {
     }
 
     private func load() {
-        guard let data = try? Data(contentsOf: storeURL),
-              let snap = try? JSONDecoder().decode(Snapshot.self, from: data) else { return }
-        history = snap.history
-        pinboards = snap.pinboards
+        if let snap = readSnapshot(at: storeURL) {
+            history = snap.history
+            pinboards = snap.pinboards
+        }
+        reconcileFromDisk()
         selectFirst()
     }
 
@@ -243,11 +269,44 @@ final class ClipboardStore {
     }
 
     func saveNow() {
+        _ = writeSnapshot()
+    }
+
+    @discardableResult
+    private func writeSnapshot() -> Bool {
         let snap = Snapshot(history: history, pinboards: pinboards)
-        guard let data = try? JSONEncoder().encode(snap) else { return }
+        let data: Data
+        do {
+            data = try JSONEncoder().encode(snap)
+        } catch {
+            logger.error("Failed to encode clipboard history: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+
         ignoreWatchUntil = Date().addingTimeInterval(1.5)
-        try? data.write(to: storeURL, options: .atomic)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: storeURL.path)
+        var coordinationError: NSError?
+        var writeError: Error?
+        NSFileCoordinator().coordinate(
+            writingItemAt: storeURL,
+            options: .forReplacing,
+            error: &coordinationError
+        ) { coordinatedURL in
+            do {
+                try data.write(to: coordinatedURL, options: .atomic)
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o600],
+                    ofItemAtPath: coordinatedURL.path
+                )
+            } catch {
+                writeError = error
+            }
+        }
+
+        if let error = coordinationError ?? writeError as NSError? {
+            logger.error("Failed to save clipboard history: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+        return true
     }
 
     func setICloudSync(_ enabled: Bool) {
@@ -260,11 +319,11 @@ final class ClipboardStore {
                                 attributes: [.posixPermissions: 0o700])
 
         if fm.fileExists(atPath: newStore.path),
-           let data = try? Data(contentsOf: newStore),
-           let snap = try? JSONDecoder().decode(Snapshot.self, from: data) {
+           let snap = readSnapshot(at: newStore) {
             copyImages(from: imagesDir, to: newImages)
             baseDir = target; imagesDir = newImages; storeURL = newStore
-            mergeExternal(snap)
+            _ = mergeExternal(snap)
+            saveNow()
         } else {
             copyImages(from: imagesDir, to: newImages)
             baseDir = target; imagesDir = newImages; storeURL = newStore
@@ -292,8 +351,10 @@ final class ClipboardStore {
         }
     }
 
-    private func mergeExternal(_ snap: Snapshot) {
-        let before = history.count
+    @discardableResult
+    private func mergeExternal(_ snap: Snapshot) -> Bool {
+        let previousHistory = history
+        let previousPinboards = pinboards
         var combined = (history + snap.history).sorted { $0.createdAt > $1.createdAt }
         var seen = Set<String>()
         var merged: [ClipItem] = []
@@ -316,7 +377,50 @@ final class ClipboardStore {
 
         combined.removeAll()
         selectFirst()
-        if history.count != before || !snap.history.isEmpty { saveNow() }
+        return history != previousHistory || pinboards != previousPinboards
+    }
+
+    private func readSnapshot(at url: URL) -> Snapshot? {
+        do {
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder().decode(Snapshot.self, from: data)
+        } catch {
+            if FileManager.default.fileExists(atPath: url.path) {
+                logger.error("Failed to read clipboard history: \(error.localizedDescription, privacy: .public)")
+            }
+            return nil
+        }
+    }
+
+    /// Reconciles the in-memory store with both the current iCloud file and any
+    /// conflict versions. The merged snapshot is written before conflicts are
+    /// marked resolved, so no clipboard entries are discarded.
+    func reconcileFromDisk() {
+        var changed = false
+        if let snap = readSnapshot(at: storeURL) {
+            changed = mergeExternal(snap)
+        }
+
+        let conflicts = NSFileVersion.unresolvedConflictVersionsOfItem(at: storeURL) ?? []
+        for version in conflicts {
+            guard let snap = readSnapshot(at: version.url) else { continue }
+            changed = mergeExternal(snap) || changed
+        }
+
+        guard changed || !conflicts.isEmpty else { return }
+        guard writeSnapshot() else { return }
+
+        for version in conflicts {
+            version.isResolved = true
+        }
+        if !conflicts.isEmpty {
+            do {
+                try NSFileVersion.removeOtherVersionsOfItem(at: storeURL)
+                logger.info("Merged and resolved \(conflicts.count, privacy: .public) clipboard history conflict version(s)")
+            } catch {
+                logger.error("Failed to remove resolved history versions: \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 
     private func startWatching() {
@@ -327,12 +431,20 @@ final class ClipboardStore {
             fileDescriptor: fd, eventMask: [.write, .rename, .delete], queue: .main)
         src.setEventHandler { [weak self] in
             guard let self else { return }
-            if Date() < self.ignoreWatchUntil { return }
-            if let data = try? Data(contentsOf: self.storeURL),
-               let snap = try? JSONDecoder().decode(Snapshot.self, from: data) {
-                self.mergeExternal(snap)
+            let event = src.data
+            let needsReattach = event.contains(.rename) || event.contains(.delete)
+
+            if Date() >= self.ignoreWatchUntil,
+               let snap = self.readSnapshot(at: self.storeURL),
+               self.mergeExternal(snap) {
+                self.saveNow()
             }
-            self.startWatching()
+
+            if needsReattach {
+                DispatchQueue.main.async { [weak self] in
+                    self?.startWatching()
+                }
+            }
         }
         src.setCancelHandler { close(fd) }
         src.resume()

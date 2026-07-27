@@ -4,6 +4,26 @@ All notable changes to Pesty are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.3.2] - 2026-07-27
+
+### Added
+
+- Added an automated clipboard UI regression that verifies persistence,
+  filtering, and rendered cards across two complete application restarts.
+- Added repository-wide development, testing, installation, and release
+  guidance for future contributors and coding agents.
+
+### Fixed
+
+- Fixed the history strip showing only the newest card on macOS 26 even though
+  all clipboard entries existed in memory and on disk.
+- Coordinated iCloud history writes, merged readable conflict versions, and
+  reattached the file watcher after atomic replacements.
+- Reconciled the active store and rebuilt the SwiftUI hosting tree when opening
+  the panel so persisted history is reflected in the visible UI.
+
+[1.3.2]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.3.2
+
 ## [1.3.1] - 2026-07-27
 
 ### Fixed

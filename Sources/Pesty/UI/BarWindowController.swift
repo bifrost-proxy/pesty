@@ -51,7 +51,14 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             panel.animator().setFrame(onScreen, display: true)
         }, completionHandler: { [weak self] in
-            DispatchQueue.main.async { self?.isPresenting = false }
+            DispatchQueue.main.async {
+                guard let self, let panel = self.window else { return }
+                // A hosting tree first laid out while the panel is off-screen
+                // can retain an empty or partial horizontal strip on macOS 26.
+                // Rebuild it after the panel reaches its visible frame.
+                panel.contentView = NSHostingView(rootView: BarView())
+                self.isPresenting = false
+            }
         })
     }
 
