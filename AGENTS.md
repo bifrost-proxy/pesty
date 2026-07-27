@@ -89,9 +89,13 @@ prove either.
   only the leading card even when `history` and `visibleItems` contained many
   entries. Do not reintroduce a lazy horizontal container without passing the
   real UI regression described below.
-- The current deterministic `HStack`, explicit card height, and post-animation
-  `NSHostingView` rebuild are correctness requirements. Any performance
-  optimization must preserve the same rendered-card results on macOS 26.
+- The history strip uses a horizontal `NSCollectionView` with reusable
+  `NSHostingView` cells. Do not replace it with either an eager `HStack` or a
+  SwiftUI `LazyHStack`: the former has unbounded memory growth, while the latter
+  lost off-screen cards on macOS 26.
+- Keep the explicit card height and the post-animation collection-layout
+  invalidation. Rebuilding the complete root `NSHostingView` after every panel
+  presentation defeats reuse and is not allowed.
 
 ## Required Fast Checks
 
@@ -166,6 +170,31 @@ jq --arg prefix "pesty-auto-$run_id-" \
 ```
 
 Never count only the seed phase as sufficient. Both restart phases are required.
+
+### Horizontal strip performance test
+
+Build the release executable and run the deterministic 1,000-item test:
+
+```bash
+swift build -c release
+scripts/test_strip_performance.sh .build/release/Pesty
+```
+
+The result must report all of the following:
+
+- `historyCount`, `visibleCount`, and the decoded persisted store are exactly
+  1,000, in the original order. The test uses the volatile
+  `-historyLimit 5000` argument and must not change the user's saved setting.
+- The checkpoints at indexes 0, 249, 499, 749, and 999 are progressively
+  configured and actually rendered as selection scrolls across the strip.
+- At most 40 collection cells are created or simultaneously visible.
+- The five-checkpoint traversal completes within 6,000 milliseconds.
+- AppKit emits no undefined `NSCollectionViewFlowLayout` size warning.
+- Maximum resident set size is at most 100,000,000 bytes. Override
+  `PESTY_MAX_RSS_BYTES` only for diagnosis; do not weaken the release gate.
+
+Run this test for every change to the strip, card layout, image loading, search
+filtering, or panel presentation lifecycle.
 
 ### Real iCloud three-launch test
 

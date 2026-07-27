@@ -90,11 +90,7 @@ struct ClipCardView: View {
     private var content: some View {
         switch item.type {
         case .image:
-            if let img = store.loadImage(for: item) {
-                Image(nsImage: img)
-                    .resizable().interpolation(.medium).scaledToFit()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else { placeholder("photo") }
+            ClipThumbnailView(item: item)
         case .color:
             ZStack {
                 RoundedRectangle(cornerRadius: 8).fill(Color(hex: item.colorHex ?? "#000") ?? .black)

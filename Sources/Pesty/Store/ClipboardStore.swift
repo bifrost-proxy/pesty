@@ -153,6 +153,18 @@ final class ClipboardStore {
         saveNow()
     }
 
+    func replaceHistoryForAutomatedPerformanceTest(_ items: [ClipItem]) {
+        let environment = ProcessInfo.processInfo.environment
+        guard ClipboardStore.automatedTestBase != nil,
+              environment["PESTY_AUTOMATED_UI_TEST"] == "performance" else { return }
+        history = items
+        pinboards = []
+        source = .history
+        searchText = ""
+        selectedID = items.first?.id
+        saveNow()
+    }
+
     @discardableResult
     func addPinboard(name: String, colorHex: String = "#5B8DEF") -> Pinboard {
         let b = Pinboard(name: name, colorHex: colorHex)
