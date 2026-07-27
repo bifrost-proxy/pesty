@@ -6,6 +6,8 @@ All notable changes to Pesty are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-07-27
+
 ### Added
 
 - Added a manual update check and an automatic check at launch and every hour.
@@ -17,6 +19,8 @@ All notable changes to Pesty are documented here. The format is based on
   signature verification before an update can replace the installed app.
 - Uses the GitHub Releases Atom feed for production checks so manual and hourly
   checks do not depend on the anonymous REST API's shared rate limit.
+
+[1.4.0]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.4.0
 
 ## [1.3.2] - 2026-07-27
 
