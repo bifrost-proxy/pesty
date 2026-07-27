@@ -14,6 +14,8 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var settingsWindow: NSWindow?
     private var keyMonitor: Any?
     private var languageObserver: NSObjectProtocol?
+    private var updateObserver: NSObjectProtocol?
+    private var presentedUpdateError: String?
 
     private(set) var previousApp: NSRunningApplication?
     private(set) var lastActiveApp: NSRunningApplication?
@@ -52,12 +54,32 @@ final class AppController: NSObject, NSApplicationDelegate {
             name: .pestyMenuBarIconVisibilityDidChange,
             object: nil
         )
+        updateObserver = NotificationCenter.default.addObserver(
+            forName: .pestyUpdateStateDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.updateStatusItemAppearance()
+                self?.rebuildStatusItemMenu()
+                self?.presentInstallationErrorIfNeeded()
+            }
+        }
 
         if Settings.shared.launchAtLogin { LaunchAtLogin.set(enabled: true) }
 
         if CommandLine.arguments.contains("--verify-settings-access") {
             verifySettingsAccessAndExit()
             return
+        }
+
+        UpdateManager.shared.start()
+
+        if ProcessInfo.processInfo.environment["PESTY_UPDATE_ROLLBACK"] == "1" {
+            DispatchQueue.main.async { [weak self] in
+                self?.showUpdateAlert(
+                    title: L10n.updateInstallFailed,
+                    message: L10n.updateRestoredPreviousVersion
+                )
+            }
         }
 
         if CommandLine.arguments.contains("--demo") {
@@ -105,8 +127,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         guard statusItem == nil else { return }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            button.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "Pesty")
-            button.image?.isTemplate = true
+            configureStatusItemButton(button)
         }
         statusItem = item
         rebuildStatusItemMenu()
@@ -132,15 +153,38 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     @objc private func statusItemVisibilityDidChange() {
         updateStatusItemVisibility()
+        updateStatusItemAppearance()
+        rebuildStatusItemMenu()
     }
 
     private func rebuildStatusItemMenu() {
         guard let item = statusItem else { return }
         let menu = NSMenu()
+        if let release = UpdateManager.shared.availableRelease {
+            let update = menu.addItem(
+                withTitle: updateActionTitle(for: release),
+                action: UpdateManager.shared.isInstalling ? nil : #selector(menuInstallUpdate),
+                keyEquivalent: ""
+            )
+            update.target = self
+            update.image = NSImage(
+                systemSymbolName: "arrow.down.circle.fill",
+                accessibilityDescription: L10n.updateAvailable
+            )
+            menu.addItem(.separator())
+        }
         menu.addItem(withTitle: "\(L10n.openPesty)   \(Settings.shared.hotkeyDisplay)",
                      action: #selector(menuOpen), keyEquivalent: "").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: L10n.settings, action: #selector(menuSettings), keyEquivalent: ",").target = self
+        let check = menu.addItem(
+            withTitle: L10n.checkForUpdates,
+            action: #selector(menuCheckForUpdates),
+            keyEquivalent: ""
+        )
+        check.target = self
+        check.isEnabled = UpdateManager.shared.activity != .checking
+            && !UpdateManager.shared.isInstalling
         menu.addItem(withTitle: L10n.clearHistory, action: #selector(menuClear), keyEquivalent: "").target = self
         menu.addItem(.separator())
         let about = menu.addItem(withTitle: L10n.aboutPesty, action: #selector(menuAbout), keyEquivalent: "")
@@ -154,6 +198,33 @@ final class AppController: NSObject, NSApplicationDelegate {
     @objc private func menuClear() { store.clearHistory() }
     @objc private func menuQuit() { NSApp.terminate(nil) }
     @objc private func menuAbout() { showAbout() }
+    @objc private func menuInstallUpdate() { UpdateManager.shared.installAvailableUpdate() }
+    @objc private func menuCheckForUpdates() { checkForUpdatesManually() }
+
+    func checkForUpdatesManually() {
+        Task {
+            let outcome = await UpdateManager.shared.checkForUpdates()
+            switch outcome {
+            case .updateAvailable(let release):
+                let alert = NSAlert()
+                alert.messageText = L10n.updateAvailable
+                alert.informativeText = L10n.updateAvailableMessage(release.version)
+                alert.addButton(withTitle: L10n.installAndRestart)
+                alert.addButton(withTitle: L10n.later)
+                NSApp.activate(ignoringOtherApps: true)
+                if alert.runModal() == .alertFirstButtonReturn {
+                    UpdateManager.shared.installAvailableUpdate()
+                }
+            case .upToDate:
+                showUpdateAlert(
+                    title: L10n.upToDate,
+                    message: L10n.upToDateMessage(Bundle.main.shortVersion)
+                )
+            case .failed(let message):
+                showUpdateAlert(title: L10n.updateCheckFailed, message: message)
+            }
+        }
+    }
 
     func showAbout() {
         NSApp.activate(ignoringOtherApps: true)
@@ -273,10 +344,17 @@ final class AppController: NSObject, NSApplicationDelegate {
             settingsWindow?.orderOut(nil)
         }
 
+        UpdateManager.shared.injectAvailableReleaseForVerification(version: "99.0.0")
         Settings.shared.showMenuBarIcon = false
         guard statusItem == nil else {
             throw SettingsAccessVerificationFailure(
                 description: "menu bar icon remained visible after hiding it"
+            )
+        }
+        guard UpdateManager.shared.showInClipboardBar,
+              !UpdateManager.shared.showInMenuBar else {
+            throw SettingsAccessVerificationFailure(
+                description: "hidden menu icon did not move the update indicator into the clipboard bar"
             )
         }
         guard shouldShowSettingsAfterLaunch(launchedAsLoginItem: false),
@@ -290,6 +368,15 @@ final class AppController: NSObject, NSApplicationDelegate {
         guard statusItem != nil else {
             throw SettingsAccessVerificationFailure(
                 description: "menu bar icon did not return after showing it"
+            )
+        }
+        guard UpdateManager.shared.showInMenuBar,
+              !UpdateManager.shared.showInClipboardBar,
+              statusItem?.menu?.items.contains(where: {
+                  $0.action == #selector(menuInstallUpdate)
+              }) == true else {
+            throw SettingsAccessVerificationFailure(
+                description: "visible menu icon did not expose the immediate update action"
             )
         }
 
@@ -312,6 +399,51 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private struct SettingsAccessVerificationFailure: Error, CustomStringConvertible {
         let description: String
+    }
+
+    private func configureStatusItemButton(_ button: NSStatusBarButton) {
+        let hasUpdate = UpdateManager.shared.showInMenuBar
+        button.image = NSImage(
+            systemSymbolName: hasUpdate ? "arrow.down.circle.fill" : "doc.on.clipboard",
+            accessibilityDescription: hasUpdate ? L10n.updateAvailable : "Pesty"
+        )
+        button.image?.isTemplate = !hasUpdate
+        button.contentTintColor = hasUpdate ? .systemBlue : nil
+        button.toolTip = hasUpdate
+            ? L10n.updateAvailableMessage(UpdateManager.shared.availableRelease?.version ?? "")
+            : "Pesty"
+    }
+
+    private func updateStatusItemAppearance() {
+        guard let button = statusItem?.button else { return }
+        configureStatusItemButton(button)
+    }
+
+    private func updateActionTitle(for release: AppRelease) -> String {
+        switch UpdateManager.shared.activity {
+        case .downloading:
+            return L10n.downloadingUpdate(release.version)
+        case .installing:
+            return L10n.installingUpdate(release.version)
+        default:
+            return L10n.updateToVersion(release.version)
+        }
+    }
+
+    private func presentInstallationErrorIfNeeded() {
+        guard let message = UpdateManager.shared.lastInstallationError,
+              message != presentedUpdateError else { return }
+        presentedUpdateError = message
+        showUpdateAlert(title: L10n.updateInstallFailed, message: message)
+    }
+
+    private func showUpdateAlert(title: String, message: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: L10n.ok)
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 
     private func startKeyMonitor() {
@@ -376,8 +508,12 @@ final class AppController: NSObject, NSApplicationDelegate {
 }
 
 extension Bundle {
+    var shortVersion: String {
+        infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+    }
+
     var appVersion: String {
-        let short = infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0"
+        let short = shortVersion
         let build = infoDictionary?["CFBundleVersion"] as? String ?? "0"
         return "\(short) (\(build))"
     }

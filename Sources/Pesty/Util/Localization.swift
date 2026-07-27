@@ -95,6 +95,7 @@ enum L10n {
 
     static var openPesty: String { text("Open Pesty", "打开 Pesty") }
     static var settings: String { text("Settings…", "设置…") }
+    static var checkForUpdates: String { text("Check for Updates…", "检查更新…") }
     static var clearHistory: String { text("Clear History", "清除历史记录") }
     static var aboutPesty: String { text("About Pesty", "关于 Pesty") }
     static var quitPesty: String { text("Quit Pesty", "退出 Pesty") }
@@ -113,6 +114,100 @@ enum L10n {
     static var reportIssue: String { text("Report an Issue", "反馈问题") }
     static var licenseDescription: String {
         text("MIT Licensed · Made with SwiftUI", "MIT 许可 · 使用 SwiftUI 制作")
+    }
+    static var updateAvailable: String { text("Update Available", "发现新版本") }
+    static func updateAvailableMessage(_ version: String) -> String {
+        text("Pesty \(version) is ready to install.",
+             "Pesty \(version) 已可安装。")
+    }
+    static func updateToVersion(_ version: String) -> String {
+        text("Update to Pesty \(version)", "更新到 Pesty \(version)")
+    }
+    static func downloadingUpdate(_ version: String) -> String {
+        text("Downloading Pesty \(version)…", "正在下载 Pesty \(version)…")
+    }
+    static func installingUpdate(_ version: String) -> String {
+        text("Installing Pesty \(version)…", "正在安装 Pesty \(version)…")
+    }
+    static var installAndRestart: String {
+        text("Install and Restart", "安装并重启")
+    }
+    static var later: String { text("Later", "稍后") }
+    static var upToDate: String { text("Pesty Is Up to Date", "Pesty 已是最新版本") }
+    static func upToDateMessage(_ version: String) -> String {
+        text("You are running Pesty \(version).",
+             "你正在使用 Pesty \(version)。")
+    }
+    static var updateCheckFailed: String {
+        text("Unable to Check for Updates", "无法检查更新")
+    }
+    static var updateInstallFailed: String {
+        text("Unable to Install Update", "无法安装更新")
+    }
+    static var updateRestoredPreviousVersion: String {
+        text("The update could not be completed. Pesty restored and reopened the previous version.",
+             "更新未能完成。Pesty 已恢复并重新打开之前的版本。")
+    }
+    static var updateAlreadyInProgress: String {
+        text("An update operation is already in progress.", "更新操作正在进行中。")
+    }
+    static var updateInvalidResponse: String {
+        text("The update server returned an invalid response.", "更新服务器返回了无效响应。")
+    }
+    static var updateInvalidRelease: String {
+        text("The latest release metadata is invalid.", "最新版本的元数据无效。")
+    }
+    static func updateMissingAsset(_ name: String) -> String {
+        text("The release is missing \(name).", "该版本缺少 \(name)。")
+    }
+    static var updateMissingDigest: String {
+        text("The release does not include a valid SHA-256 digest.",
+             "该版本未提供有效的 SHA-256 摘要。")
+    }
+    static var updateUntrustedURL: String {
+        text("The release download URL is not trusted.", "版本下载地址不受信任。")
+    }
+    static var updateDownloadFailed: String {
+        text("The update could not be downloaded.", "无法下载更新。")
+    }
+    static var updateChecksumFailed: String {
+        text("The downloaded update failed SHA-256 verification.",
+             "下载的更新未通过 SHA-256 校验。")
+    }
+    static func updateDiskImageFailed(_ detail: String) -> String {
+        text("The update disk image could not be opened: \(detail)",
+             "无法打开更新磁盘映像：\(detail)")
+    }
+    static var updateMissingApp: String {
+        text("The update does not contain Pesty.app.", "更新包中没有 Pesty.app。")
+    }
+    static var updateInvalidBundle: String {
+        text("The update has an invalid application identity.", "更新的应用身份无效。")
+    }
+    static func updateVersionMismatch(_ version: String) -> String {
+        text("The update contains unexpected version \(version).",
+             "更新包中的版本 \(version) 与预期不符。")
+    }
+    static var updateInvalidArchitecture: String {
+        text("The update is not a Universal Apple Silicon and Intel build.",
+             "更新不是同时支持 Apple Silicon 和 Intel 的通用构建。")
+    }
+    static func updateSignatureFailed(_ detail: String) -> String {
+        text("The update failed code-signature verification: \(detail)",
+             "更新未通过代码签名校验：\(detail)")
+    }
+    static var updateAppNotWritable: String {
+        text("Pesty cannot replace its current application. Reinstall it in Applications using your user account.",
+             "Pesty 无法替换当前应用。请使用当前用户将它重新安装到“应用程序”。")
+    }
+    static var updateHelperFailed: String {
+        text("The update installer could not be prepared.", "无法准备更新安装程序。")
+    }
+    static var updateMountPointMissing: String {
+        text("The mounted update has no readable volume.", "挂载的更新没有可读取的卷。")
+    }
+    static var updateUnknownError: String {
+        text("Unknown update error", "未知更新错误")
     }
 
     static var clipboard: String { text("Clipboard", "剪贴板") }
@@ -169,4 +264,6 @@ extension Notification.Name {
     static let pestyLanguageDidChange = Notification.Name("PestyLanguageDidChange")
     static let pestyMenuBarIconVisibilityDidChange =
         Notification.Name("PestyMenuBarIconVisibilityDidChange")
+    static let pestyUpdateStateDidChange =
+        Notification.Name("PestyUpdateStateDidChange")
 }
