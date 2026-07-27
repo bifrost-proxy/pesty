@@ -458,7 +458,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         if let m = keyMonitor { NSEvent.removeMonitor(m); keyMonitor = nil }
     }
 
-    private func handleKey(_ event: NSEvent) -> NSEvent? {
+    func handleKey(_ event: NSEvent) -> NSEvent? {
         let code = Int(event.keyCode)
         let flags = event.modifierFlags
         let cmd = flags.contains(.command)
@@ -483,13 +483,17 @@ final class AppController: NSObject, NSApplicationDelegate {
         case kVK_RightArrow, kVK_DownArrow:
             store.moveSelection(by: 1); return nil
         case kVK_Delete:
-            if cmd, let sel = store.selectedItem { store.delete(sel); return nil }
+            if cmd {
+                store.deleteSelectedItem()
+                return nil
+            }
             if !store.searchText.isEmpty {
                 store.searchText.removeLast(); store.selectFirst(); return nil
             }
+            store.deleteSelectedItem()
             return nil
         case kVK_ForwardDelete:
-            if let sel = store.selectedItem { store.delete(sel) }
+            store.deleteSelectedItem()
             return nil
         default:
             break

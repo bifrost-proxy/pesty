@@ -12,8 +12,9 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
     private var isPresenting = false
 
     init() {
+        let initialHeight = CGFloat(Settings.shared.barHeight)
         let panel = BarPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 800, height: 360),
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: initialHeight),
             styleMask: [.borderless],
             backing: .buffered,
             defer: false)
@@ -53,10 +54,11 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
         }, completionHandler: { [weak self] in
             DispatchQueue.main.async {
                 guard let self, let panel = self.window else { return }
-                // A hosting tree first laid out while the panel is off-screen
-                // can retain an empty or partial horizontal strip on macOS 26.
-                // Rebuild it after the panel reaches its visible frame.
-                panel.contentView = NSHostingView(rootView: BarView())
+                panel.contentView?.layoutSubtreeIfNeeded()
+                NotificationCenter.default.post(
+                    name: .pestyBarDidFinishPresentation,
+                    object: panel
+                )
                 self.isPresenting = false
             }
         })

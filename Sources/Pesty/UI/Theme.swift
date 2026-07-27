@@ -34,6 +34,20 @@ struct ThemePalette: Sendable {
     let pillSelected: ThemeColor
 }
 
+private enum ClipDateFormatters {
+    static let relative: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter
+    }()
+
+    static let monthDay: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d"
+        return formatter
+    }()
+}
+
 enum Theme {
     static let cardWidth: CGFloat = 215
     static let cardSpacing: CGFloat = 12
@@ -97,18 +111,15 @@ extension Date {
         case ..<86_400:   return "\(Int(secs / 3600))h"
         case ..<604_800:  return "\(Int(secs / 86_400))d"
         default:
-            let f = DateFormatter()
-            f.dateFormat = "MMM d"
-            return f.string(from: self)
+            return ClipDateFormatters.monthDay.string(from: self)
         }
     }
 
     var clipRelativeLong: String {
         let secs = -timeIntervalSinceNow
         if secs < 8 { return L10n.justNow }
-        let f = RelativeDateTimeFormatter()
-        f.unitsStyle = .full
-        f.locale = Locale(identifier: L10n.localeIdentifier)
-        return f.localizedString(for: self, relativeTo: Date())
+        let formatter = ClipDateFormatters.relative
+        formatter.locale = Locale(identifier: L10n.localeIdentifier)
+        return formatter.localizedString(for: self, relativeTo: Date())
     }
 }

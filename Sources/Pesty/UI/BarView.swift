@@ -144,39 +144,19 @@ struct BarView: View {
     }
 
     private var strip: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: Theme.cardSpacing) {
-                    ForEach(Array(store.visibleItems.enumerated()), id: \.element.id) { index, item in
-                        ClipCardView(item: item,
-                                     index: index,
-                                     selected: item.id == store.selectedID)
-                            .frame(height: cardHeight)
-                            .id(item.id)
-                            .transition(.asymmetric(
-                                insertion: .scale(scale: 0.92).combined(with: .opacity),
-                                removal: .opacity))
-                    }
-                }
-                .padding(.horizontal, 18)
-                .padding(.top, 4)
-                .padding(.bottom, 18)
-                .animation(.spring(response: 0.34, dampingFraction: 0.8), value: store.visibleItems.count)
-                .frame(height: cardHeight + 22)
-            }
-            .onChange(of: store.selectedID) { _, id in
-                guard let id else { return }
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.78)) {
-                    proxy.scrollTo(id, anchor: .center)
-                }
-            }
-            .overlay { if store.visibleItems.isEmpty { emptyState } }
-        }
+        let visibleItems = store.visibleItems
+        return VirtualizedClipStrip(
+            items: visibleItems,
+            selectedID: store.selectedID,
+            cardHeight: cardHeight,
+            language: settings.language
+        )
+        .overlay { if visibleItems.isEmpty { emptyState } }
         .frame(maxHeight: .infinity)
     }
 
     private var cardHeight: CGFloat {
-        max(160, CGFloat(settings.barHeight) - 78)
+        max(160, CGFloat(settings.barHeight) - 82)
     }
 
     private var emptyState: some View {
