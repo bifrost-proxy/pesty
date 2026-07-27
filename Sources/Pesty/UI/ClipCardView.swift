@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct ClipCardView: View {
+    @Environment(\.colorScheme) private var colorScheme
     let item: ClipItem
     let index: Int
     let selected: Bool
@@ -9,6 +10,7 @@ struct ClipCardView: View {
     private var store: ClipboardStore { ClipboardStore.shared }
     @Bindable private var settings = Settings.shared
     private var headerColor: Color { SourceColor.color(for: item.sourceBundleID) }
+    private var palette: ThemePalette { Theme.palette(for: colorScheme) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -19,7 +21,9 @@ struct ClipCardView: View {
         .clipShape(RoundedRectangle(cornerRadius: Theme.cardCorner, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: Theme.cardCorner, style: .continuous)
-                .strokeBorder(selected ? Theme.selection : Theme.cardBorder,
+                .strokeBorder(selected
+                    ? palette.selection.swiftUIColor
+                    : palette.cardBorder.swiftUIColor,
                               lineWidth: selected ? 2.5 : 1)
         )
         .shadow(color: .black.opacity(selected ? 0.35 : 0.18),
@@ -79,7 +83,7 @@ struct ClipCardView: View {
         .padding(.top, 11)
         .padding(.bottom, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.cardBody)
+        .background(palette.cardBody.swiftUIColor)
     }
 
     @ViewBuilder
@@ -104,7 +108,7 @@ struct ClipCardView: View {
                 Image(systemName: "doc.fill").font(.system(size: 32))
                     .foregroundStyle(headerColor)
                 Text(item.displayTitle).font(.system(size: 12))
-                    .foregroundStyle(Theme.textSecondary).lineLimit(2)
+                    .foregroundStyle(palette.textSecondary.swiftUIColor).lineLimit(2)
                     .multilineTextAlignment(.center)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -112,14 +116,14 @@ struct ClipCardView: View {
             VStack(spacing: 10) {
                 Spacer(minLength: 0)
                 Image(systemName: "safari").font(.system(size: 34, weight: .light))
-                    .foregroundStyle(Theme.textTertiary)
+                    .foregroundStyle(palette.textTertiary.swiftUIColor)
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity)
         default:
             Text(item.text ?? "")
                 .font(.system(size: 12.5))
-                .foregroundStyle(Theme.textPrimary.opacity(0.9))
+                .foregroundStyle(palette.textPrimary.swiftUIColor.opacity(0.9))
                 .lineLimit(10)
                 .multilineTextAlignment(.leading)
         }
@@ -127,7 +131,7 @@ struct ClipCardView: View {
 
     private func placeholder(_ symbol: String) -> some View {
         Image(systemName: symbol).font(.system(size: 30))
-            .foregroundStyle(Theme.textTertiary)
+            .foregroundStyle(palette.textTertiary.swiftUIColor)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
@@ -136,12 +140,12 @@ struct ClipCardView: View {
             if item.type == .link {
                 Text(item.displayTitle)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    .foregroundStyle(palette.textPrimary.swiftUIColor).lineLimit(1)
             }
             HStack(spacing: 6) {
                 Text(metaLeft)
                     .font(.system(size: 11))
-                    .foregroundStyle(Theme.textSecondary)
+                    .foregroundStyle(palette.textSecondary.swiftUIColor)
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 if index < 9 {
@@ -151,7 +155,7 @@ struct ClipCardView: View {
                         Text("\(index + 1)")
                             .font(.system(size: 11, weight: .semibold))
                     }
-                    .foregroundStyle(Theme.textTertiary)
+                    .foregroundStyle(palette.textTertiary.swiftUIColor)
                 }
             }
         }

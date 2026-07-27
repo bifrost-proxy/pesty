@@ -28,6 +28,18 @@ struct PestyMain {
             return
         }
 
+        if CommandLine.arguments.contains("--verify-appearance") {
+            _ = NSApplication.shared
+            do {
+                try AppearanceVerifier.run()
+                print("Appearance verification passed")
+            } catch {
+                fputs("Appearance verification failed: \(error)\n", stderr)
+                exit(EXIT_FAILURE)
+            }
+            return
+        }
+
         let app = NSApplication.shared
         let delegate = AppController.shared
         app.delegate = delegate

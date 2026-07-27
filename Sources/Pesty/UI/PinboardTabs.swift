@@ -1,8 +1,11 @@
 import SwiftUI
 
 struct PinboardTabs: View {
+    @Environment(\.colorScheme) private var colorScheme
     @Bindable private var store = ClipboardStore.shared
     @Bindable private var settings = Settings.shared
+
+    private var palette: ThemePalette { Theme.palette(for: colorScheme) }
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -31,9 +34,9 @@ struct PinboardTabs: View {
                 Button(action: addPinboard) {
                     Image(systemName: "plus")
                         .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(Theme.textSecondary)
+                        .foregroundStyle(palette.textSecondary.swiftUIColor)
                         .frame(width: 26, height: 26)
-                        .background(Theme.fieldBG, in: Circle())
+                        .background(palette.fieldBackground.swiftUIColor, in: Circle())
                 }
                 .buttonStyle(.plain)
                 .help(L10n.newPinboard)
@@ -57,10 +60,15 @@ struct PinboardTabs: View {
                     .font(.system(size: 12.5, weight: .medium))
                     .lineLimit(1)
             }
-            .foregroundStyle(selected ? Theme.textPrimary : Theme.textSecondary)
+            .foregroundStyle(selected
+                ? palette.textPrimary.swiftUIColor
+                : palette.textSecondary.swiftUIColor)
             .padding(.horizontal, 12)
             .frame(height: 29)
-            .background(selected ? Theme.pillSelected : Theme.pillBG, in: Capsule())
+            .background(selected
+                ? palette.pillSelected.swiftUIColor
+                : palette.pillBackground.swiftUIColor,
+                in: Capsule())
         }
         .buttonStyle(.plain)
         .fixedSize()

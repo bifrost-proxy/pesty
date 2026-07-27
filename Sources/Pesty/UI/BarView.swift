@@ -1,14 +1,17 @@
 import SwiftUI
 
 struct BarView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @Bindable private var store = ClipboardStore.shared
     @Bindable private var settings = Settings.shared
     @Bindable private var updater = UpdateManager.shared
 
+    private var palette: ThemePalette { Theme.palette(for: colorScheme) }
+
     var body: some View {
         ZStack {
-            VisualEffectView(material: .hudWindow)
-            Theme.panelTint
+            VisualEffectView(material: .underWindowBackground)
+            palette.panelTint.swiftUIColor
         }
         .overlay(alignment: .top) {
             VStack(spacing: 0) {
@@ -43,7 +46,9 @@ struct BarView: View {
         } label: {
             Image(systemName: settings.iCloudSync ? "checkmark.icloud.fill" : "arrow.triangle.2.circlepath")
                 .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(settings.iCloudSync ? Theme.selection : Theme.textSecondary)
+                .foregroundStyle(settings.iCloudSync
+                    ? palette.selection.swiftUIColor
+                    : palette.textSecondary.swiftUIColor)
         }
         .buttonStyle(.plain)
         .help(settings.iCloudSync ? L10n.iCloudSyncOn : L10n.turnOnICloudSync)
@@ -53,22 +58,30 @@ struct BarView: View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(store.searchText.isEmpty ? Theme.textSecondary : Theme.textPrimary)
+                .foregroundStyle(store.searchText.isEmpty
+                    ? palette.textSecondary.swiftUIColor
+                    : palette.textPrimary.swiftUIColor)
             if !store.searchText.isEmpty {
                 Text(store.searchText)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
+                    .foregroundStyle(palette.textPrimary.swiftUIColor)
                     .lineLimit(1)
                 Button { store.searchText = ""; store.selectFirst() } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12)).foregroundStyle(Theme.textTertiary)
+                        .font(.system(size: 12))
+                        .foregroundStyle(palette.textTertiary.swiftUIColor)
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, store.searchText.isEmpty ? 0 : 10)
         .frame(height: 30)
-        .background(store.searchText.isEmpty ? Color.clear : Theme.fieldBG, in: Capsule())
+        .background(
+            store.searchText.isEmpty
+                ? Color.clear
+                : palette.fieldBackground.swiftUIColor,
+            in: Capsule()
+        )
         .animation(.easeOut(duration: 0.15), value: store.searchText.isEmpty)
     }
 
@@ -87,7 +100,7 @@ struct BarView: View {
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Theme.textSecondary)
+                .foregroundStyle(palette.textSecondary.swiftUIColor)
                 .frame(width: 30, height: 30)
         }
         .menuStyle(.borderlessButton)
@@ -111,7 +124,7 @@ struct BarView: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 12)
             .frame(height: 30)
-            .background(Theme.selection, in: Capsule())
+            .background(palette.selection.swiftUIColor, in: Capsule())
         }
         .buttonStyle(.plain)
         .disabled(updater.isInstalling)
@@ -170,12 +183,12 @@ struct BarView: View {
         VStack(spacing: 10) {
             Image(systemName: store.searchText.isEmpty ? "doc.on.clipboard" : "magnifyingglass")
                 .font(.system(size: 34, weight: .light))
-                .foregroundStyle(Theme.textTertiary)
+                .foregroundStyle(palette.textTertiary.swiftUIColor)
             Text(store.searchText.isEmpty
                  ? L10n.nothingCopied
                  : L10n.noMatches(store.searchText))
                 .font(.system(size: 13))
-                .foregroundStyle(Theme.textSecondary)
+                .foregroundStyle(palette.textSecondary.swiftUIColor)
         }
     }
 }
