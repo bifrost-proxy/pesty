@@ -9,10 +9,14 @@ enum AppearanceVerifier {
         let darkPrimaryContrast: Double
         let darkRenderedLuminance: Double
         let darkSecondaryContrast: Double
+        let darkCardOpacity: Double
+        let darkPanelOpacity: Double
         let lightCardLuminance: Double
         let lightPrimaryContrast: Double
         let lightRenderedLuminance: Double
         let lightSecondaryContrast: Double
+        let lightCardOpacity: Double
+        let lightPanelOpacity: Double
     }
 
     private struct VerificationFailure: Error, CustomStringConvertible {
@@ -54,6 +58,20 @@ enum AppearanceVerifier {
         guard lightSecondaryContrast >= 4.5, darkSecondaryContrast >= 4.5 else {
             throw VerificationFailure(description: "secondary text contrast is below 4.5:1")
         }
+        guard (0.20...0.45).contains(light.panelTint.opacity),
+              (0.20...0.45).contains(dark.panelTint.opacity) else {
+            throw VerificationFailure(
+                description: "panel tint is too opaque or too transparent for system glass"
+            )
+        }
+        guard (0.86...0.95).contains(light.cardBody.opacity),
+              (0.86...0.95).contains(dark.cardBody.opacity),
+              light.cardBody.opacity - light.panelTint.opacity >= 0.45,
+              dark.cardBody.opacity - dark.panelTint.opacity >= 0.45 else {
+            throw VerificationFailure(
+                description: "card opacity does not remain stronger than the glass panel"
+            )
+        }
 
         let hostingView = NSHostingView(rootView: AppearanceProbeView())
         hostingView.frame = NSRect(x: 0, y: 0, width: 48, height: 48)
@@ -89,10 +107,14 @@ enum AppearanceVerifier {
             darkPrimaryContrast: darkPrimaryContrast,
             darkRenderedLuminance: darkRenderedLuminance,
             darkSecondaryContrast: darkSecondaryContrast,
+            darkCardOpacity: dark.cardBody.opacity,
+            darkPanelOpacity: dark.panelTint.opacity,
             lightCardLuminance: lightCardLuminance,
             lightPrimaryContrast: lightPrimaryContrast,
             lightRenderedLuminance: lightRenderedLuminance,
-            lightSecondaryContrast: lightSecondaryContrast
+            lightSecondaryContrast: lightSecondaryContrast,
+            lightCardOpacity: light.cardBody.opacity,
+            lightPanelOpacity: light.panelTint.opacity
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]

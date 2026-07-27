@@ -43,6 +43,15 @@ struct ClipCardView: View {
     private var header: some View {
         ZStack {
             headerColor
+            LinearGradient(
+                colors: [
+                    Color.white.opacity(0.16),
+                    Color.clear,
+                    Color.black.opacity(0.055),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
             HStack(alignment: .top, spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.type.label)
@@ -83,7 +92,19 @@ struct ClipCardView: View {
         .padding(.top, 11)
         .padding(.bottom, 10)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(palette.cardBody.swiftUIColor)
+        .background {
+            ZStack {
+                palette.cardBody.swiftUIColor
+                LinearGradient(
+                    colors: [
+                        Color.white.opacity(colorScheme == .dark ? 0.045 : 0.15),
+                        Color.clear,
+                    ],
+                    startPoint: .top,
+                    endPoint: .center
+                )
+            }
+        }
     }
 
     @ViewBuilder

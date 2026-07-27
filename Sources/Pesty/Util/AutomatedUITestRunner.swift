@@ -72,6 +72,46 @@ enum AutomatedUITestRunner {
         let remainingItemMatches: Bool
     }
 
+    private struct RetentionDelayResult: Codable {
+        let phase: String
+        let success: Bool
+        let initialCount: Int
+        let countDuringGracePeriod: Int
+        let countAfterCancellation: Int
+        let countDuringSecondGracePeriod: Int
+        let finalCount: Int
+        let expectedFinalCount: Int
+    }
+
+    private struct RetentionRestartResult: Codable {
+        let phase: String
+        let success: Bool
+        let countAfterRestart: Int
+        let finalCount: Int
+        let expectedFinalCount: Int
+    }
+
+    private struct ClearConfirmationResult: Codable {
+        let phase: String
+        let success: Bool
+        let initialCount: Int
+        let countAfterCancellation: Int
+        let countAfterConfirmation: Int
+    }
+
+    private struct SearchInputResult: Codable {
+        let phase: String
+        let success: Bool
+        let searchFieldActivated: Bool
+        let nativeTextFieldCount: Int
+        let nativeTextEditorFocused: Bool
+        let firstKeyboardEventReplayed: Bool
+        let markedTextActive: Bool
+        let compositionEventPassedThrough: Bool
+        let adaptiveWidthExpanded: Bool
+        let longChineseQueryFits: Bool
+    }
+
     static func start(controller: AppController) {
         let environment = ProcessInfo.processInfo.environment
         let phase = environment["PESTY_AUTOMATED_UI_TEST"] ?? "verify"
@@ -84,6 +124,26 @@ enum AutomatedUITestRunner {
             runKeyboardDeleteTest(controller: controller, runID: runID)
             return
         }
+        if phase == "retention-delay" {
+            runRetentionDelayTest(controller: controller, runID: runID)
+            return
+        }
+        if phase == "retention-restart-seed" {
+            seedRetentionRestartTest(controller: controller, runID: runID)
+            return
+        }
+        if phase == "retention-restart-verify" {
+            verifyRetentionRestartTest(controller: controller)
+            return
+        }
+        if phase == "clear-confirmation" {
+            runClearConfirmationTest(controller: controller, runID: runID)
+            return
+        }
+        if phase == "search-input" {
+            runSearchInputTest(controller: controller)
+            return
+        }
         let expected = (1...4).map { "pesty-auto-\(runID)-\($0)" }
 
         AutomatedUITestProbe.reset()
@@ -91,6 +151,216 @@ enum AutomatedUITestRunner {
             seed(expected, controller: controller, phase: phase)
         } else {
             showAndVerify(expected, controller: controller, phase: phase, originalItems: nil)
+        }
+    }
+
+    private static func runSearchInputTest(controller: AppController) {
+        controller.monitor.stop()
+        controller.showBar()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            let focusEvent = makeKeyEvent(
+                keyCode: UInt16(kVK_ANSI_A),
+                characters: "a"
+            )
+            let firstEventConsumedForReplay = focusEvent.map {
+                controller.handleKey($0) == nil
+            } ?? false
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                let textFieldCount = descendantViews(
+                    of: NSApp.keyWindow?.contentView
+                ).compactMap { $0 as? NSTextField }.count
+                let editor = NSApp.keyWindow?.firstResponder as? NSTextView
+                let firstKeyboardEventReplayed =
+                    firstEventConsumedForReplay && controller.store.searchText == "a"
+                controller.store.searchText = ""
+                editor?.setMarkedText(
+                    "中文",
+                    selectedRange: NSRange(location: 2, length: 0),
+                    replacementRange: NSRange(location: NSNotFound, length: 0)
+                )
+                let markedTextActive = editor?.hasMarkedText() == true
+                let event = makeKeyEvent(
+                    keyCode: UInt16(kVK_LeftArrow),
+                    characters: "\u{F702}"
+                )
+                let returnedEvent = event.flatMap { controller.handleKey($0) }
+                let compositionEventPassedThrough =
+                    event != nil && returnedEvent === event
+                editor?.unmarkText()
+                let longChineseQuery = "这是一个用于验证中文输入法组合输入的完整搜索字符串"
+                let shortWidth = SearchFieldLayout.width(for: "中")
+                let longWidth = SearchFieldLayout.width(for: longChineseQuery)
+                let adaptiveWidthExpanded = longWidth > shortWidth
+                let longChineseQueryFits =
+                    longWidth >= SearchFieldLayout.requiredWidth(for: longChineseQuery)
+
+                let result = SearchInputResult(
+                    phase: "search-input",
+                    success: editor != nil
+                        && firstKeyboardEventReplayed
+                        && markedTextActive
+                        && compositionEventPassedThrough
+                        && adaptiveWidthExpanded
+                        && longChineseQueryFits,
+                    searchFieldActivated: controller.store.isSearchFieldActive,
+                    nativeTextFieldCount: textFieldCount,
+                    nativeTextEditorFocused: editor != nil,
+                    firstKeyboardEventReplayed: firstKeyboardEventReplayed,
+                    markedTextActive: markedTextActive,
+                    compositionEventPassedThrough: compositionEventPassedThrough,
+                    adaptiveWidthExpanded: adaptiveWidthExpanded,
+                    longChineseQueryFits: longChineseQueryFits
+                )
+                writeSearchInput(result)
+                exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+            }
+        }
+    }
+
+    private static func descendantViews(of root: NSView?) -> [NSView] {
+        guard let root else { return [] }
+        return [root] + root.subviews.flatMap { descendantViews(of: $0) }
+    }
+
+    private static func runClearConfirmationTest(
+        controller: AppController,
+        runID: String
+    ) {
+        let items = (0..<4).map { index in
+            ClipItem(
+                type: .text,
+                text: "pesty-clear-confirmation-\(runID)-\(index)",
+                createdAt: Date(timeIntervalSinceNow: -Double(index))
+            )
+        }
+        controller.monitor.stop()
+        controller.store.replaceHistoryForAutomatedClearConfirmationTest(items)
+
+        controller.resolveClearHistoryConfirmation(confirmed: false)
+        let countAfterCancellation = controller.store.history.count
+        controller.resolveClearHistoryConfirmation(confirmed: true)
+        let countAfterConfirmation = controller.store.history.count
+        let result = ClearConfirmationResult(
+            phase: "clear-confirmation",
+            success: countAfterCancellation == items.count
+                && countAfterConfirmation == 0,
+            initialCount: items.count,
+            countAfterCancellation: countAfterCancellation,
+            countAfterConfirmation: countAfterConfirmation
+        )
+        controller.store.saveNow()
+        writeClearConfirmation(result)
+        exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+    }
+
+    private static func seedRetentionRestartTest(
+        controller: AppController,
+        runID: String
+    ) {
+        let items = (0..<150).map { index in
+            ClipItem(
+                type: .text,
+                text: "pesty-retention-restart-\(runID)-\(index)",
+                createdAt: Date(timeIntervalSinceNow: -Double(index))
+            )
+        }
+        controller.monitor.stop()
+        controller.store.replaceHistoryForAutomatedRetentionTest(items)
+        Settings.shared.setHistoryRetentionSliderPosition(0)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            let count = controller.store.history.count
+            let result = RetentionRestartResult(
+                phase: "retention-restart-seed",
+                success: count == 150 && Settings.shared.historyLimitTrimAfter != nil,
+                countAfterRestart: count,
+                finalCount: count,
+                expectedFinalCount: 100
+            )
+            controller.store.saveNow()
+            writeRetentionRestart(result)
+            exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+        }
+    }
+
+    private static func verifyRetentionRestartTest(controller: AppController) {
+        controller.monitor.stop()
+        let countAfterRestart = controller.store.history.count
+        let remainingDelay = max(
+            0,
+            Settings.shared.historyLimitTrimAfter?.timeIntervalSinceNow ?? 0
+        )
+        DispatchQueue.main.asyncAfter(deadline: .now() + remainingDelay + 0.5) {
+            let finalCount = controller.store.history.count
+            let result = RetentionRestartResult(
+                phase: "retention-restart-verify",
+                success: countAfterRestart == 150 && finalCount == 100,
+                countAfterRestart: countAfterRestart,
+                finalCount: finalCount,
+                expectedFinalCount: 100
+            )
+            controller.store.saveNow()
+            writeRetentionRestart(result)
+            exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+        }
+    }
+
+    private static func runRetentionDelayTest(
+        controller: AppController,
+        runID: String
+    ) {
+        let initialCount = 150
+        let expectedFinalCount = 100
+        let items = (0..<initialCount).map { index in
+            ClipItem(
+                type: .text,
+                text: "pesty-retention-delay-\(runID)-\(index)",
+                createdAt: Date(timeIntervalSinceNow: -Double(index))
+            )
+        }
+
+        controller.monitor.stop()
+        controller.store.replaceHistoryForAutomatedRetentionTest(items)
+        Settings.shared.setHistoryRetentionSliderPosition(0)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            let countDuringGracePeriod = controller.store.history.count
+            Settings.shared.setHistoryRetentionSliderPosition(1)
+
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + HistoryRetentionPolicy.trimDelay
+            ) {
+                let countAfterCancellation = controller.store.history.count
+                Settings.shared.setHistoryRetentionSliderPosition(0)
+
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                    let countDuringSecondGracePeriod = controller.store.history.count
+
+                    DispatchQueue.main.asyncAfter(
+                        deadline: .now() + HistoryRetentionPolicy.trimDelay
+                    ) {
+                        let finalCount = controller.store.history.count
+                        let result = RetentionDelayResult(
+                            phase: "retention-delay",
+                            success: countDuringGracePeriod == initialCount
+                                && countAfterCancellation == initialCount
+                                && countDuringSecondGracePeriod == initialCount
+                                && finalCount == expectedFinalCount,
+                            initialCount: initialCount,
+                            countDuringGracePeriod: countDuringGracePeriod,
+                            countAfterCancellation: countAfterCancellation,
+                            countDuringSecondGracePeriod: countDuringSecondGracePeriod,
+                            finalCount: finalCount,
+                            expectedFinalCount: expectedFinalCount
+                        )
+                        controller.store.saveNow()
+                        writeRetentionDelay(result)
+                        exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+                    }
+                }
+            }
         }
     }
 
@@ -416,6 +686,42 @@ enum AutomatedUITestRunner {
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(result) else { return }
         FileHandle.standardOutput.write(Data("AUTOMATED_UI_TEST_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeRetentionDelay(_ result: RetentionDelayResult) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(Data("AUTOMATED_RETENTION_DELAY_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeRetentionRestart(_ result: RetentionRestartResult) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(Data("AUTOMATED_RETENTION_RESTART_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeClearConfirmation(_ result: ClearConfirmationResult) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(Data("AUTOMATED_CLEAR_CONFIRMATION_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeSearchInput(_ result: SearchInputResult) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(Data("AUTOMATED_SEARCH_INPUT_RESULT ".utf8))
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data("\n".utf8))
     }

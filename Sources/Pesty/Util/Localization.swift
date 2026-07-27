@@ -32,7 +32,16 @@ enum L10n {
     static var about: String { text("About", "关于") }
     static var activation: String { text("Activation", "快捷操作") }
     static var showPesty: String { text("Show Pesty", "显示 Pesty") }
+    static var searchClipboard: String { text("Search", "搜索") }
     static var historyLimit: String { text("History limit", "历史记录上限") }
+    static var unlimited: String { text("Unlimited", "无限") }
+    static var historyLimitDelayDescription: String {
+        text(
+            "If a lower limit would remove existing items, deletion waits 10 seconds so you can undo it.",
+            "如果降低上限会删除已有记录，Pesty 将等待 10 秒再清理，期间可以调高或切回无限。"
+        )
+    }
+    static var storageUsed: String { text("Current storage used", "当前占用空间") }
     static func items(_ count: Int) -> String {
         currentLanguage == .chinese ? "\(count) 项" : "\(count) items"
     }
@@ -86,6 +95,18 @@ enum L10n {
     static var data: String { text("Data", "数据") }
     static var clearClipboardHistory: String {
         text("Clear Clipboard History", "清除剪贴板历史记录")
+    }
+    static var clearHistoryConfirmationTitle: String {
+        text(
+            "Clear all clipboard history?",
+            "确定清除全部剪贴板历史记录吗？"
+        )
+    }
+    static var clearHistoryConfirmationMessage: String {
+        text(
+            "This permanently deletes all clipboard history and its stored images. This action cannot be undone. Pinboards will not be deleted.",
+            "这会永久删除全部剪贴板历史记录及其图片，且无法撤销。Pinboard 中的内容不会被删除。"
+        )
     }
     static var languageLabel: String { text("Language", "语言") }
     static var languageDescription: String {

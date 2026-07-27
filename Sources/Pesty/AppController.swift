@@ -195,7 +195,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     @objc private func menuOpen() { showBar() }
     @objc private func menuSettings() { showSettings() }
-    @objc private func menuClear() { store.clearHistory() }
+    @objc private func menuClear() { requestClearHistoryConfirmation() }
     @objc private func menuQuit() { NSApp.terminate(nil) }
     @objc private func menuAbout() { showAbout() }
     @objc private func menuInstallUpdate() { UpdateManager.shared.installAvailableUpdate() }
@@ -235,6 +235,29 @@ final class AppController: NSObject, NSApplicationDelegate {
                 string: L10n.aboutDescription,
                 attributes: [.font: NSFont.systemFont(ofSize: 11)])
         ])
+    }
+
+    func requestClearHistoryConfirmation() {
+        suppressAutoHide = true
+        defer { suppressAutoHide = false }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = L10n.clearHistoryConfirmationTitle
+        alert.informativeText = L10n.clearHistoryConfirmationMessage
+        alert.addButton(withTitle: L10n.clearHistory)
+        alert.addButton(withTitle: L10n.cancel)
+        alert.buttons.first?.hasDestructiveAction = true
+
+        NSApp.activate(ignoringOtherApps: true)
+        resolveClearHistoryConfirmation(
+            confirmed: alert.runModal() == .alertFirstButtonReturn
+        )
+    }
+
+    func resolveClearHistoryConfirmation(confirmed: Bool) {
+        guard confirmed else { return }
+        store.clearHistory()
     }
 
     func toggleICloudSync() {
@@ -463,7 +486,17 @@ final class AppController: NSObject, NSApplicationDelegate {
         let flags = event.modifierFlags
         let cmd = flags.contains(.command)
         let ctrl = flags.contains(.control)
-        let opt = flags.contains(.option)
+        let textEditor = NSApp.keyWindow?.firstResponder as? NSTextView
+        let isComposingText = textEditor?.hasMarkedText() == true
+
+        if isComposingText {
+            return event
+        }
+
+        if cmd, code == kVK_ANSI_F {
+            SearchInputBridge.shared.requestActivation()
+            return nil
+        }
 
         if cmd, let chars = event.charactersIgnoringModifiers, let n = Int(chars), (1...9).contains(n) {
             let items = store.visibleItems
@@ -488,23 +521,33 @@ final class AppController: NSObject, NSApplicationDelegate {
                 return nil
             }
             if !store.searchText.isEmpty {
-                store.searchText.removeLast(); store.selectFirst(); return nil
+                if textEditor != nil,
+                   ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"]
+                    != "keyboard-delete" {
+                    return event
+                }
+                store.searchText.removeLast()
+                store.selectFirst()
+                return nil
             }
             store.deleteSelectedItem()
             return nil
         case kVK_ForwardDelete:
+            if !store.searchText.isEmpty, textEditor != nil {
+                return event
+            }
             store.deleteSelectedItem()
             return nil
         default:
             break
         }
 
-        if !cmd && !ctrl && !opt,
-           let chars = event.characters, chars.count == 1,
-           let scalar = chars.unicodeScalars.first,
-           scalar.value >= 32, scalar.value != 127 {
-            store.searchText.append(chars)
-            store.selectFirst()
+        if textEditor != nil {
+            return event
+        }
+
+        if !cmd && !ctrl {
+            SearchInputBridge.shared.requestActivation(replaying: event)
             return nil
         }
         return event

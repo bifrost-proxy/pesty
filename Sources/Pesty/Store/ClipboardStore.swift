@@ -2,6 +2,27 @@ import AppKit
 import Observation
 import OSLog
 
+enum HistoryStorageUsage {
+    static func bytes(in directory: URL) -> Int64 {
+        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey]
+        guard let enumerator = FileManager.default.enumerator(
+            at: directory,
+            includingPropertiesForKeys: keys,
+            options: [.skipsHiddenFiles]
+        ) else {
+            return 0
+        }
+
+        var total: Int64 = 0
+        for case let fileURL as URL in enumerator {
+            guard let values = try? fileURL.resourceValues(forKeys: Set(keys)),
+                  values.isRegularFile == true else { continue }
+            total += Int64(values.fileSize ?? 0)
+        }
+        return total
+    }
+}
+
 enum BarSource: Equatable {
     case history
     case pinboard(UUID)
@@ -14,20 +35,19 @@ final class ClipboardStore {
 
     private(set) var history: [ClipItem] = []
     private(set) var pinboards: [Pinboard] = []
+    private(set) var storageUsageBytes: Int64 = 0
 
     var source: BarSource = .history
     var searchText: String = ""
+    var isSearchFieldActive = false
     var selectedID: UUID?
-
-    var historyLimit: Int {
-        get { Settings.shared.historyLimit }
-        set { Settings.shared.historyLimit = newValue; trimHistory() }
-    }
 
     private var storeURL: URL
     private var imagesDir: URL
     private var baseDir: URL
     private var saveWorkItem: DispatchWorkItem?
+    private var historyLimitWorkItem: DispatchWorkItem?
+    @ObservationIgnored private var storageUsageTask: Task<Void, Never>?
 
     private var fileWatch: DispatchSourceFileSystemObject?
     private var ignoreWatchUntil: Date = .distantPast
@@ -67,6 +87,8 @@ final class ClipboardStore {
         storeURL = base.appendingPathComponent("store.json")
         prepareDirectories()
         load()
+        resumeDeferredHistoryLimitTrim()
+        refreshStorageUsage()
         if Settings.shared.iCloudSync && ClipboardStore.automatedTestBase == nil {
             startWatching()
         }
@@ -115,13 +137,68 @@ final class ClipboardStore {
         scheduleSave()
     }
 
-    func applyHistoryLimit() { trimHistory(); scheduleSave() }
+    func historyRetentionDidChange() {
+        historyLimitWorkItem?.cancel()
+        historyLimitWorkItem = nil
+
+        guard let limit = Settings.shared.retainedHistoryLimit,
+              history.count > limit else {
+            Settings.shared.clearDeferredHistoryLimitTrim()
+            return
+        }
+
+        let deadline = Date().addingTimeInterval(HistoryRetentionPolicy.trimDelay)
+        Settings.shared.deferHistoryLimitTrim(until: deadline)
+        scheduleHistoryLimitTrim(at: deadline)
+    }
 
     private func trimHistory() {
-        guard history.count > historyLimit else { return }
-        let removed = Array(history[historyLimit...])
-        history.removeLast(history.count - historyLimit)
+        guard Settings.shared.historyLimitTrimAfter == nil,
+              let limit = Settings.shared.retainedHistoryLimit,
+              history.count > limit else { return }
+        let removed = Array(history[limit...])
+        history.removeLast(history.count - limit)
         for item in removed { deleteImageFile(item) }
+    }
+
+    private func resumeDeferredHistoryLimitTrim() {
+        guard let deadline = Settings.shared.historyLimitTrimAfter,
+              let limit = Settings.shared.retainedHistoryLimit,
+              history.count > limit else {
+            Settings.shared.clearDeferredHistoryLimitTrim()
+            return
+        }
+        scheduleHistoryLimitTrim(at: deadline)
+    }
+
+    private func scheduleHistoryLimitTrim(at deadline: Date) {
+        historyLimitWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.historyLimitWorkItem = nil
+            Settings.shared.clearDeferredHistoryLimitTrim()
+            self.trimHistory()
+            self.scheduleSave()
+        }
+        historyLimitWorkItem = work
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + max(0, deadline.timeIntervalSinceNow),
+            execute: work
+        )
+    }
+
+    func refreshStorageUsage() {
+        storageUsageTask?.cancel()
+        let directory = baseDir
+        storageUsageTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            let bytes = await Task.detached(priority: .utility) {
+                HistoryStorageUsage.bytes(in: directory)
+            }.value
+            guard !Task.isCancelled, let self, self.baseDir == directory else { return }
+            self.storageUsageBytes = bytes
+        }
     }
 
     func delete(_ item: ClipItem) {
@@ -195,6 +272,31 @@ final class ClipboardStore {
         let environment = ProcessInfo.processInfo.environment
         guard ClipboardStore.automatedTestBase != nil,
               environment["PESTY_AUTOMATED_UI_TEST"] == "keyboard-delete" else { return }
+        history = items
+        pinboards = []
+        source = .history
+        searchText = ""
+        selectedID = items.first?.id
+        saveNow()
+    }
+
+    func replaceHistoryForAutomatedRetentionTest(_ items: [ClipItem]) {
+        let environment = ProcessInfo.processInfo.environment
+        guard ClipboardStore.automatedTestBase != nil,
+              environment["PESTY_AUTOMATED_UI_TEST"]?.hasPrefix("retention-") == true,
+              environment["PESTY_AUTOMATED_TEST_DEFAULTS_SUITE"] != nil else { return }
+        history = items
+        pinboards = []
+        source = .history
+        searchText = ""
+        selectedID = items.first?.id
+        saveNow()
+    }
+
+    func replaceHistoryForAutomatedClearConfirmationTest(_ items: [ClipItem]) {
+        let environment = ProcessInfo.processInfo.environment
+        guard ClipboardStore.automatedTestBase != nil,
+              environment["PESTY_AUTOMATED_UI_TEST"] == "clear-confirmation" else { return }
         history = items
         pinboards = []
         source = .history
@@ -356,6 +458,7 @@ final class ClipboardStore {
             logger.error("Failed to save clipboard history: \(error.localizedDescription, privacy: .public)")
             return false
         }
+        refreshStorageUsage()
         return true
     }
 
@@ -409,7 +512,10 @@ final class ClipboardStore {
         var seen = Set<String>()
         var merged: [ClipItem] = []
         for it in combined where seen.insert(contentKey(it)).inserted { merged.append(it) }
-        history = Array(merged.prefix(historyLimit))
+        let mergeLimit = Settings.shared.historyLimitTrimAfter == nil
+            ? Settings.shared.retainedHistoryLimit
+            : nil
+        history = HistoryRetentionPolicy.retainedPrefix(of: merged, limit: mergeLimit)
 
         var byID: [UUID: Pinboard] = Dictionary(uniqueKeysWithValues: pinboards.map { ($0.id, $0) })
         for b in snap.pinboards {
@@ -488,6 +594,8 @@ final class ClipboardStore {
                let snap = self.readSnapshot(at: self.storeURL),
                self.mergeExternal(snap) {
                 self.saveNow()
+            } else {
+                self.refreshStorageUsage()
             }
 
             if needsReattach {

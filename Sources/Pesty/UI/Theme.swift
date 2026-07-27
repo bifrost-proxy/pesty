@@ -62,29 +62,29 @@ enum Theme {
         switch colorScheme {
         case .light:
             return ThemePalette(
-                panelTint: color(0xF4F5F7, opacity: 0.72),
-                cardBody: color(0xF8F8FA, opacity: 0.98),
-                cardBorder: color(0x000000, opacity: 0.12),
+                panelTint: color(0xEEF4FF, opacity: 0.28),
+                cardBody: color(0xF8FAFF, opacity: 0.91),
+                cardBorder: color(0xFFFFFF, opacity: 0.62),
                 selection: color(0x1677E8),
                 textPrimary: color(0x202124),
                 textSecondary: color(0x5F6368),
                 textTertiary: color(0x888B90),
-                fieldBackground: color(0x000000, opacity: 0.06),
-                pillBackground: color(0x000000, opacity: 0.07),
-                pillSelected: color(0x000000, opacity: 0.12)
+                fieldBackground: color(0xFFFFFF, opacity: 0.38),
+                pillBackground: color(0xFFFFFF, opacity: 0.34),
+                pillSelected: color(0xFFFFFF, opacity: 0.58)
             )
         case .dark:
             return ThemePalette(
-                panelTint: color(0x000000, opacity: 0.34),
-                cardBody: color(0x1C1C1F),
-                cardBorder: color(0xFFFFFF, opacity: 0.07),
+                panelTint: color(0x050B14, opacity: 0.30),
+                cardBody: color(0x161B24, opacity: 0.90),
+                cardBorder: color(0xFFFFFF, opacity: 0.14),
                 selection: color(0x338CFF),
                 textPrimary: color(0xF4F4F5),
                 textSecondary: color(0xA3A3A8),
                 textTertiary: color(0x707075),
-                fieldBackground: color(0xFFFFFF, opacity: 0.09),
-                pillBackground: color(0xFFFFFF, opacity: 0.10),
-                pillSelected: color(0xFFFFFF, opacity: 0.18)
+                fieldBackground: color(0xFFFFFF, opacity: 0.11),
+                pillBackground: color(0xFFFFFF, opacity: 0.11),
+                pillSelected: color(0xFFFFFF, opacity: 0.20)
             )
         @unknown default:
             return palette(for: .light)

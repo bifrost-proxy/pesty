@@ -6,6 +6,30 @@ All notable changes to Pesty are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-07-27
+
+### Added
+
+- Added a history-retention slider with a 5,000-item default, discrete limits
+  through 10,000 items, and an unlimited option.
+- Added live clipboard storage usage to Settings.
+- Added a native, width-adaptive search field with complete Chinese and other
+  input-method composition support.
+
+### Changed
+
+- Refreshed the clipboard panel with a native macOS frosted-glass background
+  while keeping cards more opaque and readable.
+- Delays history trimming for 10 seconds after lowering the limit so the change
+  can be cancelled by raising the limit or returning to unlimited.
+
+### Fixed
+
+- Added a destructive-action confirmation before clearing all clipboard
+  history from Settings, the menu bar, or the clipboard panel.
+
+[1.6.0]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.6.0
+
 ## [1.5.1] - 2026-07-27
 
 ### Changed

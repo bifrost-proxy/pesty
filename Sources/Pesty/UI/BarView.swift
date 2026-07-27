@@ -1,4 +1,143 @@
+import AppKit
 import SwiftUI
+
+enum SearchFieldLayout {
+    static let minimumWidth: CGFloat = 72
+    static let maximumWidth: CGFloat = 420
+    static let horizontalContentPadding: CGFloat = 18
+
+    static func requiredWidth(for text: String) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        let measuredWidth = (text as NSString).size(
+            withAttributes: [.font: font]
+        ).width
+        return ceil(measuredWidth) + horizontalContentPadding
+    }
+
+    static func width(for text: String) -> CGFloat {
+        min(maximumWidth, max(minimumWidth, requiredWidth(for: text)))
+    }
+}
+
+@MainActor
+final class SearchInputBridge {
+    static let shared = SearchInputBridge()
+
+    private weak var field: NSTextField?
+    private var pendingEvents: [NSEvent] = []
+    private var focusRequested = false
+
+    func requestActivation(replaying event: NSEvent? = nil) {
+        if let event {
+            pendingEvents.append(event)
+        }
+        focusRequested = true
+        ClipboardStore.shared.isSearchFieldActive = true
+        focusIfPossible()
+    }
+
+    func connect(_ field: NSTextField) {
+        self.field = field
+        focusIfPossible()
+    }
+
+    func disconnect(_ field: NSTextField) {
+        if self.field === field {
+            self.field = nil
+        }
+    }
+
+    private func focusIfPossible(attempt: Int = 0) {
+        guard focusRequested else { return }
+        guard let field, let window = field.window else {
+            guard attempt < 50 else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { [weak self] in
+                self?.focusIfPossible(attempt: attempt + 1)
+            }
+            return
+        }
+
+        focusRequested = false
+        window.makeFirstResponder(field)
+        let events = pendingEvents
+        pendingEvents.removeAll(keepingCapacity: true)
+        guard !events.isEmpty else { return }
+        DispatchQueue.main.async {
+            for event in events {
+                NSApp.sendEvent(event)
+            }
+        }
+    }
+}
+
+struct AdaptiveSearchField: NSViewRepresentable {
+    @Binding var text: String
+    let placeholder: String
+    let textColor: NSColor
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField()
+        field.delegate = context.coordinator
+        field.isBezeled = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = .systemFont(ofSize: 13, weight: .medium)
+        field.placeholderString = placeholder
+        field.textColor = textColor
+        field.usesSingleLineMode = true
+        field.lineBreakMode = .byClipping
+        field.cell?.isScrollable = true
+        field.setAccessibilityIdentifier("pesty-search-field")
+        SearchInputBridge.shared.connect(field)
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        context.coordinator.parent = self
+        field.placeholderString = placeholder
+        field.textColor = textColor
+        if (field.currentEditor() as? NSTextView)?.hasMarkedText() != true,
+           field.stringValue != text {
+            field.stringValue = text
+        }
+    }
+
+    static func dismantleNSView(_ field: NSTextField, coordinator: Coordinator) {
+        SearchInputBridge.shared.disconnect(field)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var parent: AdaptiveSearchField
+
+        init(parent: AdaptiveSearchField) {
+            self.parent = parent
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField else { return }
+            parent.text = field.stringValue
+        }
+
+        func control(
+            _ control: NSControl,
+            textView: NSTextView,
+            doCommandBy commandSelector: Selector
+        ) -> Bool {
+            guard commandSelector == #selector(NSResponder.insertNewline(_:))
+                    || commandSelector == #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:))
+            else {
+                return false
+            }
+            AppController.shared.pasteSelected()
+            return true
+        }
+    }
+}
 
 struct BarView: View {
     @Environment(\.colorScheme) private var colorScheme
@@ -10,8 +149,20 @@ struct BarView: View {
 
     var body: some View {
         ZStack {
-            VisualEffectView(material: .underWindowBackground)
+            VisualEffectView(
+                material: colorScheme == .dark ? .hudWindow : .underWindowBackground,
+                blending: .behindWindow
+            )
             palette.panelTint.swiftUIColor
+            LinearGradient(
+                colors: [
+                    Color.white.opacity(colorScheme == .dark ? 0.055 : 0.16),
+                    Color.white.opacity(0.025),
+                    Color.clear,
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
         }
         .overlay(alignment: .top) {
             VStack(spacing: 0) {
@@ -20,6 +171,11 @@ struct BarView: View {
             }
         }
         .clipShape(RoundedCorners(radius: Theme.cornerRadius, corners: [.topLeft, .topRight]))
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.white.opacity(colorScheme == .dark ? 0.12 : 0.42))
+                .frame(height: 1)
+        }
         .ignoresSafeArea()
         .id(settings.language)
     }
@@ -58,15 +214,33 @@ struct BarView: View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(store.searchText.isEmpty
-                    ? palette.textSecondary.swiftUIColor
-                    : palette.textPrimary.swiftUIColor)
+                .foregroundStyle(palette.textSecondary.swiftUIColor)
+            if store.isSearchFieldActive || !store.searchText.isEmpty {
+                AdaptiveSearchField(
+                    text: $store.searchText,
+                    placeholder: L10n.searchClipboard,
+                    textColor: palette.textPrimary.nsColor
+                )
+                    .frame(width: searchFieldWidth)
+            } else {
+                Button {
+                    SearchInputBridge.shared.requestActivation()
+                } label: {
+                    Text(L10n.searchClipboard)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(palette.textTertiary.swiftUIColor)
+                        .frame(width: searchFieldWidth, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("pesty-search-field-placeholder")
+            }
             if !store.searchText.isEmpty {
-                Text(store.searchText)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(palette.textPrimary.swiftUIColor)
-                    .lineLimit(1)
-                Button { store.searchText = ""; store.selectFirst() } label: {
+                Button {
+                    store.searchText = ""
+                    store.selectFirst()
+                    SearchInputBridge.shared.requestActivation()
+                } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 12))
                         .foregroundStyle(palette.textTertiary.swiftUIColor)
@@ -74,15 +248,21 @@ struct BarView: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, store.searchText.isEmpty ? 0 : 10)
+        .padding(.horizontal, 10)
         .frame(height: 30)
-        .background(
-            store.searchText.isEmpty
-                ? Color.clear
-                : palette.fieldBackground.swiftUIColor,
-            in: Capsule()
-        )
-        .animation(.easeOut(duration: 0.15), value: store.searchText.isEmpty)
+        .background(palette.fieldBackground.swiftUIColor, in: Capsule())
+        .fixedSize(horizontal: true, vertical: false)
+        .layoutPriority(2)
+        .onChange(of: store.searchText) {
+            store.selectFirst()
+        }
+    }
+
+    private var searchFieldWidth: CGFloat {
+        let displayText = store.searchText.isEmpty
+            ? L10n.searchClipboard
+            : store.searchText
+        return SearchFieldLayout.width(for: displayText)
     }
 
     private var moreMenu: some View {
@@ -93,7 +273,9 @@ struct BarView: View {
             .disabled(updater.activity == .checking || updater.isInstalling)
             Divider()
             Button(L10n.settings) { AppController.shared.showSettings() }
-            Button(L10n.clearHistory) { store.clearHistory() }
+            Button(L10n.clearHistory) {
+                AppController.shared.requestClearHistoryConfirmation()
+            }
             Divider()
             Button(L10n.aboutPesty) { AppController.shared.showAbout() }
             Button(L10n.quitPesty) { NSApp.terminate(nil) }

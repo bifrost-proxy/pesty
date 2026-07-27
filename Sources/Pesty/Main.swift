@@ -40,6 +40,17 @@ struct PestyMain {
             return
         }
 
+        if CommandLine.arguments.contains("--verify-history-settings") {
+            do {
+                try HistorySettingsVerifier.run()
+                print("History settings verification passed")
+            } catch {
+                fputs("History settings verification failed: \(error)\n", stderr)
+                exit(EXIT_FAILURE)
+            }
+            return
+        }
+
         let app = NSApplication.shared
         let delegate = AppController.shared
         app.delegate = delegate

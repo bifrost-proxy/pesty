@@ -72,6 +72,14 @@ prove either.
 
 - Opening the bar must select `.history`, clear search, and select the first
   visible item.
+- Search must use a native text field, not manual character appending. Clicking
+  it or typing the first printable key must synchronously focus its AppKit field
+  editor and pass the same event through to macOS. Preserve marked-text and
+  composition events for non-English input methods, let the field edit
+  non-empty queries, and grow it with the rendered query width. Do not eagerly
+  create the input-method context merely by opening the panel. Pesty may
+  intercept navigation, paste, and deletion shortcuts only when the text editor
+  is not composing marked text.
 - A newly captured item must be present in all three places:
   `history`, `visibleItems`, and the rendered card set.
 - Clipboard entries must survive at least two complete application
@@ -83,6 +91,21 @@ prove either.
   reattach after those events, including ignored self-write events.
 - External snapshots must merge by content and timestamp. They must never
   replace the complete in-memory history with a stale or partial snapshot.
+- New installations default to a 5,000-item history limit. Settings use a
+  discrete slider with 100-item nodes from 100 through 1,000, 1,000-item nodes
+  from 2,000 through 10,000, and an unlimited node immediately after 10,000.
+  Unlimited mode must also remain unlimited while merging iCloud snapshots.
+- Lowering the limit must never trim immediately. Persist a deadline at least
+  10 seconds in the future, keep all records during that grace period (including
+  across restart and iCloud merge), and cancel or reschedule deletion when the
+  user raises the limit or selects unlimited.
+- Settings must show the logical byte size of the active Pesty data directory,
+  including the JSON store and image files. Calculate it off the main thread
+  and refresh it after persistence or active-store changes.
+- Every entry point that clears the complete clipboard history must show the
+  same destructive confirmation first. Cancellation and window dismissal must
+  preserve all records; only the explicit destructive button may call
+  `ClipboardStore.clearHistory()`.
 - Resolve conflict versions only after all readable versions have been merged
   and the merged snapshot has been saved successfully.
 - On macOS 26, the horizontal `LazyHStack` used by the original panel created
@@ -96,6 +119,11 @@ prove either.
 - Keep the explicit card height and the post-animation collection-layout
   invalidation. Rebuilding the complete root `NSHostingView` after every panel
   presentation defeats reuse and is not allowed.
+- The clipboard panel uses one native `NSVisualEffectView` behind a lightly
+  tinted translucent overlay. Keep panel tint opacity between 0.20 and 0.45.
+  Cards must remain substantially more opaque (0.86 through 0.95) so desktop
+  content never harms clipboard readability. Do not add one visual-effect view
+  per card; that breaks the memory and scrolling budget.
 
 ## Required Fast Checks
 
@@ -104,9 +132,45 @@ Run these after every Swift source change:
 ```bash
 swift build
 swift run Pesty --verify-localization
+swift run Pesty --verify-history-settings
 git diff --check
 git diff --cached --check
 ```
+
+For history-retention Settings changes, also run the real 10-second grace and
+cancellation regression with isolated data and preferences:
+
+```bash
+test_dir="$(mktemp -d)"
+suite="com.bifrostproxy.pesty.retention-test.$(date +%s)"
+PESTY_AUTOMATED_TEST_DATA_DIR="$test_dir" \
+PESTY_AUTOMATED_TEST_DEFAULTS_SUITE="$suite" \
+PESTY_AUTOMATED_UI_TEST=retention-delay \
+PESTY_AUTOMATED_TEST_ID="retention-$(date +%s)" \
+  .build/debug/Pesty
+defaults delete "$suite" >/dev/null 2>&1 || true
+```
+
+Require `AUTOMATED_RETENTION_DELAY_RESULT` to show 150 items during both
+grace-period checks and after cancellation, then exactly 100 after the second
+10-second grace period.
+
+Also reuse one isolated data directory and defaults suite across
+`retention-restart-seed` and `retention-restart-verify`. Require both
+`AUTOMATED_RETENTION_RESTART_RESULT` lines to succeed, with 150 items still
+present immediately after restart and 100 only after the persisted deadline.
+
+For changes to complete-history deletion, run `clear-confirmation` with an
+isolated test directory. Require `AUTOMATED_CLEAR_CONFIRMATION_RESULT` to show
+four records after cancellation and zero only after explicit confirmation.
+
+For search UI, key routing, or text-input changes, run `search-input` with an
+isolated test directory. Require `AUTOMATED_SEARCH_INPUT_RESULT` to confirm a
+native text editor is focused after direct typing, the first keyboard event is
+replayed into the field, marked text becomes active, and a navigation key is
+passed through while composition is active. It must also prove that a long
+Chinese query receives more width than a short query and fits its measured
+rendered width.
 
 For menu-bar visibility, reopen behavior, or Settings changes, also run the
 existing settings verification with no production store access:

@@ -18,6 +18,9 @@ struct SettingsView: View {
 
 private struct GeneralSettings: View {
     @Bindable private var settings = Settings.shared
+    @Bindable private var store = ClipboardStore.shared
+    @State private var retentionSliderPosition =
+        Settings.shared.historyRetentionSliderPosition
     #if !MAS
     @State private var accessibilityGranted = AXIsProcessTrusted()
     @State private var requestedGrant = false
@@ -29,9 +32,41 @@ private struct GeneralSettings: View {
         Form {
             Section(L10n.activation) {
                 LabeledContent(L10n.showPesty) { HotkeyRecorderView() }
-                Stepper(value: $settings.historyLimit, in: 50...5000, step: 50) {
-                    LabeledContent(L10n.historyLimit, value: L10n.items(settings.historyLimit))
+                VStack(alignment: .leading, spacing: 8) {
+                    LabeledContent(
+                        L10n.historyLimit,
+                        value: retentionDisplayValue
+                    )
+                    Slider(
+                        value: $retentionSliderPosition,
+                        in: 0...HistoryRetentionPolicy.unlimitedSliderPosition,
+                        step: 1,
+                        onEditingChanged: { editing in
+                            guard !editing else { return }
+                            settings.setHistoryRetentionSliderPosition(
+                                retentionSliderPosition
+                            )
+                        }
+                    )
+                    .labelsHidden()
+                    HStack {
+                        Text("100")
+                        Spacer()
+                        Text("1,000")
+                        Spacer()
+                        Text("10,000")
+                        Text("∞")
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    Text(L10n.historyLimitDelayDescription)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
+                LabeledContent(
+                    L10n.storageUsed,
+                    value: storageDisplayValue
+                )
             }
 
             Section(L10n.behavior) {
@@ -106,11 +141,15 @@ private struct GeneralSettings: View {
 
             Section(L10n.data) {
                 Button(L10n.clearClipboardHistory, role: .destructive) {
-                    ClipboardStore.shared.clearHistory()
+                    AppController.shared.requestClearHistoryConfirmation()
                 }
             }
         }
         .formStyle(.grouped)
+        .onAppear {
+            retentionSliderPosition = settings.historyRetentionSliderPosition
+            store.refreshStorageUsage()
+        }
         #if !MAS
         .onAppear { accessibilityGranted = AXIsProcessTrusted() }
         .onReceive(poll) { _ in
@@ -119,6 +158,23 @@ private struct GeneralSettings: View {
         }
         #endif
         .id(settings.language)
+    }
+
+    private var retentionDisplayValue: String {
+        guard let limit = HistoryRetentionPolicy.selection(
+            at: retentionSliderPosition
+        ) else {
+            return L10n.unlimited
+        }
+        return L10n.items(limit)
+    }
+
+    private var storageDisplayValue: String {
+        guard store.storageUsageBytes > 0 else { return "0 KB" }
+        return ByteCountFormatter.string(
+            fromByteCount: store.storageUsageBytes,
+            countStyle: .file
+        )
     }
 
     #if !MAS
