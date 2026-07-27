@@ -1,6 +1,4 @@
-<div align="center">
-
-<img src="docs/assets/icon.png" width="128" alt="Pesty 图标" />
+![Pesty 图标](docs/assets/icon.png)
 
 # Pesty
 
@@ -11,9 +9,7 @@
 ![系统要求](https://img.shields.io/badge/macOS-14%2B-black?style=flat-square&logo=apple)
 ![处理器](https://img.shields.io/badge/Apple%20Silicon%20%2B%20Intel-universal-orange?style=flat-square)
 
-<img src="docs/assets/demo.gif" width="820" alt="Pesty 剪贴板历史面板演示" />
-
-</div>
+![Pesty 剪贴板历史面板演示](docs/assets/demo.gif)
 
 ## 产品介绍
 
@@ -115,6 +111,16 @@ Homebrew tap 位于 `bifrost-proxy/homebrew-pesty`。Release 附带生成后的 
 
 - 历史记录与 Pinboard：`~/Library/Application Support/Pesty`
 - 设置：`~/Library/Preferences/com.bifrostproxy.pesty.plist`
+
+## 文档
+
+- [使用指南](docs/USER_GUIDE.md)
+- [常见问题与故障排查](docs/SUPPORT.md)
+- [隐私说明](docs/PRIVACY.md)
+- [参与开发](CONTRIBUTING.md)
+- [版本记录](CHANGELOG.md)
+
+Pesty 不维护独立宣传站点。项目文档均以 Markdown 保存在本仓库中。
 
 ## 许可证
 

@@ -6,6 +6,15 @@ All notable changes to Pesty are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- Moved the user guide, support information, and privacy notice into Markdown
+  files maintained directly in the repository.
+
+### Removed
+
+- Removed the standalone static website, SEO files, and site-only image assets.
+
 ## [1.4.0] - 2026-07-27
 
 ### Added
