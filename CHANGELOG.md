@@ -15,6 +15,8 @@ All notable changes to Pesty are documented here. The format is based on
   with one-click download, verified installation, and application restart.
 - Added SHA-256, release URL, bundle identity, Universal architecture, and code
   signature verification before an update can replace the installed app.
+- Uses the GitHub Releases Atom feed for production checks so manual and hourly
+  checks do not depend on the anonymous REST API's shared rate limit.
 
 ## [1.3.2] - 2026-07-27
 

@@ -79,6 +79,53 @@ enum UpdaterVerifier {
             throw Failure(description: "beta channel did not select the latest beta")
         }
 
+        let atomFixture = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry>
+            <id>tag:github.com,2008:Repository/1/v1.4.0-beta.2</id>
+            <link rel="alternate" type="text/html" href="https://github.com/bifrost-proxy/pesty/releases/tag/v1.4.0-beta.2"/>
+            <content type="html">&lt;p&gt;SHA-256: &lt;code&gt;2123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef&lt;/code&gt;&lt;/p&gt;</content>
+          </entry>
+          <entry>
+            <id>tag:github.com,2008:Repository/1/v1.4.0-beta.1</id>
+            <link rel="alternate" type="text/html" href="https://github.com/bifrost-proxy/pesty/releases/tag/v1.4.0-beta.1"/>
+            <content type="html">&lt;p&gt;SHA-256: &lt;code&gt;1123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef&lt;/code&gt;&lt;/p&gt;</content>
+          </entry>
+          <entry>
+            <id>tag:github.com,2008:Repository/1/v1.3.3</id>
+            <link rel="alternate" type="text/html" href="https://github.com/bifrost-proxy/pesty/releases/tag/v1.3.3"/>
+            <content type="html">&lt;p&gt;SHA-256: &lt;code&gt;3123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef&lt;/code&gt;&lt;/p&gt;</content>
+          </entry>
+        </feed>
+        """
+        let atomBeta = try UpdateService.decodeAtomFeed(
+            Data(atomFixture.utf8),
+            requiredChannel: .beta
+        )
+        let atomStable = try UpdateService.decodeAtomFeed(
+            Data(atomFixture.utf8),
+            requiredChannel: .stable
+        )
+        guard atomBeta.version == "1.4.0-beta.2",
+              atomBeta.channel == .beta,
+              atomStable.version == "1.3.3",
+              atomStable.channel == .stable else {
+            throw Failure(description: "Atom feed did not preserve Stable/Beta isolation")
+        }
+        do {
+            _ = try UpdateService.decodeAtomFeed(
+                Data(atomFixture.replacingOccurrences(
+                    of: "SHA-256:",
+                    with: "unlabelled digest:"
+                ).utf8),
+                requiredChannel: .beta
+            )
+            throw Failure(description: "Atom entry without a labelled SHA-256 digest was accepted")
+        } catch is UpdateService.Failure {
+            // Expected.
+        }
+
         do {
             _ = try UpdateService.decodeRelease(
                 Data(fixture.replacingOccurrences(
