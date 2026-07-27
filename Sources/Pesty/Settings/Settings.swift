@@ -43,6 +43,10 @@ enum HistoryRetentionPolicy {
     }
 }
 
+enum BarLayoutPolicy {
+    static let defaultHeight = 350.0
+}
+
 @Observable
 @MainActor
 final class Settings {
@@ -166,7 +170,7 @@ final class Settings {
             Keys.pasteDirectly: true,
             Keys.playSound: false,
             Keys.ignoreConcealed: true,
-            Keys.barHeight: 430.0,
+            Keys.barHeight: BarLayoutPolicy.defaultHeight,
             Keys.onboarded: false,
             Keys.iCloudSync: false,
             Keys.language: AppLanguage.systemDefault.rawValue

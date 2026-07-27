@@ -58,16 +58,16 @@ enum AppearanceVerifier {
         guard lightSecondaryContrast >= 4.5, darkSecondaryContrast >= 4.5 else {
             throw VerificationFailure(description: "secondary text contrast is below 4.5:1")
         }
-        guard (0.12...0.30).contains(light.panelTint.opacity),
-              (0.12...0.30).contains(dark.panelTint.opacity) else {
+        guard (0.005...0.06).contains(light.panelTint.opacity),
+              (0.005...0.06).contains(dark.panelTint.opacity) else {
             throw VerificationFailure(
                 description: "panel tint is too opaque or too transparent for system glass"
             )
         }
-        guard (0.86...0.95).contains(light.cardBody.opacity),
-              (0.86...0.95).contains(dark.cardBody.opacity),
-              light.cardBody.opacity - light.panelTint.opacity >= 0.45,
-              dark.cardBody.opacity - dark.panelTint.opacity >= 0.45 else {
+        guard (0.80...0.90).contains(light.cardBody.opacity),
+              (0.80...0.90).contains(dark.cardBody.opacity),
+              light.cardBody.opacity - light.panelTint.opacity >= 0.70,
+              dark.cardBody.opacity - dark.panelTint.opacity >= 0.70 else {
             throw VerificationFailure(
                 description: "card opacity does not remain stronger than the glass panel"
             )

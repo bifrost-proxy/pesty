@@ -12,6 +12,9 @@ enum HistorySettingsVerifier {
         guard HistoryRetentionPolicy.trimDelay >= 10 else {
             throw Failure(description: "destructive history trimming waits less than 10 seconds")
         }
+        guard BarLayoutPolicy.defaultHeight == 350 else {
+            throw Failure(description: "the default panel height is not 350 pixels")
+        }
 
         let finiteNodes = [
             (0.0, 100),
