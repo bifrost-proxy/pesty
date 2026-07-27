@@ -6,6 +6,28 @@ All notable changes to Pesty are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.6.3] - 2026-07-28
+
+### Added
+
+- Added a one-click Accessibility permission repair action that clears Pesty's
+  stale authorization record, requests access again, and opens the correct
+  System Settings pane.
+
+### Changed
+
+- Synced the history retention limit through the iCloud-backed store so all
+  Macs converge on the same finite or unlimited policy.
+- Delayed destructive trimming after a remotely received lower limit, giving
+  other devices time to receive and reconcile the shared configuration.
+
+### Fixed
+
+- Preserved complete histories while migrating legacy iCloud snapshots and
+  deterministically resolved concurrent retention-setting updates.
+
+[1.6.3]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.6.3
+
 ## [1.6.2] - 2026-07-27
 
 ### Changed

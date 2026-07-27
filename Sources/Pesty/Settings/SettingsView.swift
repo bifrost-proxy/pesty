@@ -24,6 +24,8 @@ private struct GeneralSettings: View {
     #if !MAS
     @State private var accessibilityGranted = AXIsProcessTrusted()
     @State private var requestedGrant = false
+    @State private var isRepairingAccessibility = false
+    @State private var accessibilityRepairFailure: String?
 
     private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     #endif
@@ -107,21 +109,27 @@ private struct GeneralSettings: View {
                         .font(.title3)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(L10n.accessibility)
-                        Text(accessibilityGranted
-                             ? L10n.accessibilityGranted
-                             : (requestedGrant
-                                ? L10n.accessibilityWaiting
-                                : L10n.accessibilityRequired))
+                        Text(accessibilityStatus)
                             .font(.caption)
-                            .foregroundStyle(accessibilityGranted ? .green : .secondary)
+                            .foregroundStyle(
+                                accessibilityGranted
+                                    ? .green
+                                    : (accessibilityRepairFailure == nil ? .secondary : .red)
+                            )
                     }
                     Spacer()
                     if !accessibilityGranted {
-                        Button(L10n.openSettings) {
-                            requestedGrant = true
-                            PasteService.ensureAccessibility(prompt: true)
-                            openAccessibilityPane()
+                        Button {
+                            repairAccessibility()
+                        } label: {
+                            if isRepairingAccessibility {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Text(L10n.repairAccessibility)
+                            }
                         }
+                        .disabled(isRepairingAccessibility)
                     } else if requestedGrant {
                         Button(L10n.restartPesty) { AppController.restart() }
                     }
@@ -178,6 +186,42 @@ private struct GeneralSettings: View {
     }
 
     #if !MAS
+    private var accessibilityStatus: String {
+        if accessibilityGranted {
+            return L10n.accessibilityGranted
+        }
+        if let accessibilityRepairFailure {
+            return L10n.accessibilityRepairFailed(accessibilityRepairFailure)
+        }
+        if isRepairingAccessibility {
+            return L10n.accessibilityRepairing
+        }
+        if requestedGrant {
+            return L10n.accessibilityWaiting
+        }
+        return L10n.accessibilityRequired
+    }
+
+    private func repairAccessibility() {
+        guard !isRepairingAccessibility else { return }
+        requestedGrant = false
+        accessibilityRepairFailure = nil
+        isRepairingAccessibility = true
+
+        Task { @MainActor in
+            let failure = await PasteService.resetAccessibilityAuthorization()
+            isRepairingAccessibility = false
+            if let failure {
+                accessibilityRepairFailure = failure
+                return
+            }
+
+            requestedGrant = true
+            PasteService.ensureAccessibility(prompt: true)
+            openAccessibilityPane()
+        }
+    }
+
     private func openAccessibilityPane() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)

@@ -28,6 +28,12 @@ enum BarSource: Equatable {
     case pinboard(UUID)
 }
 
+struct ClipboardStoreSnapshot: Codable {
+    var history: [ClipItem]
+    var pinboards: [Pinboard]
+    var configuration: SyncedConfiguration?
+}
+
 @Observable
 @MainActor
 final class ClipboardStore {
@@ -77,6 +83,10 @@ final class ClipboardStore {
     }
 
     var iCloudAvailable: Bool { ClipboardStore.iCloudBase != nil }
+
+    private var usesSharedConfiguration: Bool {
+        Settings.shared.iCloudSync || ClipboardStore.automatedTestBase != nil
+    }
 
     private init() {
         let base = ClipboardStore.automatedTestBase
@@ -137,19 +147,27 @@ final class ClipboardStore {
         scheduleSave()
     }
 
-    func historyRetentionDidChange() {
+    func historyRetentionDidChange(
+        effectiveAt: Date?,
+        configurationChanged: Bool
+    ) {
         historyLimitWorkItem?.cancel()
         historyLimitWorkItem = nil
 
-        guard let limit = Settings.shared.retainedHistoryLimit,
-              history.count > limit else {
+        guard Settings.shared.retainedHistoryLimit != nil else {
             Settings.shared.clearDeferredHistoryLimitTrim()
+            if configurationChanged { scheduleSave() }
             return
         }
 
-        let deadline = Date().addingTimeInterval(HistoryRetentionPolicy.trimDelay)
-        Settings.shared.deferHistoryLimitTrim(until: deadline)
-        scheduleHistoryLimitTrim(at: deadline)
+        if let effectiveAt, effectiveAt > Date() {
+            Settings.shared.deferHistoryLimitTrim(until: effectiveAt)
+            scheduleHistoryLimitTrim(at: effectiveAt)
+        } else {
+            Settings.shared.clearDeferredHistoryLimitTrim()
+            trimHistory()
+        }
+        if configurationChanged { scheduleSave() }
     }
 
     private func trimHistory() {
@@ -163,12 +181,17 @@ final class ClipboardStore {
 
     private func resumeDeferredHistoryLimitTrim() {
         guard let deadline = Settings.shared.historyLimitTrimAfter,
-              let limit = Settings.shared.retainedHistoryLimit,
-              history.count > limit else {
+              Settings.shared.retainedHistoryLimit != nil else {
             Settings.shared.clearDeferredHistoryLimitTrim()
             return
         }
-        scheduleHistoryLimitTrim(at: deadline)
+        if deadline > Date() {
+            scheduleHistoryLimitTrim(at: deadline)
+        } else {
+            Settings.shared.clearDeferredHistoryLimitTrim()
+            trimHistory()
+            scheduleSave()
+        }
     }
 
     private func scheduleHistoryLimitTrim(at deadline: Date) {
@@ -399,17 +422,29 @@ final class ClipboardStore {
         if let url = imageURL(for: item) { try? FileManager.default.removeItem(at: url) }
     }
 
-    private struct Snapshot: Codable {
-        var history: [ClipItem]
-        var pinboards: [Pinboard]
-    }
-
     private func load() {
-        if let snap = readSnapshot(at: storeURL) {
+        let initialSnapshot = readSnapshot(at: storeURL)
+        if let snap = initialSnapshot {
             history = snap.history
             pinboards = snap.pinboards
         }
         reconcileFromDisk()
+        let initializedConfiguration = usesSharedConfiguration
+            ? Settings.shared.ensureSyncedHistoryRetention(
+                effectiveAt: Date().addingTimeInterval(HistoryRetentionPolicy.trimDelay)
+            )
+            : false
+        if initializedConfiguration {
+            historyRetentionDidChange(
+                effectiveAt: Settings.shared.syncedHistoryRetention?.effectiveAt,
+                configurationChanged: false
+            )
+        }
+        let currentConfiguration = Settings.shared.syncedHistoryRetention
+        if initializedConfiguration
+            || initialSnapshot?.configuration?.historyRetention != currentConfiguration {
+            saveNow()
+        }
         selectFirst()
     }
 
@@ -426,7 +461,19 @@ final class ClipboardStore {
 
     @discardableResult
     private func writeSnapshot() -> Bool {
-        let snap = Snapshot(history: history, pinboards: pinboards)
+        if usesSharedConfiguration {
+            _ = Settings.shared.ensureSyncedHistoryRetention(
+                effectiveAt: Date().addingTimeInterval(HistoryRetentionPolicy.trimDelay)
+            )
+        }
+        let configuration = Settings.shared.syncedHistoryRetention.map {
+            SyncedConfiguration(historyRetention: $0)
+        }
+        let snap = ClipboardStoreSnapshot(
+            history: history,
+            pinboards: pinboards,
+            configuration: configuration
+        )
         let data: Data
         do {
             data = try JSONEncoder().encode(snap)
@@ -471,8 +518,20 @@ final class ClipboardStore {
         try? fm.createDirectory(at: newImages, withIntermediateDirectories: true,
                                 attributes: [.posixPermissions: 0o700])
 
-        if fm.fileExists(atPath: newStore.path),
-           let snap = readSnapshot(at: newStore) {
+        let targetSnapshot = fm.fileExists(atPath: newStore.path)
+            ? readSnapshot(at: newStore)
+            : nil
+        if enabled, targetSnapshot?.configuration == nil {
+            let configuration = Settings.shared.publishCurrentHistoryRetention(
+                effectiveAt: Date().addingTimeInterval(HistoryRetentionPolicy.trimDelay)
+            )
+            historyRetentionDidChange(
+                effectiveAt: configuration.effectiveAt,
+                configurationChanged: false
+            )
+        }
+
+        if let snap = targetSnapshot {
             copyImages(from: imagesDir, to: newImages)
             baseDir = target; imagesDir = newImages; storeURL = newStore
             _ = mergeExternal(snap)
@@ -505,16 +564,34 @@ final class ClipboardStore {
     }
 
     @discardableResult
-    private func mergeExternal(_ snap: Snapshot) -> Bool {
+    private func mergeExternal(_ snap: ClipboardStoreSnapshot) -> Bool {
         let previousHistory = history
         let previousPinboards = pinboards
+        var configurationChanged = false
+        if let incoming = snap.configuration?.historyRetention,
+           Settings.shared.adoptSyncedHistoryRetention(incoming) {
+            configurationChanged = true
+            historyRetentionDidChange(
+                effectiveAt: Settings.shared.syncedHistoryRetention?.effectiveAt,
+                configurationChanged: false
+            )
+        }
+        let configurationNeedsWrite =
+            Settings.shared.syncedHistoryRetention
+                != snap.configuration?.historyRetention.normalized()
+
         var combined = (history + snap.history).sorted { $0.createdAt > $1.createdAt }
         var seen = Set<String>()
         var merged: [ClipItem] = []
         for it in combined where seen.insert(contentKey(it)).inserted { merged.append(it) }
-        let mergeLimit = Settings.shared.historyLimitTrimAfter == nil
-            ? Settings.shared.retainedHistoryLimit
-            : nil
+        let mergeLimit: Int?
+        if usesSharedConfiguration && Settings.shared.syncedHistoryRetention == nil {
+            mergeLimit = nil
+        } else {
+            mergeLimit = Settings.shared.historyLimitTrimAfter == nil
+                ? Settings.shared.retainedHistoryLimit
+                : nil
+        }
         history = HistoryRetentionPolicy.retainedPrefix(of: merged, limit: mergeLimit)
 
         var byID: [UUID: Pinboard] = Dictionary(uniqueKeysWithValues: pinboards.map { ($0.id, $0) })
@@ -533,13 +610,16 @@ final class ClipboardStore {
 
         combined.removeAll()
         selectFirst()
-        return history != previousHistory || pinboards != previousPinboards
+        return history != previousHistory
+            || pinboards != previousPinboards
+            || configurationChanged
+            || configurationNeedsWrite
     }
 
-    private func readSnapshot(at url: URL) -> Snapshot? {
+    private func readSnapshot(at url: URL) -> ClipboardStoreSnapshot? {
         do {
             let data = try Data(contentsOf: url)
-            return try JSONDecoder().decode(Snapshot.self, from: data)
+            return try JSONDecoder().decode(ClipboardStoreSnapshot.self, from: data)
         } catch {
             if FileManager.default.fileExists(atPath: url.path) {
                 logger.error("Failed to read clipboard history: \(error.localizedDescription, privacy: .public)")

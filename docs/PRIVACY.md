@@ -19,9 +19,9 @@ Pesty 是一款 macOS 剪贴板历史工具。剪贴板内容默认只保存在�
 
 ## 可选的 iCloud 同步
 
-iCloud 同步默认关闭。启用后，历史记录和 Pinboard 会存入你自己的 iCloud Drive，
-并通过 Apple 的 iCloud 服务在你的 Mac 之间同步。项目维护者没有访问这些数据的
-服务器或账号权限。
+iCloud 同步默认关闭。启用后，历史记录、Pinboard 和历史记录保留上限会存入你
+自己的 iCloud Drive，并通过 Apple 的 iCloud 服务在你的 Mac 之间同步。项目
+维护者没有访问这些数据的服务器或账号权限。
 
 ## 网络访问
 

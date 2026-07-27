@@ -95,6 +95,11 @@ prove either.
   discrete slider with 100-item nodes from 100 through 1,000, 1,000-item nodes
   from 2,000 through 10,000, and an unlimited node immediately after 10,000.
   Unlimited mode must also remain unlimited while merging iCloud snapshots.
+- The iCloud snapshot must carry the history-retention policy, revision, and
+  shared effective date. Resolve configuration conflicts deterministically by
+  newest modification time before applying the history limit. Device-specific
+  settings such as hotkeys, login launch, Accessibility access, menu-bar
+  visibility, panel height, and language must remain local.
 - New installations default to a 350-pixel clipboard panel height. Preserve
   existing users' explicitly saved height instead of migrating it forcibly.
 - Lowering the limit must never trim immediately. Persist a deadline at least
@@ -162,6 +167,35 @@ Also reuse one isolated data directory and defaults suite across
 `AUTOMATED_RETENTION_RESTART_RESULT` lines to succeed, with 150 items still
 present immediately after restart and 100 only after the persisted deadline.
 
+For synchronized history settings, reuse one isolated data directory with two
+different defaults suites to model two Macs:
+
+```bash
+test_dir="$(mktemp -d)"
+run_id="retention-sync-$(date +%s)"
+suite_a="com.bifrostproxy.pesty.retention-sync-a.$run_id"
+suite_b="com.bifrostproxy.pesty.retention-sync-b.$run_id"
+
+PESTY_AUTOMATED_TEST_DATA_DIR="$test_dir" \
+PESTY_AUTOMATED_TEST_DEFAULTS_SUITE="$suite_a" \
+PESTY_AUTOMATED_UI_TEST=retention-sync-seed \
+PESTY_AUTOMATED_TEST_ID="$run_id" \
+  .build/debug/Pesty
+
+PESTY_AUTOMATED_TEST_DATA_DIR="$test_dir" \
+PESTY_AUTOMATED_TEST_DEFAULTS_SUITE="$suite_b" \
+PESTY_AUTOMATED_UI_TEST=retention-sync-verify \
+PESTY_AUTOMATED_TEST_ID="$run_id" \
+  .build/debug/Pesty
+
+defaults delete "$suite_a" >/dev/null 2>&1 || true
+defaults delete "$suite_b" >/dev/null 2>&1 || true
+```
+
+Require both `AUTOMATED_RETENTION_SYNC_RESULT` lines to succeed. The second
+suite must adopt the 100-item configuration from the shared snapshot, retain
+all 150 items before the shared deadline, and trim to 100 only afterward.
+
 For changes to complete-history deletion, run `clear-confirmation` with an
 isolated test directory. Require `AUTOMATED_CLEAR_CONFIRMATION_RESULT` to show
 four records after cancellation and zero only after explicit confirmation.
@@ -208,21 +242,27 @@ Use a fresh directory and reuse one run ID across all phases:
 ```bash
 test_dir="$(mktemp -d)"
 run_id="isolated-$(date +%s)"
+suite="com.bifrostproxy.pesty.isolated.$run_id"
 
 PESTY_AUTOMATED_TEST_DATA_DIR="$test_dir" \
+PESTY_AUTOMATED_TEST_DEFAULTS_SUITE="$suite" \
 PESTY_AUTOMATED_UI_TEST=seed \
 PESTY_AUTOMATED_TEST_ID="$run_id" \
   .build/debug/Pesty
 
 PESTY_AUTOMATED_TEST_DATA_DIR="$test_dir" \
+PESTY_AUTOMATED_TEST_DEFAULTS_SUITE="$suite" \
 PESTY_AUTOMATED_UI_TEST=restart-1 \
 PESTY_AUTOMATED_TEST_ID="$run_id" \
   .build/debug/Pesty
 
 PESTY_AUTOMATED_TEST_DATA_DIR="$test_dir" \
+PESTY_AUTOMATED_TEST_DEFAULTS_SUITE="$suite" \
 PESTY_AUTOMATED_UI_TEST=restart-2 \
 PESTY_AUTOMATED_TEST_ID="$run_id" \
   .build/debug/Pesty
+
+defaults delete "$suite" >/dev/null 2>&1 || true
 ```
 
 Afterward, decode the isolated store and verify that all four strings remain in
