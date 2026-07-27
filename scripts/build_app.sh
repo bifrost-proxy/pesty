@@ -8,14 +8,34 @@ ARCHS="${ARCHS:-arm64 x86_64}"
 APP="packaging/Pesty.app"
 
 BUILD_ARGS=()
+BUILD_ARCHS=()
 for arch in $ARCHS; do
+  BUILD_ARCHS+=("$arch")
   BUILD_ARGS+=(--arch "$arch")
 done
 
 echo "==> Building release binary ($ARCHS)"
-swift build -c release "${BUILD_ARGS[@]}"
+XCBUILD="$(xcrun --find xcbuild 2>/dev/null || true)"
+if [[ -n "$XCBUILD" && -x "$XCBUILD" ]]; then
+  swift build -c release "${BUILD_ARGS[@]}"
+  BIN="$(swift build -c release "${BUILD_ARGS[@]}" --show-bin-path)/Pesty"
+else
+  echo "    xcbuild unavailable; building each architecture with an explicit target"
+  ARCH_BINARIES=()
+  for arch in "${BUILD_ARCHS[@]}"; do
+    SCRATCH_PATH=".build-release-$arch"
+    swift build \
+      -c release \
+      --triple "$arch-apple-macosx14.0" \
+      --scratch-path "$SCRATCH_PATH"
+    ARCH_BINARIES+=("$SCRATCH_PATH/$arch-apple-macosx/release/Pesty")
+  done
 
-BIN="$(swift build -c release "${BUILD_ARGS[@]}" --show-bin-path)/Pesty"
+  UNIVERSAL_DIR=".build/pesty-universal/release"
+  mkdir -p "$UNIVERSAL_DIR"
+  BIN="$UNIVERSAL_DIR/Pesty"
+  lipo -create "${ARCH_BINARIES[@]}" -output "$BIN"
+fi
 echo "    binary: $BIN"
 
 echo "==> Generating icon"

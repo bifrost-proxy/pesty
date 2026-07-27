@@ -33,6 +33,7 @@ struct ClipCardView: View {
         .onTapGesture { store.selectedID = item.id }
         .contextMenu { menu }
         .id(settings.language)
+        .onAppear { AutomatedUITestProbe.record(item) }
     }
 
     private var header: some View {
