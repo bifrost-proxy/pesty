@@ -156,8 +156,8 @@ struct BarView: View {
             palette.panelTint.swiftUIColor
             LinearGradient(
                 colors: [
-                    Color.white.opacity(colorScheme == .dark ? 0.055 : 0.16),
-                    Color.white.opacity(0.025),
+                    Color.white.opacity(colorScheme == .dark ? 0.035 : 0.09),
+                    Color.white.opacity(0.015),
                     Color.clear,
                 ],
                 startPoint: .top,

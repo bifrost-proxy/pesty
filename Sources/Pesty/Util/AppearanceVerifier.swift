@@ -58,8 +58,8 @@ enum AppearanceVerifier {
         guard lightSecondaryContrast >= 4.5, darkSecondaryContrast >= 4.5 else {
             throw VerificationFailure(description: "secondary text contrast is below 4.5:1")
         }
-        guard (0.20...0.45).contains(light.panelTint.opacity),
-              (0.20...0.45).contains(dark.panelTint.opacity) else {
+        guard (0.12...0.30).contains(light.panelTint.opacity),
+              (0.12...0.30).contains(dark.panelTint.opacity) else {
             throw VerificationFailure(
                 description: "panel tint is too opaque or too transparent for system glass"
             )

@@ -120,7 +120,7 @@ prove either.
   invalidation. Rebuilding the complete root `NSHostingView` after every panel
   presentation defeats reuse and is not allowed.
 - The clipboard panel uses one native `NSVisualEffectView` behind a lightly
-  tinted translucent overlay. Keep panel tint opacity between 0.20 and 0.45.
+  tinted translucent overlay. Keep panel tint opacity between 0.12 and 0.30.
   Cards must remain substantially more opaque (0.86 through 0.95) so desktop
   content never harms clipboard readability. Do not add one visual-effect view
   per card; that breaks the memory and scrolling budget.

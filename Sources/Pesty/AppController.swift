@@ -108,6 +108,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         _ sender: NSApplication,
         hasVisibleWindows flag: Bool
     ) -> Bool {
+        if CommandLine.arguments.contains("--demo") {
+            showBar()
+            return false
+        }
         showSettings()
         return false
     }

@@ -6,6 +6,15 @@ All notable changes to Pesty are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-07-27
+
+### Changed
+
+- Increased the clipboard panel's native frosted-glass transparency while
+  preserving the stronger card opacity needed for readable clipboard content.
+
+[1.6.1]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.6.1
+
 ## [1.6.0] - 2026-07-27
 
 ### Added

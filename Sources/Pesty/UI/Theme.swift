@@ -62,7 +62,7 @@ enum Theme {
         switch colorScheme {
         case .light:
             return ThemePalette(
-                panelTint: color(0xEEF4FF, opacity: 0.28),
+                panelTint: color(0xEEF4FF, opacity: 0.16),
                 cardBody: color(0xF8FAFF, opacity: 0.91),
                 cardBorder: color(0xFFFFFF, opacity: 0.62),
                 selection: color(0x1677E8),
@@ -75,7 +75,7 @@ enum Theme {
             )
         case .dark:
             return ThemePalette(
-                panelTint: color(0x050B14, opacity: 0.30),
+                panelTint: color(0x050B14, opacity: 0.18),
                 cardBody: color(0x161B24, opacity: 0.90),
                 cardBorder: color(0xFFFFFF, opacity: 0.14),
                 selection: color(0x338CFF),
