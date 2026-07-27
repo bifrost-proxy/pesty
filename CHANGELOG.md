@@ -4,6 +4,18 @@ All notable changes to Pesty are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Added a manual update check and an automatic check at launch and every hour.
+- Added isolated Stable and Beta channels so stable installs ignore
+  prereleases and Beta installs only advance to newer `beta.N` releases.
+- Added mutually exclusive update indicators in the menu bar or clipboard bar,
+  with one-click download, verified installation, and application restart.
+- Added SHA-256, release URL, bundle identity, Universal architecture, and code
+  signature verification before an update can replace the installed app.
+
 ## [1.3.2] - 2026-07-27
 
 ### Added

@@ -29,6 +29,9 @@ Pesty 会在本机保存剪贴板历史。按下全局快捷键后，屏幕底�
 - 根据来源应用显示图标和颜色。
 - 可忽略密码管理器标记为隐藏的剪贴板内容。
 - 可隐藏菜单栏图标；隐藏后重新从“应用程序”打开 Pesty 即可进入设置。
+- 启动时及每小时自动检查更新，也支持手动检查；发现新版本后可在菜单栏
+  或剪贴板面板中一键安装并重启。
+- 正式版和 Beta 更新通道相互隔离，正式用户不会收到 Beta 版本。
 - 支持中文和英文，并可在设置中即时切换。
 - 原生 Swift 和 SwiftUI 实现，不依赖第三方运行时。
 - 同时支持 Apple Silicon 和 Intel Mac。
@@ -55,6 +58,8 @@ brew install --cask bifrost-proxy/pesty/pesty
 4. 首次直接粘贴时，按照系统提示授予“辅助功能”权限。
 5. 在“设置”中可以修改快捷键、历史记录数量、启动行为、菜单栏图标、iCloud 同步和界面语言。
 6. 隐藏菜单栏图标后，可以从“应用程序”中再次打开 Pesty，重新唤起设置页面。
+7. 菜单栏图标显示时，新版本会显示在菜单栏菜单中；图标隐藏时，新版本会显示在
+   剪贴板面板顶部。点击更新按钮后，Pesty 会校验并安装更新，然后自动重启。
 
 常用快捷键：
 
@@ -77,6 +82,7 @@ git clone https://github.com/bifrost-proxy/pesty.git
 cd pesty
 swift build
 swift run Pesty --verify-localization
+swift run Pesty --verify-updater
 swift run
 ```
 
@@ -98,7 +104,10 @@ EXPECTED_ARCHS=arm64 ./scripts/verify_release.sh 1.2.0
 
 ## 正式发布
 
-正式版本使用 `vMAJOR.MINOR.PATCH` 标签。标签必须指向 `main` 可达的提交。GitHub Actions 会自动执行测试、构建通用 DMG、验证 ad-hoc 签名、生成 Homebrew Cask 并创建 GitHub Release。
+正式版本使用 `vMAJOR.MINOR.PATCH` 标签，Beta 使用
+`vMAJOR.MINOR.PATCH-beta.N`。标签必须指向 `main` 可达的提交。GitHub
+Actions 会自动执行测试、构建通用 DMG、验证 ad-hoc 签名、生成 Homebrew
+Cask，并把 Beta 标签创建为 GitHub Prerelease。
 
 Homebrew tap 位于 `bifrost-proxy/homebrew-pesty`。Release 附带生成后的 `pesty.rb`，tap 更新后即可通过上面的安装命令获取对应版本。
 

@@ -3,6 +3,7 @@ import SwiftUI
 struct BarView: View {
     @Bindable private var store = ClipboardStore.shared
     @Bindable private var settings = Settings.shared
+    @Bindable private var updater = UpdateManager.shared
 
     var body: some View {
         ZStack {
@@ -27,6 +28,9 @@ struct BarView: View {
             PinboardTabs()
                 .layoutPriority(1)
             Spacer(minLength: 8)
+            if updater.showInClipboardBar, let release = updater.availableRelease {
+                updateButton(release)
+            }
             moreMenu
         }
         .padding(.horizontal, 18)
@@ -70,6 +74,11 @@ struct BarView: View {
 
     private var moreMenu: some View {
         Menu {
+            Button(L10n.checkForUpdates) {
+                AppController.shared.checkForUpdatesManually()
+            }
+            .disabled(updater.activity == .checking || updater.isInstalling)
+            Divider()
             Button(L10n.settings) { AppController.shared.showSettings() }
             Button(L10n.clearHistory) { store.clearHistory() }
             Divider()
@@ -85,6 +94,40 @@ struct BarView: View {
         .menuIndicator(.hidden)
         .frame(width: 34)
         .fixedSize()
+    }
+
+    private func updateButton(_ release: AppRelease) -> some View {
+        Button {
+            updater.installAvailableUpdate()
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: updater.isInstalling
+                      ? "arrow.triangle.2.circlepath"
+                      : "arrow.down.circle.fill")
+                Text(updateButtonTitle(release))
+                    .lineLimit(1)
+            }
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+            .background(Theme.selection, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(updater.isInstalling)
+        .help(L10n.updateAvailableMessage(release.version))
+        .accessibilityIdentifier("pesty-update-button")
+    }
+
+    private func updateButtonTitle(_ release: AppRelease) -> String {
+        switch updater.activity {
+        case .downloading:
+            return L10n.downloadingUpdate(release.version)
+        case .installing:
+            return L10n.installingUpdate(release.version)
+        default:
+            return L10n.updateToVersion(release.version)
+        }
     }
 
     private var strip: some View {

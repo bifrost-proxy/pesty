@@ -260,6 +260,67 @@ Installation procedure:
 If copy or startup fails, restore the exact backup. Never delete the previous
 app before the replacement has passed.
 
+## Application Update Requirements
+
+The direct-download build checks its GitHub Release channel at launch and every
+3,600 seconds. Stable versions read only the latest stable release. Versions
+named `MAJOR.MINOR.PATCH-beta.N` read only newer GitHub prereleases with the same
+Beta naming scheme. It also exposes a manual "Check for Updates" action. Do not
+weaken these updater invariants:
+
+- A release must be newer by numeric stable or `beta.N` comparison.
+- Stable installs must reject all prereleases. Beta installs must reject stable
+  releases and non-`beta.N` prereleases. Drafts, wrong-channel releases, missing
+  DMGs, and missing SHA-256 digests must be rejected.
+- Production downloads must use the exact
+  `https://github.com/bifrost-proxy/pesty/releases/download/` path.
+- Before replacement, verify the downloaded SHA-256, bundle ID, exact version,
+  ad-hoc code signature integrity, and both `arm64` and `x86_64` architectures.
+- When the menu bar icon is visible, show the update only in the menu bar icon
+  and menu. When the icon is hidden, show it only in the clipboard bar's top
+  toolbar. The two update indicators must never appear at the same time.
+- Clicking the visible update action starts installation immediately.
+- Replacement must wait for the old PID to exit, keep an exact adjacent backup,
+  verify the installed copy, relaunch through LaunchServices, and remove the
+  backup only after the new process writes its health marker.
+- If copy or validation fails, restore and reopen the previous app.
+- Never print clipboard data in updater logs.
+
+Run the deterministic updater contract verifier after updater, release, menu
+bar, localization, or Settings changes:
+
+```bash
+swift run Pesty --verify-updater
+```
+
+Before publishing a stable updater change, perform a real GitHub Beta E2E:
+
+1. Publish and install `MAJOR.MINOR.PATCH-beta.N`.
+2. Publish `MAJOR.MINOR.PATCH-beta.(N+1)` from the intended source commit.
+3. Launch the installed lower Beta normally and require the real GitHub API,
+   DMG download, replacement helper, health marker, and restart to reach the
+   higher Beta.
+4. Launch the latest stable build and prove it reports up-to-date instead of
+   seeing either Beta.
+
+For a machine-readable real-feed channel check, launch the packaged app through
+LaunchServices with `PESTY_AUTOMATED_UPDATE_CHECK_ONLY=1`, capture the
+`AUTOMATED_UPDATE_CHECK_RESULT` JSON line, and assert `channel`, `outcome`, and
+`availableVersion` explicitly.
+
+For an earlier local dry run, use a locally hosted GitHub-release fixture
+containing a higher-version Universal DMG. Install the lower-version test build
+into `/Applications`, launch it through LaunchServices with
+`PESTY_UPDATE_FEED_URL`, `PESTY_UPDATE_ALLOW_INSECURE_TEST_FEED=1`, and
+`PESTY_AUTOMATED_UPDATE_INSTALL=1`, then require:
+
+1. the higher version replaces the lower version;
+2. the new PID is running from `/Applications/Pesty.app`;
+3. the updater health marker caused the adjacent backup to be removed;
+4. the update log contains no restore or validation failure;
+5. the user's original app is restored after the test unless the new version is
+   the intended handoff build.
+
 ## Release Workflow
 
 Official releases must be universal unless an explicitly scoped local
@@ -275,6 +336,7 @@ VERSION=MAJOR.MINOR.PATCH BUILD=BUILD_NUMBER \
 The release gate must verify:
 
 - localization
+- deterministic updater verification
 - Swift debug and release builds
 - the isolated and real three-launch UI regression when relevant
 - valid DMG and app signatures
@@ -302,6 +364,11 @@ A clipboard, history, iCloud, or panel change is not complete until:
 7. The final normal app process is running the expected version and build.
 8. iCloud upload is complete and any remaining conflict flag is reported.
 9. Unrelated workspace changes and user history remain untouched.
+
+An updater change is additionally incomplete until the hourly interval,
+exclusive menu/panel placement, malicious or incomplete release rejection,
+verified Universal DMG installation, health-marked restart, and rollback path
+have been tested.
 
 For documentation-only changes, use judgment and skip runtime mutation when it
 cannot add evidence. For any optimization of the horizontal history strip, the

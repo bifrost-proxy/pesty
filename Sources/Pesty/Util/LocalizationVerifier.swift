@@ -23,6 +23,8 @@ enum LocalizationVerifier {
             [
                 (L10n.settings, "Settings…"),
                 (L10n.showMenuBarIcon, "Show menu bar icon"),
+                (L10n.checkForUpdates, "Check for Updates…"),
+                (L10n.updateToVersion("1.2.3"), "Update to Pesty 1.2.3"),
                 (L10n.items(2), "2 items"),
                 (L10n.fileCount(1), "1 file"),
                 (L10n.fileCount(2), "2 files"),
@@ -40,6 +42,8 @@ enum LocalizationVerifier {
             [
                 (L10n.settings, "设置…"),
                 (L10n.showMenuBarIcon, "显示菜单栏图标"),
+                (L10n.checkForUpdates, "检查更新…"),
+                (L10n.updateToVersion("1.2.3"), "更新到 Pesty 1.2.3"),
                 (L10n.items(2), "2 项"),
                 (L10n.fileCount(2), "2 个文件"),
                 (L10n.version("1.2.3"), "版本 1.2.3"),

@@ -131,6 +131,8 @@ private struct GeneralSettings: View {
 }
 
 private struct AboutView: View {
+    @Bindable private var updater = UpdateManager.shared
+
     var body: some View {
         VStack(spacing: 12) {
             Image(nsImage: NSApp.applicationIconImage ?? NSImage())
@@ -142,6 +144,10 @@ private struct AboutView: View {
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal)
+            Button(L10n.checkForUpdates) {
+                AppController.shared.checkForUpdatesManually()
+            }
+            .disabled(updater.activity == .checking || updater.isInstalling)
             HStack(spacing: 16) {
                 Link("GitHub", destination: URL(string: "https://github.com/\(Repository.current)")!)
                 Link(L10n.reportIssue,

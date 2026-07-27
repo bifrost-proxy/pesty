@@ -25,6 +25,9 @@ jobs:
       - name: Verify Settings recovery
         run: swift run Pesty --verify-settings-access
 
+      - name: Verify updater contract
+        run: swift run Pesty --verify-updater
+
       - name: Build and verify release package
         run: |
           VERSION=0.0.0 BUILD="${GITHUB_RUN_NUMBER}" ./scripts/release_build.sh
