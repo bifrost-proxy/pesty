@@ -262,11 +262,12 @@ app before the replacement has passed.
 
 ## Application Update Requirements
 
-The direct-download build checks its GitHub Release channel at launch and every
-3,600 seconds. Stable versions read only the latest stable release. Versions
-named `MAJOR.MINOR.PATCH-beta.N` read only newer GitHub prereleases with the same
-Beta naming scheme. It also exposes a manual "Check for Updates" action. Do not
-weaken these updater invariants:
+The direct-download build checks the public GitHub Releases Atom feed at launch
+and every 3,600 seconds. Do not switch production checks back to the anonymous
+REST API: its 60-request shared-IP limit can make manual checks fail. Stable
+versions select only stable entries. Versions named `MAJOR.MINOR.PATCH-beta.N`
+select only newer entries with the same Beta naming scheme. It also exposes a
+manual "Check for Updates" action. Do not weaken these updater invariants:
 
 - A release must be newer by numeric stable or `beta.N` comparison.
 - Stable installs must reject all prereleases. Beta installs must reject stable
@@ -274,6 +275,8 @@ weaken these updater invariants:
   DMGs, and missing SHA-256 digests must be rejected.
 - Production downloads must use the exact
   `https://github.com/bifrost-proxy/pesty/releases/download/` path.
+- Release notes must retain the workflow-generated `SHA-256: <digest>` line;
+  the Atom parser treats entries without that digest as invalid.
 - Before replacement, verify the downloaded SHA-256, bundle ID, exact version,
   ad-hoc code signature integrity, and both `arm64` and `x86_64` architectures.
 - When the menu bar icon is visible, show the update only in the menu bar icon

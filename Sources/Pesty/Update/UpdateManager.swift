@@ -280,17 +280,16 @@ enum UpdateService {
             ?? Bundle.main.shortVersion
     }
 
-    static var feedURL: URL {
+    static var customFeedURL: URL? {
         if let value = ProcessInfo.processInfo.environment["PESTY_UPDATE_FEED_URL"],
            let url = URL(string: value) {
             return url
         }
-        switch currentChannel {
-        case .stable:
-            return URL(string: "https://api.github.com/repos/\(Repository.current)/releases/latest")!
-        case .beta:
-            return URL(string: "https://api.github.com/repos/\(Repository.current)/releases?per_page=20")!
-        }
+        return nil
+    }
+
+    static var atomFeedURL: URL {
+        URL(string: "https://github.com/\(Repository.current)/releases.atom")!
     }
 
     static var currentChannel: ReleaseChannel {
@@ -298,7 +297,14 @@ enum UpdateService {
     }
 
     static func fetchLatestRelease() async throws -> AppRelease {
-        var request = URLRequest(url: feedURL)
+        if let customFeedURL {
+            return try await fetchJSONRelease(from: customFeedURL)
+        }
+        return try await fetchAtomRelease()
+    }
+
+    private static func fetchJSONRelease(from url: URL) async throws -> AppRelease {
+        var request = URLRequest(url: url)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.timeoutInterval = 30
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
@@ -318,6 +324,22 @@ enum UpdateService {
         }
     }
 
+    private static func fetchAtomRelease() async throws -> AppRelease {
+        var request = URLRequest(url: atomFeedURL)
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 30
+        request.setValue("application/atom+xml", forHTTPHeaderField: "Accept")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+        request.setValue("Pesty/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode) else {
+            throw Failure.invalidResponse
+        }
+        return try decodeAtomFeed(data, requiredChannel: currentChannel)
+    }
+
     static func decodeRelease(
         _ data: Data,
         requiredChannel: ReleaseChannel
@@ -333,6 +355,44 @@ enum UpdateService {
         let payloads = try JSONDecoder().decode([GitHubRelease].self, from: data)
         let releases = payloads.compactMap {
             try? makeRelease($0, requiredChannel: requiredChannel)
+        }
+        guard let release = releases.max(by: {
+            guard let lhs = SemanticVersion($0.version),
+                  let rhs = SemanticVersion($1.version) else { return false }
+            return lhs < rhs
+        }) else {
+            throw Failure.invalidRelease
+        }
+        return release
+    }
+
+    static func decodeAtomFeed(
+        _ data: Data,
+        requiredChannel: ReleaseChannel
+    ) throws -> AppRelease {
+        let releases = try ReleaseAtomParser.parse(data).compactMap { entry -> AppRelease? in
+            guard entry.tag.hasPrefix("v") else { return nil }
+            let version = String(entry.tag.dropFirst())
+            guard ReleaseChannel.forVersion(version) == requiredChannel else {
+                return nil
+            }
+            let expectedReleaseURL = URL(
+                string: "https://github.com/\(Repository.current)/releases/tag/v\(version)"
+            )!
+            guard entry.releaseURL == expectedReleaseURL,
+                  let hash = firstSHA256(in: entry.content) else {
+                return nil
+            }
+            let downloadURL = URL(
+                string: "https://github.com/\(Repository.current)/releases/download/v\(version)/Pesty-\(version).dmg"
+            )!
+            guard isTrustedDownloadURL(downloadURL) else { return nil }
+            return AppRelease(
+                version: version,
+                downloadURL: downloadURL,
+                sha256: hash,
+                channel: requiredChannel
+            )
         }
         guard let release = releases.max(by: {
             guard let lhs = SemanticVersion($0.version),
@@ -401,6 +461,18 @@ enum UpdateService {
         return url.scheme == "https"
             && url.host == "github.com"
             && url.path.hasPrefix(expectedPrefix)
+    }
+
+    private static func firstSHA256(in value: String) -> String? {
+        guard let expression = try? NSRegularExpression(
+            pattern: #"(?i)SHA-256:\s*(?:<[^>]+>\s*)*([0-9a-f]{64})(?![0-9a-f])"#
+        ) else { return nil }
+        let range = NSRange(value.startIndex..<value.endIndex, in: value)
+        guard let match = expression.firstMatch(in: value, range: range),
+              let swiftRange = Range(match.range(at: 1), in: value) else {
+            return nil
+        }
+        return String(value[swiftRange]).lowercased()
     }
 }
 
