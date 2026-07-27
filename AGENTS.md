@@ -196,6 +196,26 @@ The result must report all of the following:
 Run this test for every change to the strip, card layout, image loading, search
 filtering, or panel presentation lifecycle.
 
+### Keyboard deletion regression
+
+Backspace with an empty search deletes the selected card. Selection must move
+to the following card that shifts into the deleted index; deleting the final
+card falls back to the preceding card. Backspace continues to edit the query
+instead of deleting a card while search is non-empty.
+
+Run the isolated keyboard regression for changes to keyboard handling,
+selection, deletion, filtering, or strip navigation:
+
+```bash
+test_dir="$(mktemp -d)"
+PESTY_AUTOMATED_TEST_DATA_DIR="$test_dir" \
+PESTY_AUTOMATED_UI_TEST=keyboard-delete \
+PESTY_AUTOMATED_TEST_ID="keyboard-$(date +%s)" \
+  .build/debug/Pesty
+```
+
+Require `AUTOMATED_KEYBOARD_DELETE_RESULT` to report `"success": true`.
+
 ### Real iCloud three-launch test
 
 Run this for changes to clipboard capture, store merging, iCloud sync, panel

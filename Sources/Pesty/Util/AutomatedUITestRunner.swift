@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import Darwin
 import Foundation
 
@@ -56,12 +57,31 @@ enum AutomatedUITestRunner {
         let maximumDurationMilliseconds: Int
     }
 
+    private struct KeyboardDeleteResult: Codable {
+        let phase: String
+        let success: Bool
+        let initialCount: Int
+        let finalCount: Int
+        let searchBackspaceConsumed: Bool
+        let searchBackspacePreservedHistory: Bool
+        let rightArrowConsumed: Bool
+        let backspaceConsumed: Bool
+        let selectedFollowingItemAfterMiddleDelete: Bool
+        let selectedFollowingItemAfterSecondDelete: Bool
+        let selectedPreviousItemAfterTailDelete: Bool
+        let remainingItemMatches: Bool
+    }
+
     static func start(controller: AppController) {
         let environment = ProcessInfo.processInfo.environment
         let phase = environment["PESTY_AUTOMATED_UI_TEST"] ?? "verify"
         let runID = environment["PESTY_AUTOMATED_TEST_ID"] ?? "default"
         if phase == "performance" {
             runPerformanceTest(controller: controller, runID: runID)
+            return
+        }
+        if phase == "keyboard-delete" {
+            runKeyboardDeleteTest(controller: controller, runID: runID)
             return
         }
         let expected = (1...4).map { "pesty-auto-\(runID)-\($0)" }
@@ -72,6 +92,113 @@ enum AutomatedUITestRunner {
         } else {
             showAndVerify(expected, controller: controller, phase: phase, originalItems: nil)
         }
+    }
+
+    private static func runKeyboardDeleteTest(
+        controller: AppController,
+        runID: String
+    ) {
+        let items = (0..<4).map { index in
+            ClipItem(
+                type: .text,
+                text: "pesty-keyboard-delete-\(runID)-\(index)",
+                createdAt: Date(timeIntervalSinceNow: -Double(index))
+            )
+        }
+        controller.monitor.stop()
+        controller.store.replaceHistoryForAutomatedKeyboardTest(items)
+        controller.showBar()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            let originalSearch = "pesty-keyboard-delete-\(runID)-"
+            controller.store.searchText = originalSearch
+            let searchBackspaceConsumed = makeKeyEvent(
+                keyCode: UInt16(kVK_Delete),
+                characters: "\u{7F}"
+            ).map { controller.handleKey($0) == nil } ?? false
+            let searchBackspacePreservedHistory =
+                controller.store.history.map(\.id) == items.map(\.id)
+                && controller.store.searchText == String(originalSearch.dropLast())
+            controller.store.searchText = ""
+            controller.store.selectFirst()
+
+            let rightArrowConsumed = makeKeyEvent(
+                keyCode: UInt16(kVK_RightArrow),
+                characters: "\u{F703}"
+            ).map { controller.handleKey($0) == nil } ?? false
+
+            let firstBackspaceConsumed = makeKeyEvent(
+                keyCode: UInt16(kVK_Delete),
+                characters: "\u{7F}"
+            ).map { controller.handleKey($0) == nil } ?? false
+            let selectedFollowingItemAfterMiddleDelete =
+                controller.store.selectedID == items[2].id
+
+            let secondBackspaceConsumed = makeKeyEvent(
+                keyCode: UInt16(kVK_Delete),
+                characters: "\u{7F}"
+            ).map { controller.handleKey($0) == nil } ?? false
+            let selectedFollowingItemAfterSecondDelete =
+                controller.store.selectedID == items[3].id
+
+            let thirdBackspaceConsumed = makeKeyEvent(
+                keyCode: UInt16(kVK_Delete),
+                characters: "\u{7F}"
+            ).map { controller.handleKey($0) == nil } ?? false
+            let selectedPreviousItemAfterTailDelete =
+                controller.store.selectedID == items[0].id
+            let remainingItemMatches = controller.store.history.map(\.id) == [items[0].id]
+
+            let result = KeyboardDeleteResult(
+                phase: "keyboard-delete",
+                success: rightArrowConsumed
+                    && searchBackspaceConsumed
+                    && searchBackspacePreservedHistory
+                    && firstBackspaceConsumed
+                    && secondBackspaceConsumed
+                    && thirdBackspaceConsumed
+                    && selectedFollowingItemAfterMiddleDelete
+                    && selectedFollowingItemAfterSecondDelete
+                    && selectedPreviousItemAfterTailDelete
+                    && remainingItemMatches,
+                initialCount: items.count,
+                finalCount: controller.store.history.count,
+                searchBackspaceConsumed: searchBackspaceConsumed,
+                searchBackspacePreservedHistory: searchBackspacePreservedHistory,
+                rightArrowConsumed: rightArrowConsumed,
+                backspaceConsumed: firstBackspaceConsumed
+                    && secondBackspaceConsumed
+                    && thirdBackspaceConsumed,
+                selectedFollowingItemAfterMiddleDelete:
+                    selectedFollowingItemAfterMiddleDelete,
+                selectedFollowingItemAfterSecondDelete:
+                    selectedFollowingItemAfterSecondDelete,
+                selectedPreviousItemAfterTailDelete:
+                    selectedPreviousItemAfterTailDelete,
+                remainingItemMatches: remainingItemMatches
+            )
+            controller.store.saveNow()
+            writeKeyboardDelete(result)
+            exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+        }
+    }
+
+    private static func makeKeyEvent(
+        keyCode: UInt16,
+        characters: String
+    ) -> NSEvent? {
+        NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: characters,
+            charactersIgnoringModifiers: characters,
+            isARepeat: false,
+            keyCode: keyCode
+        )
     }
 
     private static func runPerformanceTest(controller: AppController, runID: String) {
@@ -298,6 +425,15 @@ enum AutomatedUITestRunner {
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(result) else { return }
         FileHandle.standardOutput.write(Data("AUTOMATED_PERFORMANCE_TEST_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeKeyboardDelete(_ result: KeyboardDeleteResult) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(Data("AUTOMATED_KEYBOARD_DELETE_RESULT ".utf8))
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data("\n".utf8))
     }

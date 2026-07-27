@@ -125,11 +125,37 @@ final class ClipboardStore {
     }
 
     func delete(_ item: ClipItem) {
+        let visibleBeforeDeletion = visibleItems
+        let deletedSelectionIndex = selectedID == item.id
+            ? visibleBeforeDeletion.firstIndex(where: { $0.id == item.id })
+            : nil
+        let preferredSelectionID = deletedSelectionIndex.flatMap { index -> UUID? in
+            if index + 1 < visibleBeforeDeletion.count {
+                return visibleBeforeDeletion[index + 1].id
+            }
+            if index > 0 {
+                return visibleBeforeDeletion[index - 1].id
+            }
+            return nil
+        }
+
         history.removeAll { $0.id == item.id }
         for i in pinboards.indices { pinboards[i].items.removeAll { $0.id == item.id } }
         deleteImageFile(item)
-        if selectedID == item.id { selectFirst() }
+        if selectedID == item.id {
+            let remainingIDs = Set(visibleItems.map(\.id))
+            selectedID = preferredSelectionID.flatMap {
+                remainingIDs.contains($0) ? $0 : nil
+            } ?? visibleItems.first?.id
+        }
         scheduleSave()
+    }
+
+    @discardableResult
+    func deleteSelectedItem() -> Bool {
+        guard let selectedItem else { return false }
+        delete(selectedItem)
+        return true
     }
 
     func clearHistory() {
@@ -157,6 +183,18 @@ final class ClipboardStore {
         let environment = ProcessInfo.processInfo.environment
         guard ClipboardStore.automatedTestBase != nil,
               environment["PESTY_AUTOMATED_UI_TEST"] == "performance" else { return }
+        history = items
+        pinboards = []
+        source = .history
+        searchText = ""
+        selectedID = items.first?.id
+        saveNow()
+    }
+
+    func replaceHistoryForAutomatedKeyboardTest(_ items: [ClipItem]) {
+        let environment = ProcessInfo.processInfo.environment
+        guard ClipboardStore.automatedTestBase != nil,
+              environment["PESTY_AUTOMATED_UI_TEST"] == "keyboard-delete" else { return }
         history = items
         pinboards = []
         source = .history
