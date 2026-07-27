@@ -61,17 +61,19 @@ jobs:
       - name: Verify release package
         run: ./scripts/verify_release.sh "${{ steps.version.outputs.value }}"
 
-      - name: Generate Homebrew cask
+      - name: Prepare release assets
         id: checksum
         shell: bash
         run: |
           set -euo pipefail
           DMG="packaging/Pesty-${{ steps.version.outputs.value }}.dmg"
           SHA256="$(shasum -a 256 "$DMG" | awk '{print $1}')"
-          ./scripts/generate_cask.sh \
-            "${{ steps.version.outputs.value }}" \
-            "$SHA256" \
-            packaging/pesty.rb
+          if [[ "${{ steps.version.outputs.prerelease }}" == "false" ]]; then
+            ./scripts/generate_cask.sh \
+              "${{ steps.version.outputs.value }}" \
+              "$SHA256" \
+              packaging/pesty.rb
+          fi
           echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
           echo "dmg=$DMG" >> "$GITHUB_OUTPUT"
 
@@ -83,6 +85,7 @@ jobs:
           RELEASE_ARGS=()
           if [[ "${{ steps.version.outputs.prerelease }}" == "true" ]]; then
             RELEASE_ARGS+=(--prerelease)
+            RELEASE_ASSETS=("${{ steps.checksum.outputs.dmg }}")
             NOTES="Pesty ${{ steps.version.outputs.value }}
 
           SHA-256: \`${{ steps.checksum.outputs.sha256 }}\`
@@ -92,6 +95,10 @@ jobs:
           offered only to installed Pesty Beta versions. It is not published to
           the stable Homebrew tap."
           else
+            RELEASE_ASSETS=(
+              "${{ steps.checksum.outputs.dmg }}"
+              packaging/pesty.rb
+            )
             NOTES="Pesty ${{ steps.version.outputs.value }}
 
           SHA-256: \`${{ steps.checksum.outputs.sha256 }}\`
@@ -105,8 +112,7 @@ jobs:
           SHA-256 and removes quarantine after installation."
           fi
           gh release create "$GITHUB_REF_NAME" \
-            "${{ steps.checksum.outputs.dmg }}" \
-            packaging/pesty.rb \
+            "${RELEASE_ASSETS[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --title "Pesty ${{ steps.version.outputs.value }}" \
