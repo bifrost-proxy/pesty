@@ -6,6 +6,24 @@ All notable changes to Pesty are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-07-27
+
+### Changed
+
+- Virtualized the horizontal clipboard strip with reusable native collection
+  cells so 1,000-item histories stay below the 100 MB memory gate.
+- Downsampled image previews asynchronously with a bounded thumbnail cache.
+
+### Fixed
+
+- Made Backspace delete the selected clipboard item when search is empty and
+  move selection to the following item, with previous-item fallback at the end.
+- Kept Backspace editing the search query while a query is active.
+- Removed the post-animation root view rebuild and fixed the panel's initial
+  height so AppKit does not enter an undefined collection layout.
+
+[1.5.1]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.5.1
+
 ## [1.5.0] - 2026-07-27
 
 ### Added
