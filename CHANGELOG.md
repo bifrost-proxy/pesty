@@ -6,6 +6,8 @@ All notable changes to Pesty are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-07-27
+
 ### Added
 
 - Added automatic light and dark appearances that follow the macOS system
@@ -19,6 +21,8 @@ All notable changes to Pesty are documented here. The format is based on
 ### Removed
 
 - Removed the standalone static website, SEO files, and site-only image assets.
+
+[1.5.0]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.5.0
 
 ## [1.4.0] - 2026-07-27
 
