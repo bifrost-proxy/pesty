@@ -13,40 +13,69 @@ struct AccessibilitySettingsGuidePresentation: Equatable {
 }
 
 enum AccessibilitySettingsGuideLayout {
-    static let referenceWindowSize = CGSize(width: 723, height: 720)
+    static let referenceWindowSize = CGSize(width: 723, height: 470)
+
+    private static let contentTop: CGFloat = 89
+    private static let contentBottomInset: CGFloat = 21
+    private static let rowHeight: CGFloat = 40
+    private static let expectedPestyRowIndex = 7
 
     static func presentation(
-        in windowSize: CGSize
+        in windowSize: CGSize,
+        listWasScrolled: Bool = false
     ) -> AccessibilitySettingsGuidePresentation {
-        let matchesVerifiedLayout =
+        let listFrame = applicationListFrame(in: windowSize)
+        let pestyRow = CGRect(
+            x: listFrame.minX,
+            y: contentTop
+                + CGFloat(expectedPestyRowIndex) * rowHeight,
+            width: listFrame.width,
+            height: rowHeight
+        )
+        let visibleRowsFrame = CGRect(
+            x: listFrame.minX,
+            y: contentTop,
+            width: listFrame.width,
+            height: max(
+                0,
+                windowSize.height - contentTop - contentBottomInset
+            )
+        )
+        let matchesVerifiedWidth =
             abs(windowSize.width - referenceWindowSize.width) <= 40
-            && abs(windowSize.height - referenceWindowSize.height) <= 40
+        let canShowEstimatedRow =
+            !listWasScrolled
+            && matchesVerifiedWidth
+            && visibleRowsFrame.contains(pestyRow)
 
-        if matchesVerifiedLayout {
-            let x = windowSize.width * 0.329
-            let y = windowSize.height * 0.565
+        if canShowEstimatedRow {
             return AccessibilitySettingsGuidePresentation(
                 mode: .exactPestyRow,
-                highlightFrame: CGRect(
-                    x: x,
-                    y: y,
-                    width: max(240, windowSize.width - x - 10),
-                    height: 46
-                )
+                highlightFrame: pestyRow
             )
         }
 
-        let x = min(max(220, windowSize.width * 0.31), 290)
         return AccessibilitySettingsGuidePresentation(
             mode: .applicationList,
-            highlightFrame: CGRect(
-                x: x,
-                y: 98,
-                width: max(260, windowSize.width - x - 12),
-                height: max(260, windowSize.height - 160)
-            )
+            highlightFrame: listFrame
         )
     }
+
+    static func applicationListFrame(in windowSize: CGSize) -> CGRect {
+        let x = min(max(220, windowSize.width * 0.3085), 290)
+        return CGRect(
+            x: x,
+            y: 52,
+            width: max(260, windowSize.width - x - 12),
+            height: max(260, windowSize.height - 64)
+        )
+    }
+}
+
+@Observable
+@MainActor
+private final class AccessibilitySettingsGuideState {
+    var listWasScrolled = false
 }
 
 @MainActor
@@ -60,8 +89,10 @@ final class AccessibilitySettingsGuideController: NSObject {
 
     private var panel: NSPanel?
     private var timer: Timer?
+    private var globalEventMonitor: Any?
     private var expiresAt = Date.distantPast
     private var forcePresentation = false
+    private let guideState = AccessibilitySettingsGuideState()
 
     private(set) var isPresenting = false
 
@@ -73,6 +104,7 @@ final class AccessibilitySettingsGuideController: NSObject {
 
         forcePresentation = force
         expiresAt = Date().addingTimeInterval(180)
+        guideState.listWasScrolled = false
         ensurePanel()
         startTracking()
         refresh()
@@ -81,6 +113,10 @@ final class AccessibilitySettingsGuideController: NSObject {
     func dismiss() {
         timer?.invalidate()
         timer = nil
+        if let globalEventMonitor {
+            NSEvent.removeMonitor(globalEventMonitor)
+            self.globalEventMonitor = nil
+        }
         panel?.orderOut(nil)
         isPresenting = false
         forcePresentation = false
@@ -89,7 +125,9 @@ final class AccessibilitySettingsGuideController: NSObject {
     private func ensurePanel() {
         if let panel {
             panel.contentView = NSHostingView(
-                rootView: AccessibilitySettingsGuideOverlay()
+                rootView: AccessibilitySettingsGuideOverlay(
+                    state: guideState
+                )
             )
             return
         }
@@ -114,7 +152,9 @@ final class AccessibilitySettingsGuideController: NSObject {
             .ignoresCycle,
         ]
         panel.contentView = NSHostingView(
-            rootView: AccessibilitySettingsGuideOverlay()
+            rootView: AccessibilitySettingsGuideOverlay(
+                state: guideState
+            )
         )
         self.panel = panel
     }
@@ -122,7 +162,7 @@ final class AccessibilitySettingsGuideController: NSObject {
     private func startTracking() {
         guard timer == nil else { return }
         let timer = Timer(
-            timeInterval: 0.15,
+            timeInterval: 0.06,
             target: self,
             selector: #selector(refresh),
             userInfo: nil,
@@ -130,6 +170,45 @@ final class AccessibilitySettingsGuideController: NSObject {
         )
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
+
+        globalEventMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDragged, .scrollWheel]
+        ) { [weak self] event in
+            let eventType = event.type
+            let mouseLocation = NSEvent.mouseLocation
+            Task { @MainActor [weak self] in
+                self?.handleGlobalEvent(
+                    type: eventType,
+                    mouseLocation: mouseLocation
+                )
+            }
+        }
+    }
+
+    private func handleGlobalEvent(
+        type: NSEvent.EventType,
+        mouseLocation: CGPoint
+    ) {
+        guard isPresenting else { return }
+
+        if type == .scrollWheel,
+           let panel,
+           applicationListScreenFrame(for: panel).contains(mouseLocation) {
+            guideState.listWasScrolled = true
+        }
+
+        refresh()
+    }
+
+    private func applicationListScreenFrame(for panel: NSPanel) -> CGRect {
+        let localFrame = AccessibilitySettingsGuideLayout
+            .applicationListFrame(in: panel.frame.size)
+        return CGRect(
+            x: panel.frame.minX + localFrame.minX,
+            y: panel.frame.maxY - localFrame.maxY,
+            width: localFrame.width,
+            height: localFrame.height
+        )
     }
 
     @objc private func refresh() {
@@ -181,7 +260,7 @@ final class AccessibilitySettingsGuideController: NSObject {
                       dictionaryRepresentation: bounds
                   ),
                   frame.width >= 520,
-                  frame.height >= 480 else {
+                  frame.height >= 400 else {
                 return nil
             }
             return frame
@@ -224,16 +303,24 @@ final class AccessibilitySettingsGuideController: NSObject {
 }
 
 private struct AccessibilitySettingsGuideOverlay: View {
+    @Bindable private var settings = Settings.shared
+    @Bindable var state: AccessibilitySettingsGuideState
+
     var body: some View {
         GeometryReader { proxy in
             let presentation =
                 AccessibilitySettingsGuideLayout.presentation(
-                    in: proxy.size
+                    in: proxy.size,
+                    listWasScrolled: state.listWasScrolled
                 )
             let highlight = presentation.highlightFrame
-            let title = presentation.mode == .exactPestyRow
-                ? L10n.accessibilityGuideExactTitle
-                : L10n.accessibilityGuideListTitle
+            let prompt = presentation.mode == .exactPestyRow
+                ? L10n.accessibilityGuideExactPrompt(
+                    language: settings.language
+                )
+                : L10n.accessibilityGuideListPrompt(
+                    language: settings.language
+                )
 
             ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -259,15 +346,10 @@ private struct AccessibilitySettingsGuideOverlay: View {
                     )
 
                 HStack(spacing: 10) {
-                    Image(systemName: "arrow.down.circle.fill")
+                    Image(systemName: "cursorarrow.click")
                         .font(.title3)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(title)
-                            .font(.system(size: 14, weight: .semibold))
-                        Text(L10n.accessibilityGuideMessage)
-                            .font(.system(size: 12))
-                            .opacity(0.9)
-                    }
+                    Text(prompt)
+                        .font(.system(size: 14, weight: .semibold))
                 }
                 .foregroundStyle(.white)
                 .padding(.horizontal, 14)
@@ -286,7 +368,7 @@ private struct AccessibilitySettingsGuideOverlay: View {
                         max(highlight.midX, 190),
                         proxy.size.width - 190
                     ),
-                    y: max(46, highlight.minY - 50)
+                    y: max(28, highlight.minY - 22)
                 )
             }
         }

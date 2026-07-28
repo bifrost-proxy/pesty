@@ -46,16 +46,12 @@ enum LocalizationVerifier {
                     "Open Accessibility Settings"
                 ),
                 (
-                    L10n.accessibilityGuideExactTitle,
-                    "Turn on Pesty here"
+                    L10n.accessibilityGuideExactPrompt(language: .english),
+                    "Find Pesty.app, then turn on the switch on the right."
                 ),
                 (
-                    L10n.accessibilityGuideListTitle,
-                    "Find Pesty in this list"
-                ),
-                (
-                    L10n.accessibilityGuideMessage,
-                    "Turn on the switch on the right to finish."
+                    L10n.accessibilityGuideListPrompt(language: .english),
+                    "Find Pesty.app in this list, then turn on the switch on the right."
                 ),
                 (
                     L10n.accessibilityReadyToRestart,
@@ -112,16 +108,12 @@ enum LocalizationVerifier {
                     "打开辅助功能设置"
                 ),
                 (
-                    L10n.accessibilityGuideExactTitle,
-                    "在这里打开 Pesty"
+                    L10n.accessibilityGuideExactPrompt(language: .chinese),
+                    "找到 Pesty.app，然后打开右侧开关完成授权。"
                 ),
                 (
-                    L10n.accessibilityGuideListTitle,
-                    "在列表中找到 Pesty"
-                ),
-                (
-                    L10n.accessibilityGuideMessage,
-                    "打开右侧开关即可完成授权。"
+                    L10n.accessibilityGuideListPrompt(language: .chinese),
+                    "在列表中找到 Pesty.app，然后打开右侧开关完成授权。"
                 ),
                 (
                     L10n.accessibilityReadyToRestart,
