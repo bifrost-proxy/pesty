@@ -16,6 +16,9 @@ All notable changes to Pesty are documented here. The format is based on
 
 ### Changed
 
+- Redesigned Settings with persistent General/About navigation, a taller
+  780-pixel default height, and vertical resizing while keeping its width
+  fixed.
 - Synced the history retention limit through the iCloud-backed store so all
   Macs converge on the same finite or unlimited policy.
 - Delayed destructive trimming after a remotely received lower limit, giving

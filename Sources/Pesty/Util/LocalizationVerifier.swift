@@ -36,6 +36,19 @@ enum LocalizationVerifier {
                     "If a lower limit would remove existing items, deletion waits 10 seconds so you can undo it."
                 ),
                 (L10n.storageUsed, "Current storage used"),
+                (L10n.accessibilitySetupTitle, "Finish Setting Up Pesty"),
+                (
+                    L10n.accessibilityUpdateDescription,
+                    "This update replaces the Pesty app, so macOS requires Accessibility access to be approved again. Your clipboard history and settings are unchanged."
+                ),
+                (
+                    L10n.openAccessibilitySettings,
+                    "Open Accessibility Settings"
+                ),
+                (
+                    L10n.accessibilityReadyToRestart,
+                    "Access granted. Restart Pesty to finish."
+                ),
                 (L10n.repairAccessibility, "Repair Access"),
                 (L10n.accessibilityRepairing, "Removing the old authorization…"),
                 (
@@ -77,6 +90,19 @@ enum LocalizationVerifier {
                     "如果降低上限会删除已有记录，Pesty 将等待 10 秒再清理，期间可以调高或切回无限。"
                 ),
                 (L10n.storageUsed, "当前占用空间"),
+                (L10n.accessibilitySetupTitle, "完成 Pesty 设置"),
+                (
+                    L10n.accessibilityUpdateDescription,
+                    "本次更新替换了 Pesty 应用，因此 macOS 要求重新授权辅助功能。你的剪贴板历史和设置不会受到影响。"
+                ),
+                (
+                    L10n.openAccessibilitySettings,
+                    "打开辅助功能设置"
+                ),
+                (
+                    L10n.accessibilityReadyToRestart,
+                    "授权成功。重启 Pesty 即可完成。"
+                ),
                 (L10n.repairAccessibility, "修复权限"),
                 (L10n.accessibilityRepairing, "正在移除旧授权……"),
                 (
