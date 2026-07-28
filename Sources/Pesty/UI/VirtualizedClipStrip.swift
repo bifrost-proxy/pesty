@@ -32,6 +32,8 @@ enum VirtualizedClipStripMetrics {
     private(set) static var contentIndexRebuildCount = 0
     private(set) static var lastSelectedItemID: UUID?
     private(set) static var lastSelectedConfigurationTime: CFAbsoluteTime?
+    private(set) static var quickPasteRequestCount = 0
+    private(set) static var lastQuickPasteItemID: UUID?
 
     static func reset() {
         createdCellCount = 0
@@ -40,6 +42,8 @@ enum VirtualizedClipStripMetrics {
         contentIndexRebuildCount = 0
         lastSelectedItemID = nil
         lastSelectedConfigurationTime = nil
+        quickPasteRequestCount = 0
+        lastQuickPasteItemID = nil
     }
 
     static func recordCreatedCell() {
@@ -60,6 +64,11 @@ enum VirtualizedClipStripMetrics {
 
     static func recordVisibleCellCount(_ count: Int) {
         maximumVisibleCellCount = max(maximumVisibleCellCount, count)
+    }
+
+    static func recordQuickPasteRequest(_ id: UUID) {
+        quickPasteRequestCount += 1
+        lastQuickPasteItemID = id
     }
 }
 
@@ -199,15 +208,17 @@ struct VirtualizedClipStrip: NSViewRepresentable {
             if contentChanged || layoutChanged || languageChanged || effectiveHeightChanged {
                 collectionView.reloadData()
             } else if selectedChanged {
-                var changed = Set<IndexPath>()
                 if let previousSelectedID, let index = indexByID[previousSelectedID] {
-                    changed.insert(IndexPath(item: index, section: 0))
+                    let indexPath = IndexPath(item: index, section: 0)
+                    (collectionView.item(at: indexPath)
+                        as? ClipCollectionViewItem)?
+                        .updateSelection(false)
                 }
                 if let newSelectedID, let index = indexByID[newSelectedID] {
-                    changed.insert(IndexPath(item: index, section: 0))
-                }
-                if !changed.isEmpty {
-                    collectionView.reloadItems(at: changed)
+                    let indexPath = IndexPath(item: index, section: 0)
+                    (collectionView.item(at: indexPath)
+                        as? ClipCollectionViewItem)?
+                        .updateSelection(true)
                 }
             }
 
@@ -362,11 +373,42 @@ struct VirtualizedClipStrip: NSViewRepresentable {
     }
 }
 
+@Observable
+@MainActor
+private final class ClipCardPresentationState {
+    var selected: Bool
+
+    init(selected: Bool) {
+        self.selected = selected
+    }
+}
+
+private struct StatefulClipCardView: View {
+    @Bindable var state: ClipCardPresentationState
+    let item: ClipItem
+    let index: Int
+    let height: CGFloat
+
+    var body: some View {
+        ClipCardView(
+            item: item,
+            index: index,
+            selected: state.selected
+        )
+        .frame(width: Theme.cardWidth, height: height)
+        .id(item.id)
+    }
+}
+
 @MainActor
 final class ClipCollectionViewItem: NSCollectionViewItem {
     static let reuseIdentifier = NSUserInterfaceItemIdentifier("PestyClipCard")
 
     private var hostingView: ClipCardHostingView?
+    private var presentationState: ClipCardPresentationState?
+    private var configuredItem: ClipItem?
+    private var configuredIndex = -1
+    private var configuredHeight: CGFloat = 0
 
     override func loadView() {
         view = NSView()
@@ -381,19 +423,47 @@ final class ClipCollectionViewItem: NSCollectionViewItem {
         selected: Bool,
         height: CGFloat
     ) {
-        let rootView = AnyView(
-            ClipCardView(item: item, index: index, selected: selected)
-                .frame(width: Theme.cardWidth, height: height)
-                .id(item.id)
-        )
+        let requiresNewRoot =
+            configuredItem != item
+            || configuredIndex != index
+            || configuredHeight != height
+            || presentationState == nil
+
+        configuredItem = item
+        configuredIndex = index
+        configuredHeight = height
 
         if let hostingView {
-            hostingView.rootView = rootView
             hostingView.onPrimaryClick = { [weak self] clickCount in
                 self?.handlePrimaryClick(item: item, clickCount: clickCount)
             }
+            if requiresNewRoot {
+                let state = ClipCardPresentationState(selected: selected)
+                presentationState = state
+                hostingView.rootView = AnyView(
+                    StatefulClipCardView(
+                        state: state,
+                        item: item,
+                        index: index,
+                        height: height
+                    )
+                )
+            } else {
+                updateSelection(selected)
+            }
         } else {
-            let hostingView = ClipCardHostingView(rootView: rootView)
+            let state = ClipCardPresentationState(selected: selected)
+            presentationState = state
+            let hostingView = ClipCardHostingView(
+                rootView: AnyView(
+                    StatefulClipCardView(
+                        state: state,
+                        item: item,
+                        index: index,
+                        height: height
+                    )
+                )
+            )
             hostingView.onPrimaryClick = { [weak self] clickCount in
                 self?.handlePrimaryClick(item: item, clickCount: clickCount)
             }
@@ -409,14 +479,36 @@ final class ClipCollectionViewItem: NSCollectionViewItem {
         }
     }
 
+    func updateSelection(_ selected: Bool) {
+        guard let configuredItem, let presentationState else { return }
+        presentationState.selected = selected
+        VirtualizedClipStripMetrics.recordConfiguredItem(
+            configuredItem.id,
+            selected: selected
+        )
+    }
+
     func performPrimaryClickForAutomatedTest(clickCount: Int) {
         guard AutomatedUITestProbe.isEnabled else { return }
         hostingView?.performPrimaryClick(clickCount: clickCount)
     }
 
+    var eventSurfaceIdentityForAutomatedTest: ObjectIdentifier? {
+        guard AutomatedUITestProbe.isEnabled, let hostingView else {
+            return nil
+        }
+        return ObjectIdentifier(hostingView)
+    }
+
     private func handlePrimaryClick(item: ClipItem, clickCount: Int) {
         ClipboardStore.shared.selectedID = item.id
         if clickCount == 2 {
+            VirtualizedClipStripMetrics.recordQuickPasteRequest(item.id)
+            if ProcessInfo.processInfo.environment[
+                "PESTY_AUTOMATED_UI_TEST"
+            ] == "mouse-selection" {
+                return
+            }
             AppController.shared.quickPasteItem(item)
         }
     }

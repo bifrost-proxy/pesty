@@ -69,6 +69,10 @@ enum AutomatedUITestRunner {
         let maximumRenderLatencyMilliseconds: Double
         let textEditorFocusedBeforeClick: Bool
         let textEditorReleasedByClick: Bool
+        let selectionPreservedEventSurface: Bool
+        let doubleClickSelectedItem: Bool
+        let doubleClickRequestedQuickPaste: Bool
+        let doubleClickQuickPasteRequestCount: Int
         let rightArrowConsumedAfterClick: Bool
         let rightArrowMovedSelectionAfterClick: Bool
         let contentIndexRebuildCount: Int
@@ -1055,6 +1059,10 @@ enum AutomatedUITestRunner {
                     maximumRenderLatencyMilliseconds: 100,
                     textEditorFocusedBeforeClick: false,
                     textEditorReleasedByClick: false,
+                    selectionPreservedEventSurface: false,
+                    doubleClickSelectedItem: false,
+                    doubleClickRequestedQuickPaste: false,
+                    doubleClickQuickPasteRequestCount: 0,
                     rightArrowConsumedAfterClick: false,
                     rightArrowMovedSelectionAfterClick: false,
                     contentIndexRebuildCount: -1,
@@ -1084,6 +1092,10 @@ enum AutomatedUITestRunner {
                     maximumRenderLatencyMilliseconds: 100,
                     textEditorFocusedBeforeClick: false,
                     textEditorReleasedByClick: false,
+                    selectionPreservedEventSurface: false,
+                    doubleClickSelectedItem: false,
+                    doubleClickRequestedQuickPaste: false,
+                    doubleClickQuickPasteRequestCount: 0,
                     rightArrowConsumedAfterClick: false,
                     rightArrowMovedSelectionAfterClick: false,
                     contentIndexRebuildCount: -1,
@@ -1104,6 +1116,8 @@ enum AutomatedUITestRunner {
             _ = collectionView.window?.makeFirstResponder(focusProbe)
             let textEditorFocusedBeforeClick =
                 collectionView.window?.firstResponder as? NSTextView != nil
+            let eventSurfaceIdentity =
+                visibleCell.eventSurfaceIdentityForAutomatedTest
             let startedAt = CFAbsoluteTimeGetCurrent()
             visibleCell.performPrimaryClickForAutomatedTest(clickCount: 1)
             let selectionLatencyMilliseconds =
@@ -1113,6 +1127,23 @@ enum AutomatedUITestRunner {
             let textEditorReleasedByClick =
                 collectionView.window?.firstResponder as? NSTextView == nil
                 && !controller.store.isSearchFieldActive
+            let selectedCellAfterClick = collectionView.item(
+                at: visibleTargetPath
+            ) as? ClipCollectionViewItem
+            let selectionPreservedEventSurface =
+                selectedCellAfterClick === visibleCell
+                && eventSurfaceIdentity != nil
+                && selectedCellAfterClick?
+                    .eventSurfaceIdentityForAutomatedTest
+                    == eventSurfaceIdentity
+            visibleCell.performPrimaryClickForAutomatedTest(clickCount: 2)
+            let doubleClickSelectedItem =
+                controller.store.selectedID == items[visibleTargetIndex].id
+            let doubleClickRequestedQuickPaste =
+                VirtualizedClipStripMetrics.lastQuickPasteItemID
+                    == items[visibleTargetIndex].id
+            let doubleClickQuickPasteRequestCount =
+                VirtualizedClipStripMetrics.quickPasteRequestCount
             focusProbe.removeFromSuperview()
             let maximumSelectionLatencyMilliseconds = 100.0
             let maximumRenderLatencyMilliseconds = 100.0
@@ -1166,6 +1197,10 @@ enum AutomatedUITestRunner {
                             <= maximumRenderLatencyMilliseconds
                         && textEditorFocusedBeforeClick
                         && textEditorReleasedByClick
+                        && selectionPreservedEventSurface
+                        && doubleClickSelectedItem
+                        && doubleClickRequestedQuickPaste
+                        && doubleClickQuickPasteRequestCount == 1
                         && rightArrowConsumedAfterClick
                         && rightArrowMovedSelectionAfterClick
                         && contentIndexRebuildCount
@@ -1193,6 +1228,14 @@ enum AutomatedUITestRunner {
                             textEditorFocusedBeforeClick,
                         textEditorReleasedByClick:
                             textEditorReleasedByClick,
+                        selectionPreservedEventSurface:
+                            selectionPreservedEventSurface,
+                        doubleClickSelectedItem:
+                            doubleClickSelectedItem,
+                        doubleClickRequestedQuickPaste:
+                            doubleClickRequestedQuickPaste,
+                        doubleClickQuickPasteRequestCount:
+                            doubleClickQuickPasteRequestCount,
                         rightArrowConsumedAfterClick:
                             rightArrowConsumedAfterClick,
                         rightArrowMovedSelectionAfterClick:
