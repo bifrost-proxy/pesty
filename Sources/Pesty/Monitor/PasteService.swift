@@ -106,11 +106,14 @@ enum PasteService {
         )
     }
 
-    static func openAccessibilitySettings() {
+    static func openAccessibilitySettings(forceGuide: Bool = false) {
         guard let url = URL(
             string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
         ) else { return }
-        NSWorkspace.shared.open(url)
+        guard NSWorkspace.shared.open(url) else { return }
+        AccessibilitySettingsGuideController.shared.present(
+            force: forceGuide
+        )
     }
 
     /// Removes only Pesty's stale Accessibility authorization so macOS can

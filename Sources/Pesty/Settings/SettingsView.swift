@@ -490,6 +490,9 @@ private struct AccessibilityAccessCard: View {
         if current != accessibilityGranted {
             accessibilityGranted = current
         }
+        if current {
+            AccessibilitySettingsGuideController.shared.dismiss()
+        }
     }
 
     private func beginAuthorization() {

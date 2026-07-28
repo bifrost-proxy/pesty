@@ -6,6 +6,22 @@ All notable changes to Pesty are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.6.5] - 2026-07-28
+
+### Added
+
+- Added a click-through blue guide over Accessibility Settings that highlights
+  the Pesty permission row and tells the user to turn on its switch.
+- Added a safe whole-list fallback for System Settings window layouts that do
+  not match the verified Pesty-row geometry.
+
+### Changed
+
+- Kept the Accessibility guide aligned while System Settings moves, and hid it
+  after authorization, when leaving System Settings, or after three minutes.
+
+[1.6.5]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.6.5
+
 ## [1.6.4] - 2026-07-28
 
 ### Added

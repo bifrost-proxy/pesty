@@ -46,6 +46,18 @@ enum LocalizationVerifier {
                     "Open Accessibility Settings"
                 ),
                 (
+                    L10n.accessibilityGuideExactTitle,
+                    "Turn on Pesty here"
+                ),
+                (
+                    L10n.accessibilityGuideListTitle,
+                    "Find Pesty in this list"
+                ),
+                (
+                    L10n.accessibilityGuideMessage,
+                    "Turn on the switch on the right to finish."
+                ),
+                (
                     L10n.accessibilityReadyToRestart,
                     "Access granted. Restart Pesty to finish."
                 ),
@@ -98,6 +110,18 @@ enum LocalizationVerifier {
                 (
                     L10n.openAccessibilitySettings,
                     "打开辅助功能设置"
+                ),
+                (
+                    L10n.accessibilityGuideExactTitle,
+                    "在这里打开 Pesty"
+                ),
+                (
+                    L10n.accessibilityGuideListTitle,
+                    "在列表中找到 Pesty"
+                ),
+                (
+                    L10n.accessibilityGuideMessage,
+                    "打开右侧开关即可完成授权。"
                 ),
                 (
                     L10n.accessibilityReadyToRestart,

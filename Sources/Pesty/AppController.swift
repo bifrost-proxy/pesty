@@ -72,6 +72,17 @@ final class AppController: NSObject, NSApplicationDelegate {
             return
         }
 
+        #if !MAS
+        if ProcessInfo.processInfo.environment[
+            "PESTY_AUTOMATED_ACCESSIBILITY_GUIDE"
+        ] == "1" {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                PasteService.openAccessibilitySettings(forceGuide: true)
+            }
+            return
+        }
+        #endif
+
         UpdateManager.shared.start()
 
         if ProcessInfo.processInfo.environment["PESTY_UPDATE_ROLLBACK"] == "1" {
@@ -145,6 +156,9 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+#if !MAS
+        AccessibilitySettingsGuideController.shared.dismiss()
+#endif
         store.saveNow()
     }
 
@@ -441,6 +455,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             settingsWindow?.orderOut(nil)
         }
 
+#if !MAS
         let resetCommand = PasteService.accessibilityResetCommand()
         guard resetCommand.executable == "/usr/bin/tccutil",
               resetCommand.arguments == [
@@ -481,6 +496,27 @@ final class AppController: NSObject, NSApplicationDelegate {
                 description: "Accessibility onboarding launch policy is incomplete"
             )
         }
+
+        let exactGuide =
+            AccessibilitySettingsGuideLayout.presentation(
+                in: AccessibilitySettingsGuideLayout.referenceWindowSize
+            )
+        let fallbackGuide =
+            AccessibilitySettingsGuideLayout.presentation(
+                in: CGSize(width: 980, height: 620)
+            )
+        guard exactGuide.mode == .exactPestyRow,
+              abs(exactGuide.highlightFrame.minX - 237.87) < 0.5,
+              abs(exactGuide.highlightFrame.minY - 406.8) < 0.5,
+              exactGuide.highlightFrame.height == 46,
+              fallbackGuide.mode == .applicationList,
+              fallbackGuide.highlightFrame.width >= 260,
+              fallbackGuide.highlightFrame.height >= 260 else {
+            throw SettingsAccessVerificationFailure(
+                description: "Accessibility Settings guide layout is invalid"
+            )
+        }
+#endif
 
         UpdateManager.shared.injectAvailableReleaseForVerification(version: "99.0.0")
         Settings.shared.showMenuBarIcon = false
