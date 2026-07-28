@@ -627,41 +627,35 @@ private struct SettingsToggleRow: View {
 private struct SettingsCardSurfaceModifier: ViewModifier {
     var emphasized: Bool
 
-    @ViewBuilder
     func body(content: Content) -> some View {
-        if #available(macOS 26.0, *) {
-            content.glassEffect(
-                emphasized ? .regular.tint(.accentColor.opacity(0.08)) : .regular,
-                in: RoundedRectangle(cornerRadius: 18, style: .continuous)
-            )
-        } else {
-            content
-                .background(
-                    .regularMaterial,
-                    in: RoundedRectangle(
-                        cornerRadius: 18,
-                        style: .continuous
-                    )
+        content
+            .background(
+                .regularMaterial,
+                in: RoundedRectangle(
+                    cornerRadius: 18,
+                    style: .continuous
                 )
-                .overlay {
-                    RoundedRectangle(
-                        cornerRadius: 18,
-                        style: .continuous
-                    )
-                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                }
-        }
+            )
+            .background(
+                emphasized ? Color.accentColor.opacity(0.06) : .clear,
+                in: RoundedRectangle(
+                    cornerRadius: 18,
+                    style: .continuous
+                )
+            )
+            .overlay {
+                RoundedRectangle(
+                    cornerRadius: 18,
+                    style: .continuous
+                )
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            }
     }
 }
 
 private struct SettingsPrimaryButtonModifier: ViewModifier {
-    @ViewBuilder
     func body(content: Content) -> some View {
-        if #available(macOS 26.0, *) {
-            content.buttonStyle(.glassProminent)
-        } else {
-            content.buttonStyle(.borderedProminent)
-        }
+        content.buttonStyle(.borderedProminent)
     }
 }
 
