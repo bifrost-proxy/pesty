@@ -20,11 +20,17 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private(set) var previousApp: NSRunningApplication?
     private(set) var lastActiveApp: NSRunningApplication?
+    #if !MAS
+    private var previousFocusedElement: AXUIElement?
+    #endif
 
     var suppressAutoHide = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        if ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"] == nil {
+            barController = BarWindowController()
+        }
 
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(appActivated(_:)),
@@ -354,6 +360,11 @@ final class AppController: NSObject, NSApplicationDelegate {
         let front = NSWorkspace.shared.frontmostApplication
         if front?.bundleIdentifier != Bundle.main.bundleIdentifier {
             previousApp = front
+            #if !MAS
+            previousFocusedElement = front.flatMap {
+                PasteService.captureFocusedElement(in: $0)
+            }
+            #endif
         }
         store.reconcileFromDisk()
         store.searchText = ""
@@ -369,20 +380,61 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
-    func hideBar() {
+    func hideBar(completion: (() -> Void)? = nil) {
         stopKeyMonitor()
-        barController?.hide()
+        guard let barController else {
+            completion?()
+            return
+        }
+        barController.hide(completion: completion)
     }
 
     func pasteSelected() {
         guard let item = store.selectedItem else { return }
-        hideBar()
-        PasteService.paste(item, into: previousApp, monitor: monitor)
+        pasteItem(item)
     }
 
     func pasteItem(_ item: ClipItem) {
-        hideBar()
-        PasteService.paste(item, into: previousApp, monitor: monitor)
+        pasteItem(item, promoteAfterHiding: false)
+    }
+
+    func quickPasteItem(_ item: ClipItem) {
+        pasteItem(item, promoteAfterHiding: true)
+    }
+
+    private func pasteItem(
+        _ item: ClipItem,
+        promoteAfterHiding: Bool
+    ) {
+        let targetApp = previousApp ?? lastActiveApp
+        #if !MAS
+        let focusedElement = previousFocusedElement
+        #endif
+        hideBar { [weak self] in
+            guard let self else { return }
+            if promoteAfterHiding {
+                self.store.promoteToFront(item)
+            }
+            #if MAS
+            PasteService.paste(item, into: targetApp, monitor: self.monitor)
+            #else
+            PasteService.paste(
+                item,
+                into: targetApp,
+                focusedElement: focusedElement,
+                forceDirectPaste: promoteAfterHiding,
+                monitor: self.monitor
+            )
+            #endif
+        }
+    }
+
+    func setPasteTargetForAutomatedTest(_ app: NSRunningApplication) {
+        guard ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"] != nil else { return }
+        previousApp = app
+        #if !MAS
+        previousFocusedElement = PasteService.captureFocusedElement(in: app)
+        #endif
     }
 
     func copyItem(_ item: ClipItem) {
@@ -687,6 +739,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         let isComposingText = textEditor?.hasMarkedText() == true
 
         if isComposingText {
+            return event
+        }
+        if textEditor?.isFieldEditor == true {
             return event
         }
 

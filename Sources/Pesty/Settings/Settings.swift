@@ -98,6 +98,7 @@ final class Settings {
         static let playSound = "playSound"
         static let ignoreConcealed = "ignoreConcealed"
         static let barHeight = "barHeight"
+        static let panelLayoutVersion = "panelLayoutVersion"
         static let onboarded = "onboarded"
         static let accessibilityAuthorizedBuild = "accessibilityAuthorizedBuild"
         static let iCloudSync = "iCloudSync"
@@ -181,6 +182,8 @@ final class Settings {
         } else {
             d = .standard
         }
+        let storedBarHeight = (d.object(forKey: Keys.barHeight) as? NSNumber)?.doubleValue
+        let storedPanelLayoutVersion = d.object(forKey: Keys.panelLayoutVersion) as? NSNumber
         d.register(defaults: [
             Keys.historyLimit: HistoryRetentionPolicy.defaultLimit,
             Keys.historyLimitUnlimited: false,
@@ -223,7 +226,14 @@ final class Settings {
         pasteDirectly = d.bool(forKey: Keys.pasteDirectly)
         playSound = d.bool(forKey: Keys.playSound)
         ignoreConcealed = d.bool(forKey: Keys.ignoreConcealed)
-        barHeight = d.double(forKey: Keys.barHeight)
+        if storedPanelLayoutVersion == nil,
+           storedBarHeight == nil || abs((storedBarHeight ?? 430) - 430) < 0.5 {
+            barHeight = BarLayoutPolicy.defaultHeight
+            d.set(BarLayoutPolicy.defaultHeight, forKey: Keys.barHeight)
+        } else {
+            barHeight = storedBarHeight ?? d.double(forKey: Keys.barHeight)
+        }
+        d.set(1, forKey: Keys.panelLayoutVersion)
         onboarded = d.bool(forKey: Keys.onboarded)
         accessibilityAuthorizedBuild = d.string(
             forKey: Keys.accessibilityAuthorizedBuild

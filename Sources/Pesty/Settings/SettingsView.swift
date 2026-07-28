@@ -174,7 +174,7 @@ private struct GeneralSettings: View {
                         )
                         Slider(
                             value: $settings.barHeight,
-                            in: 300...720,
+                            in: 280...720,
                             step: 10
                         )
                     }

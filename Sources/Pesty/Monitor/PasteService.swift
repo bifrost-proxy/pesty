@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import OSLog
 
 @MainActor
 enum PasteService {
@@ -9,6 +10,13 @@ enum PasteService {
     }
 
     private static let applicationBundleIdentifier = "com.bifrostproxy.pesty"
+    #if !MAS
+    private static var requestedAccessibilityThisLaunch = false
+    private static let logger = Logger(
+        subsystem: "com.bifrostproxy.pesty",
+        category: "direct-paste"
+    )
+    #endif
 
     @discardableResult
     static func copy(_ item: ClipItem, to pasteboard: NSPasteboard = .general) -> Int {
@@ -42,39 +50,102 @@ enum PasteService {
         return pasteboard.changeCount
     }
 
-    static func paste(_ item: ClipItem,
-                      into targetApp: NSRunningApplication?,
-                      monitor: ClipboardMonitor) {
+    static func paste(
+        _ item: ClipItem,
+        into targetApp: NSRunningApplication?,
+        focusedElement: AXUIElement? = nil,
+        forceDirectPaste: Bool = false,
+        monitor: ClipboardMonitor
+    ) {
         let change = copy(item)
         monitor.suppressUntilChangeCount = change
         if Settings.shared.playSound { NSSound(named: "Pop")?.play() }
 
         guard let target = targetApp, !target.isTerminated else { return }
+        target.activate()
 
         #if MAS
         // Mac App Store (sandboxed) build: copy the clip and return focus to the
         // app the user came from so they can paste with ⌘V. No Accessibility
         // APIs and no synthetic keystrokes are used.
-        target.activate()
         #else
         // Direct-download build: optionally paste straight into the active app by
         // synthesizing ⌘V. This requires the user's Accessibility grant.
-        guard Settings.shared.pasteDirectly && AXIsProcessTrusted() else { return }
-        target.activate()
-        waitForFrontmost(target, attempts: 20)
+        guard forceDirectPaste || Settings.shared.pasteDirectly else { return }
+        guard AXIsProcessTrusted() else {
+            logger.error("Direct paste skipped because Accessibility is not trusted")
+            if !requestedAccessibilityThisLaunch {
+                requestedAccessibilityThisLaunch = true
+                ensureAccessibility(prompt: true)
+            }
+            return
+        }
+        logger.info(
+            "Direct paste targeting bundle=\(target.bundleIdentifier ?? "unknown", privacy: .public), pid=\(target.processIdentifier)"
+        )
+        waitForFrontmost(
+            target,
+            focusedElement: focusedElement,
+            attempts: 40
+        )
         #endif
     }
 
     #if !MAS
-    private static func waitForFrontmost(_ app: NSRunningApplication, attempts: Int) {
+    static func captureFocusedElement(
+        in app: NSRunningApplication
+    ) -> AXUIElement? {
+        guard AXIsProcessTrusted(), !app.isTerminated else { return nil }
+        let applicationElement = AXUIElementCreateApplication(app.processIdentifier)
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(
+            applicationElement,
+            kAXFocusedUIElementAttribute as CFString,
+            &value
+        )
+        guard result == .success, let value else {
+            logger.error(
+                "Could not capture focused element for bundle=\(app.bundleIdentifier ?? "unknown", privacy: .public), error=\(result.rawValue)"
+            )
+            return nil
+        }
+        logger.info(
+            "Captured focused element for bundle=\(app.bundleIdentifier ?? "unknown", privacy: .public)"
+        )
+        return (value as! AXUIElement)
+    }
+
+    private static func waitForFrontmost(
+        _ app: NSRunningApplication,
+        focusedElement: AXUIElement?,
+        attempts: Int
+    ) {
         guard attempts > 0, !app.isTerminated else { return }
         if NSWorkspace.shared.frontmostApplication?.processIdentifier == app.processIdentifier {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { sendCommandV() }
+            let focusRestored = restoreFocus(to: focusedElement)
+            logger.info("Target is frontmost; focused element restored=\(focusRestored)")
+            DispatchQueue.main.asyncAfter(deadline: .now() + (focusRestored ? 0.04 : 0.08)) {
+                sendCommandV()
+            }
             return
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
-            waitForFrontmost(app, attempts: attempts - 1)
+            waitForFrontmost(
+                app,
+                focusedElement: focusedElement,
+                attempts: attempts - 1
+            )
         }
+    }
+
+    private static func restoreFocus(to element: AXUIElement?) -> Bool {
+        guard let element else { return false }
+        let result = AXUIElementSetAttributeValue(
+            element,
+            kAXFocusedAttribute as CFString,
+            kCFBooleanTrue
+        )
+        return result == .success
     }
 
     private static func sendCommandV() {
@@ -86,6 +157,7 @@ enum PasteService {
         up.flags = .maskCommand
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
+        logger.info("Posted Command-V")
     }
 
     @discardableResult

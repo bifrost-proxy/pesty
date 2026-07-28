@@ -147,6 +147,25 @@ final class ClipboardStore {
         scheduleSave()
     }
 
+    func promoteToFront(_ item: ClipItem) {
+        switch source {
+        case .history:
+            guard let index = history.firstIndex(where: { $0.id == item.id }) else { return }
+            var promoted = history.remove(at: index)
+            promoted.createdAt = Date()
+            history.insert(promoted, at: 0)
+        case .pinboard(let boardID):
+            guard let boardIndex = pinboards.firstIndex(where: { $0.id == boardID }),
+                  let itemIndex = pinboards[boardIndex].items.firstIndex(where: { $0.id == item.id })
+            else { return }
+            var promoted = pinboards[boardIndex].items.remove(at: itemIndex)
+            promoted.createdAt = Date()
+            pinboards[boardIndex].items.insert(promoted, at: 0)
+        }
+        selectedID = item.id
+        scheduleSave()
+    }
+
     func historyRetentionDidChange(
         effectiveAt: Date?,
         configurationChanged: Bool
