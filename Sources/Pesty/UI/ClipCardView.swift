@@ -33,8 +33,6 @@ struct ClipCardView: View {
         .animation(.easeOut(duration: 0.14), value: hovering)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture(count: 2) { AppController.shared.quickPasteItem(item) }
-        .onTapGesture { store.selectedID = item.id }
         .contextMenu { menu }
         .id(settings.language)
         .onAppear { AutomatedUITestProbe.record(item) }

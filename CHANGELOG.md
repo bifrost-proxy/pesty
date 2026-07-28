@@ -6,11 +6,25 @@ All notable changes to Pesty are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.6.7] - 2026-07-28
+
+### Changed
+
+- Made mouse-down selection immediate while preserving double-click quick paste.
+- Kept the horizontal strip stationary when the selected card is already
+  visible, and used the smallest necessary scroll for off-screen selections.
+- Avoided rebuilding or scanning the complete card index for selection-only
+  updates, including histories with 10,000 records.
+
 ### Fixed
 
 - Prevented Accessibility onboarding from reappearing after its restart
   button by honoring the completed build before the update-launch marker and
   removing that one-shot marker from the restart environment.
+- Restored arrow-key navigation immediately after selecting a card with the
+  mouse by releasing the search field editor.
+
+[1.6.7]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.6.7
 
 ## [1.6.6] - 2026-07-28
 
