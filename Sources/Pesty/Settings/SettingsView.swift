@@ -1,6 +1,12 @@
 import AppKit
 import SwiftUI
 
+enum SettingsWindowLayout {
+    static let width: CGFloat = 680
+    static let initialHeight: CGFloat = 780
+    static let minimumHeight: CGFloat = 560
+}
+
 struct SettingsView: View {
     @Bindable var state: SettingsWindowState
     @Bindable private var settings = Settings.shared
@@ -34,7 +40,11 @@ struct SettingsView: View {
                 .transition(.opacity)
             }
         }
-        .frame(width: 680, height: 680)
+        .frame(width: SettingsWindowLayout.width)
+        .frame(
+            minHeight: SettingsWindowLayout.minimumHeight,
+            maxHeight: .infinity
+        )
         .id(settings.language)
     }
 }

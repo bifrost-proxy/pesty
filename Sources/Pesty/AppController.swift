@@ -392,13 +392,31 @@ final class AppController: NSObject, NSApplicationDelegate {
         let host = NSHostingController(rootView: view)
         let win = NSWindow(contentViewController: host)
         win.title = L10n.settingsWindowTitle
-        win.styleMask = [.titled, .closable, .fullSizeContentView]
+        win.styleMask = [
+            .titled,
+            .closable,
+            .resizable,
+            .fullSizeContentView,
+        ]
         win.titleVisibility = .hidden
         win.titlebarAppearsTransparent = true
         win.titlebarSeparatorStyle = .none
         win.isMovableByWindowBackground = true
         win.backgroundColor = .clear
-        win.setContentSize(NSSize(width: 680, height: 680))
+        win.contentMinSize = NSSize(
+            width: SettingsWindowLayout.width,
+            height: SettingsWindowLayout.minimumHeight
+        )
+        win.contentMaxSize = NSSize(
+            width: SettingsWindowLayout.width,
+            height: .greatestFiniteMagnitude
+        )
+        win.setContentSize(
+            NSSize(
+                width: SettingsWindowLayout.width,
+                height: SettingsWindowLayout.initialHeight
+            )
+        )
         win.center()
         win.isReleasedWhenClosed = false
         settingsWindow = win
@@ -507,11 +525,38 @@ final class AppController: NSObject, NSApplicationDelegate {
         )
         guard !shouldUseDefaultReopenBehavior,
               settingsWindow?.isVisible == true,
+              settingsWindow?.contentView?.frame.size == NSSize(
+                  width: SettingsWindowLayout.width,
+                  height: SettingsWindowLayout.initialHeight
+              ),
+              settingsWindow?.styleMask.contains(.resizable) == true,
+              settingsWindow?.contentMinSize == NSSize(
+                  width: SettingsWindowLayout.width,
+                  height: SettingsWindowLayout.minimumHeight
+              ),
+              settingsWindow?.contentMaxSize.width
+                  == SettingsWindowLayout.width,
               settingsWindow?.styleMask.contains(.fullSizeContentView) == true,
               settingsWindow?.titleVisibility == .hidden,
               settingsWindow?.titlebarAppearsTransparent == true else {
             throw SettingsAccessVerificationFailure(
                 description: "reopening Pesty did not show the immersive Settings window"
+            )
+        }
+
+        let resizedHeight = SettingsWindowLayout.initialHeight - 80
+        settingsWindow?.setContentSize(
+            NSSize(
+                width: SettingsWindowLayout.width,
+                height: resizedHeight
+            )
+        )
+        guard settingsWindow?.contentView?.frame.size == NSSize(
+            width: SettingsWindowLayout.width,
+            height: resizedHeight
+        ) else {
+            throw SettingsAccessVerificationFailure(
+                description: "Settings window did not resize vertically"
             )
         }
     }
