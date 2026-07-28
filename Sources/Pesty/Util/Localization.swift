@@ -129,6 +129,18 @@ enum L10n {
     static var openAccessibilitySettingsAgain: String {
         text("Open System Settings Again", "再次打开系统设置")
     }
+    static var accessibilityGuideExactTitle: String {
+        text("Turn on Pesty here", "在这里打开 Pesty")
+    }
+    static var accessibilityGuideListTitle: String {
+        text("Find Pesty in this list", "在列表中找到 Pesty")
+    }
+    static var accessibilityGuideMessage: String {
+        text(
+            "Turn on the switch on the right to finish.",
+            "打开右侧开关即可完成授权。"
+        )
+    }
     static var accessibilityReadyToRestart: String {
         text(
             "Access granted. Restart Pesty to finish.",
