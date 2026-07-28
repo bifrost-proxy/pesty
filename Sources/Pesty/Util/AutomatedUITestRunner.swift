@@ -134,6 +134,18 @@ enum AutomatedUITestRunner {
         let initialCount: Int
         let countAfterCancellation: Int
         let countAfterConfirmation: Int
+        let pinboardCountAfterConfirmation: Int
+    }
+
+    private struct DeletionSyncResult: Codable {
+        let phase: String
+        let success: Bool
+        let historyCount: Int
+        let deletedItemAbsent: Bool
+        let deletedPinboardItemAbsent: Bool
+        let tombstoneCount: Int
+        let staleSnapshotRejected: Bool
+        let recopyAllowed: Bool
     }
 
     private struct SearchInputResult: Codable {
@@ -201,6 +213,28 @@ enum AutomatedUITestRunner {
         }
         if phase == "clear-confirmation" {
             runClearConfirmationTest(controller: controller, runID: runID)
+            return
+        }
+        if phase == "deletion-sync-seed" {
+            seedDeletionSyncTest(controller: controller, runID: runID)
+            return
+        }
+        if phase == "deletion-sync-restart-1" {
+            verifyDeletionSyncRestart(
+                controller: controller,
+                runID: runID,
+                phase: phase,
+                allowRecopy: false
+            )
+            return
+        }
+        if phase == "deletion-sync-restart-2" {
+            verifyDeletionSyncRestart(
+                controller: controller,
+                runID: runID,
+                phase: phase,
+                allowRecopy: true
+            )
             return
         }
         if phase == "search-input" {
@@ -362,22 +396,217 @@ enum AutomatedUITestRunner {
         }
         controller.monitor.stop()
         controller.store.replaceHistoryForAutomatedClearConfirmationTest(items)
+        let pinboard = controller.store.addPinboard(
+            name: "Automated Clear Confirmation"
+        )
+        controller.store.saveToPinboard(items[0], boardID: pinboard.id)
 
         controller.resolveClearHistoryConfirmation(confirmed: false)
         let countAfterCancellation = controller.store.history.count
         controller.resolveClearHistoryConfirmation(confirmed: true)
         let countAfterConfirmation = controller.store.history.count
+        let pinboardCountAfterConfirmation =
+            controller.store.pinboards.first(where: { $0.id == pinboard.id })?
+                .items.count ?? 0
         let result = ClearConfirmationResult(
             phase: "clear-confirmation",
             success: countAfterCancellation == items.count
-                && countAfterConfirmation == 0,
+                && countAfterConfirmation == 0
+                && pinboardCountAfterConfirmation == 1,
             initialCount: items.count,
             countAfterCancellation: countAfterCancellation,
-            countAfterConfirmation: countAfterConfirmation
+            countAfterConfirmation: countAfterConfirmation,
+            pinboardCountAfterConfirmation: pinboardCountAfterConfirmation
         )
         controller.store.saveNow()
         writeClearConfirmation(result)
         exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+    }
+
+    private static func seedDeletionSyncTest(
+        controller: AppController,
+        runID: String
+    ) {
+        let items = deletionSyncItems(runID: runID)
+        let deletedText = deletionSyncDeletedText(runID: runID)
+        guard let deletedItem = items.first(where: { $0.text == deletedText }),
+              let staleURL = deletionSyncStaleSnapshotURL else {
+            writeDeletionSyncFailure(phase: "deletion-sync-seed")
+            exit(EXIT_FAILURE)
+        }
+
+        controller.monitor.stop()
+        controller.store.replaceHistoryForAutomatedDeletionSyncTest(items)
+        let staleSnapshot = ClipboardStoreSnapshot(
+            history: items,
+            pinboards: [
+                Pinboard(
+                    name: "Automated Deletion Sync",
+                    items: [deletedItem]
+                ),
+            ],
+            configuration: nil
+        )
+        do {
+            let data = try JSONEncoder().encode(staleSnapshot)
+            try data.write(to: staleURL, options: .atomic)
+        } catch {
+            writeDeletionSyncFailure(phase: "deletion-sync-seed")
+            exit(EXIT_FAILURE)
+        }
+
+        controller.store.mergeSnapshotForAutomatedDeletionSyncTest(
+            staleSnapshot
+        )
+        controller.store.delete(deletedItem)
+        controller.store.mergeSnapshotForAutomatedDeletionSyncTest(
+            staleSnapshot
+        )
+        finishDeletionSyncPhase(
+            controller: controller,
+            phase: "deletion-sync-seed",
+            deletedText: deletedText,
+            expectedHistoryCount: items.count - 1,
+            staleSnapshotRejected: true,
+            recopyAllowed: false
+        )
+    }
+
+    private static func verifyDeletionSyncRestart(
+        controller: AppController,
+        runID: String,
+        phase: String,
+        allowRecopy: Bool
+    ) {
+        let deletedText = deletionSyncDeletedText(runID: runID)
+        guard let staleSnapshot = readDeletionSyncStaleSnapshot() else {
+            writeDeletionSyncFailure(phase: phase)
+            exit(EXIT_FAILURE)
+        }
+
+        controller.monitor.stop()
+        let absentAfterLoad = !controller.store.history.contains {
+            $0.text == deletedText
+        }
+        controller.store.mergeSnapshotForAutomatedDeletionSyncTest(
+            staleSnapshot
+        )
+        let absentAfterStaleMerge = !controller.store.history.contains {
+            $0.text == deletedText
+        }
+        var recopyAllowed = false
+        var expectedHistoryCount = staleSnapshot.history.count - 1
+        if allowRecopy {
+            controller.store.addCaptured(ClipItem(
+                type: .text,
+                text: deletedText,
+                createdAt: Date(timeIntervalSince1970: 1)
+            ))
+            controller.store.mergeSnapshotForAutomatedDeletionSyncTest(
+                staleSnapshot
+            )
+            recopyAllowed = controller.store.history.filter {
+                $0.text == deletedText
+            }.count == 1
+            expectedHistoryCount = staleSnapshot.history.count
+        }
+        finishDeletionSyncPhase(
+            controller: controller,
+            phase: phase,
+            deletedText: deletedText,
+            expectedHistoryCount: expectedHistoryCount,
+            staleSnapshotRejected: absentAfterLoad && absentAfterStaleMerge,
+            recopyAllowed: recopyAllowed
+        )
+    }
+
+    private static func finishDeletionSyncPhase(
+        controller: AppController,
+        phase: String,
+        deletedText: String,
+        expectedHistoryCount: Int,
+        staleSnapshotRejected: Bool,
+        recopyAllowed: Bool
+    ) {
+        controller.store.saveNow()
+        let snapshot = readDeletionSyncActiveSnapshot()
+        let deletedItemAbsent = !controller.store.history.contains {
+            $0.text == deletedText
+        }
+        let deletedPinboardItemAbsent = !controller.store.pinboards.contains {
+            $0.items.contains { $0.text == deletedText }
+        }
+        let tombstoneCount = snapshot?.deletions?.count ?? 0
+        let expectsRecopy = phase == "deletion-sync-restart-2"
+        let success = controller.store.history.count == expectedHistoryCount
+            && staleSnapshotRejected
+            && tombstoneCount == 1
+            && deletedPinboardItemAbsent
+            && (expectsRecopy ? recopyAllowed : deletedItemAbsent)
+        writeDeletionSync(DeletionSyncResult(
+            phase: phase,
+            success: success,
+            historyCount: controller.store.history.count,
+            deletedItemAbsent: deletedItemAbsent,
+            deletedPinboardItemAbsent: deletedPinboardItemAbsent,
+            tombstoneCount: tombstoneCount,
+            staleSnapshotRejected: staleSnapshotRejected,
+            recopyAllowed: recopyAllowed
+        ))
+        exit(success ? EXIT_SUCCESS : EXIT_FAILURE)
+    }
+
+    private static func deletionSyncItems(runID: String) -> [ClipItem] {
+        (0..<4).map { index in
+            ClipItem(
+                type: .text,
+                text: "pesty-deletion-sync-\(runID)-\(index)",
+                createdAt: Date(timeIntervalSinceNow: -Double(index + 10))
+            )
+        }
+    }
+
+    private static func deletionSyncDeletedText(runID: String) -> String {
+        "pesty-deletion-sync-\(runID)-1"
+    }
+
+    private static var deletionSyncStaleSnapshotURL: URL? {
+        ClipboardStore.automatedTestBase?
+            .appendingPathComponent("deletion-sync-stale.json")
+    }
+
+    private static func readDeletionSyncStaleSnapshot()
+        -> ClipboardStoreSnapshot? {
+        guard let url = deletionSyncStaleSnapshotURL,
+              let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(
+            ClipboardStoreSnapshot.self,
+            from: data
+        )
+    }
+
+    private static func readDeletionSyncActiveSnapshot()
+        -> ClipboardStoreSnapshot? {
+        guard let url = ClipboardStore.automatedTestBase?
+            .appendingPathComponent("store.json"),
+              let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(
+            ClipboardStoreSnapshot.self,
+            from: data
+        )
+    }
+
+    private static func writeDeletionSyncFailure(phase: String) {
+        writeDeletionSync(DeletionSyncResult(
+            phase: phase,
+            success: false,
+            historyCount: -1,
+            deletedItemAbsent: false,
+            deletedPinboardItemAbsent: false,
+            tombstoneCount: -1,
+            staleSnapshotRejected: false,
+            recopyAllowed: false
+        ))
     }
 
     private static func seedRetentionRestartTest(
@@ -1167,6 +1396,15 @@ enum AutomatedUITestRunner {
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(result) else { return }
         FileHandle.standardOutput.write(Data("AUTOMATED_CLEAR_CONFIRMATION_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeDeletionSync(_ result: DeletionSyncResult) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(Data("AUTOMATED_DELETION_SYNC_RESULT ".utf8))
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data("\n".utf8))
     }

@@ -60,8 +60,9 @@ enum HistorySettingsVerifier {
             ClipboardStoreSnapshot.self,
             from: Data(#"{"history":[],"pinboards":[]}"#.utf8)
         )
-        guard legacySnapshot.configuration == nil else {
-            throw Failure(description: "legacy store unexpectedly decoded synchronized settings")
+        guard legacySnapshot.configuration == nil,
+              legacySnapshot.deletions == nil else {
+            throw Failure(description: "legacy store unexpectedly decoded newer snapshot fields")
         }
 
         let earlier = Date(timeIntervalSince1970: 1_000)
@@ -112,7 +113,14 @@ enum HistorySettingsVerifier {
         let synchronizedSnapshot = ClipboardStoreSnapshot(
             history: [],
             pinboards: [],
-            configuration: SyncedConfiguration(historyRetention: newerConfiguration)
+            configuration: SyncedConfiguration(historyRetention: newerConfiguration),
+            deletions: [
+                ClipDeletionTombstone(
+                    contentDigest: String(repeating: "a", count: 64),
+                    historyDeletedAt: later,
+                    pinboardDeletedAt: earlier
+                ),
+            ]
         )
         let roundTripData = try JSONEncoder().encode(synchronizedSnapshot)
         let roundTrip = try JSONDecoder().decode(
@@ -121,6 +129,9 @@ enum HistorySettingsVerifier {
         )
         guard roundTrip.configuration?.historyRetention == newerConfiguration else {
             throw Failure(description: "synchronized history settings did not survive JSON round-trip")
+        }
+        guard roundTrip.deletions == synchronizedSnapshot.deletions else {
+            throw Failure(description: "deletion tombstones did not survive JSON round-trip")
         }
 
         let directory = FileManager.default.temporaryDirectory

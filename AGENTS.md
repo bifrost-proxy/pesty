@@ -323,6 +323,21 @@ PESTY_AUTOMATED_TEST_ID="keyboard-$(date +%s)" \
 
 Require `AUTOMATED_KEYBOARD_DELETE_RESULT` to report `"success": true`.
 
+### iCloud deletion regression
+
+Run the isolated three-launch deletion regression for changes to deletion,
+persistence, store merging, conflict handling, or iCloud sync:
+
+```bash
+swift build
+scripts/test_deletion_sync.sh .build/debug/Pesty
+```
+
+Require all three `AUTOMATED_DELETION_SYNC_RESULT` lines to report
+`"success": true`. The test proves that an old snapshot cannot restore a
+deleted history or Pinboard item before or after two complete restarts, while a
+new copy of the same content remains allowed.
+
 ### Real iCloud three-launch test
 
 Run this for changes to clipboard capture, store merging, iCloud sync, panel

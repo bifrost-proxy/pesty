@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Observation
 import OSLog
 
@@ -28,10 +29,17 @@ enum BarSource: Equatable {
     case pinboard(UUID)
 }
 
+struct ClipDeletionTombstone: Codable, Equatable {
+    let contentDigest: String
+    let historyDeletedAt: Date
+    let pinboardDeletedAt: Date?
+}
+
 struct ClipboardStoreSnapshot: Codable {
     var history: [ClipItem]
     var pinboards: [Pinboard]
     var configuration: SyncedConfiguration?
+    var deletions: [ClipDeletionTombstone]? = nil
 }
 
 @Observable
@@ -66,6 +74,7 @@ final class ClipboardStore {
     private var baseDir: URL
     private var saveWorkItem: DispatchWorkItem?
     private var historyLimitWorkItem: DispatchWorkItem?
+    private var deletionTombstones: [String: ClipDeletionTombstone] = [:]
     @ObservationIgnored private var storageUsageTask: Task<Void, Never>?
 
     private var fileWatch: DispatchSourceFileSystemObject?
@@ -142,7 +151,14 @@ final class ClipboardStore {
         return visibleItems.first(where: { $0.id == id })
     }
 
-    func addCaptured(_ item: ClipItem) {
+    func addCaptured(_ capturedItem: ClipItem) {
+        var item = capturedItem
+        if let deletedAt = deletionTombstones[
+            contentDigest(item)
+        ]?.historyDeletedAt,
+           deletedAt >= item.createdAt {
+            item.createdAt = deletedAt.addingTimeInterval(0.001)
+        }
         if let idx = history.firstIndex(where: { $0.sameContent(as: item) }) {
             if item.imageFileName != history[idx].imageFileName { deleteImageFile(item) }
             var existing = history.remove(at: idx)
@@ -257,6 +273,7 @@ final class ClipboardStore {
     }
 
     func delete(_ item: ClipItem) {
+        registerDeletion(of: item, at: Date(), removesPinboardCopies: true)
         let visibleBeforeDeletion = visibleItems
         let deletedSelectionIndex = selectedID == item.id
             ? visibleBeforeDeletion.firstIndex(where: { $0.id == item.id })
@@ -280,7 +297,7 @@ final class ClipboardStore {
                 remainingIDs.contains($0) ? $0 : nil
             } ?? visibleItems.first?.id
         }
-        scheduleSave()
+        saveNow()
     }
 
     @discardableResult
@@ -292,18 +309,35 @@ final class ClipboardStore {
 
     func clearHistory() {
         let old = history
+        let deletedAt = Date()
+        for item in old {
+            registerDeletion(
+                of: item,
+                at: deletedAt,
+                removesPinboardCopies: false
+            )
+        }
         history.removeAll()
         selectedID = nil
         for item in old { deleteImageFile(item) }
-        scheduleSave()
+        saveNow()
     }
 
     func removeAutomatedTestItems(withTexts texts: Set<String>) {
-        let removedIDs = Set<UUID>(history.compactMap { item in
-            guard let text = item.text, texts.contains(text) else { return nil }
-            return item.id
-        })
+        let removedItems = history.filter { item in
+            guard let text = item.text else { return false }
+            return texts.contains(text)
+        }
+        let removedIDs = Set(removedItems.map(\.id))
         guard !removedIDs.isEmpty else { return }
+        let deletedAt = Date()
+        for item in removedItems {
+            registerDeletion(
+                of: item,
+                at: deletedAt,
+                removesPinboardCopies: false
+            )
+        }
         history.removeAll { removedIDs.contains($0.id) }
         if let selectedID, removedIDs.contains(selectedID) {
             selectFirst()
@@ -359,6 +393,37 @@ final class ClipboardStore {
         searchText = ""
         selectedID = items.first?.id
         saveNow()
+    }
+
+    func replaceHistoryForAutomatedDeletionSyncTest(_ items: [ClipItem]) {
+        let environment = ProcessInfo.processInfo.environment
+        guard ClipboardStore.automatedTestBase != nil,
+              environment["PESTY_AUTOMATED_UI_TEST"]?
+                .hasPrefix("deletion-sync-") == true,
+              environment["PESTY_AUTOMATED_TEST_DEFAULTS_SUITE"] != nil else {
+            return
+        }
+        history = items
+        pinboards = []
+        source = .history
+        searchText = ""
+        selectedID = items.first?.id
+        saveNow()
+    }
+
+    func mergeSnapshotForAutomatedDeletionSyncTest(
+        _ snapshot: ClipboardStoreSnapshot
+    ) {
+        let environment = ProcessInfo.processInfo.environment
+        guard ClipboardStore.automatedTestBase != nil,
+              environment["PESTY_AUTOMATED_UI_TEST"]?
+                .hasPrefix("deletion-sync-") == true,
+              environment["PESTY_AUTOMATED_TEST_DEFAULTS_SUITE"] != nil else {
+            return
+        }
+        if mergeExternal(snapshot) {
+            saveNow()
+        }
     }
 
     @discardableResult
@@ -458,8 +523,9 @@ final class ClipboardStore {
     private func load() {
         let initialSnapshot = readSnapshot(at: storeURL)
         if let snap = initialSnapshot {
-            history = snap.history
-            pinboards = snap.pinboards
+            _ = mergeDeletionTombstones(snap.deletions ?? [])
+            history = snap.history.filter { !isDeletedFromHistory($0) }
+            pinboards = filteringDeletedPinboardItems(from: snap.pinboards)
         }
         reconcileFromDisk()
         let initializedConfiguration = usesSharedConfiguration
@@ -489,6 +555,8 @@ final class ClipboardStore {
     }
 
     func saveNow() {
+        saveWorkItem?.cancel()
+        saveWorkItem = nil
         _ = writeSnapshot()
     }
 
@@ -505,7 +573,8 @@ final class ClipboardStore {
         let snap = ClipboardStoreSnapshot(
             history: history,
             pinboards: pinboards,
-            configuration: configuration
+            configuration: configuration,
+            deletions: serializedDeletionTombstones
         )
         let data: Data
         do {
@@ -596,10 +665,110 @@ final class ClipboardStore {
         }
     }
 
+    private func contentDigest(_ item: ClipItem) -> String {
+        SHA256.hash(data: Data(contentKey(item).utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
+    private func registerDeletion(
+        of item: ClipItem,
+        at deletedAt: Date,
+        removesPinboardCopies: Bool
+    ) {
+        let digest = contentDigest(item)
+        let existing = deletionTombstones[digest]
+        let effectiveDeletedAt = max(deletedAt, item.createdAt)
+        deletionTombstones[digest] = ClipDeletionTombstone(
+            contentDigest: digest,
+            historyDeletedAt: max(
+                existing?.historyDeletedAt ?? .distantPast,
+                effectiveDeletedAt
+            ),
+            pinboardDeletedAt: removesPinboardCopies
+                ? max(
+                    existing?.pinboardDeletedAt ?? .distantPast,
+                    effectiveDeletedAt
+                )
+                : existing?.pinboardDeletedAt
+        )
+    }
+
+    private func isDeletedFromHistory(_ item: ClipItem) -> Bool {
+        guard let tombstone = deletionTombstones[contentDigest(item)] else {
+            return false
+        }
+        return tombstone.historyDeletedAt >= item.createdAt
+    }
+
+    private func isDeletedFromPinboard(_ item: ClipItem) -> Bool {
+        guard let deletedAt = deletionTombstones[
+            contentDigest(item)
+        ]?.pinboardDeletedAt else {
+            return false
+        }
+        return deletedAt >= item.createdAt
+    }
+
+    @discardableResult
+    private func mergeDeletionTombstones(
+        _ tombstones: [ClipDeletionTombstone]
+    ) -> Bool {
+        var changed = false
+        for tombstone in tombstones {
+            let existing = deletionTombstones[tombstone.contentDigest]
+            let merged = ClipDeletionTombstone(
+                contentDigest: tombstone.contentDigest,
+                historyDeletedAt: max(
+                    existing?.historyDeletedAt ?? .distantPast,
+                    tombstone.historyDeletedAt
+                ),
+                pinboardDeletedAt: maxDeletionDate(
+                    existing?.pinboardDeletedAt,
+                    tombstone.pinboardDeletedAt
+                )
+            )
+            if merged != existing {
+                deletionTombstones[tombstone.contentDigest] = merged
+                changed = true
+            }
+        }
+        return changed
+    }
+
+    private func maxDeletionDate(_ lhs: Date?, _ rhs: Date?) -> Date? {
+        switch (lhs, rhs) {
+        case let (lhs?, rhs?):
+            return max(lhs, rhs)
+        case let (date?, nil), let (nil, date?):
+            return date
+        case (nil, nil):
+            return nil
+        }
+    }
+
+    private var serializedDeletionTombstones: [ClipDeletionTombstone]? {
+        guard !deletionTombstones.isEmpty else { return nil }
+        return deletionTombstones
+            .map(\.value)
+            .sorted { $0.contentDigest < $1.contentDigest }
+    }
+
+    private func filteringDeletedPinboardItems(
+        from boards: [Pinboard]
+    ) -> [Pinboard] {
+        boards.map { board in
+            var filtered = board
+            filtered.items.removeAll(where: isDeletedFromPinboard)
+            return filtered
+        }
+    }
+
     @discardableResult
     private func mergeExternal(_ snap: ClipboardStoreSnapshot) -> Bool {
         let previousHistory = history
         let previousPinboards = pinboards
+        let deletionsChanged = mergeDeletionTombstones(snap.deletions ?? [])
         var configurationChanged = false
         if let incoming = snap.configuration?.historyRetention,
            Settings.shared.adoptSyncedHistoryRetention(incoming) {
@@ -613,7 +782,9 @@ final class ClipboardStore {
             Settings.shared.syncedHistoryRetention
                 != snap.configuration?.historyRetention.normalized()
 
-        var combined = (history + snap.history).sorted { $0.createdAt > $1.createdAt }
+        var combined = (history + snap.history)
+            .filter { !isDeletedFromHistory($0) }
+            .sorted { $0.createdAt > $1.createdAt }
         var seen = Set<String>()
         var merged: [ClipItem] = []
         for it in combined where seen.insert(contentKey(it)).inserted { merged.append(it) }
@@ -627,8 +798,11 @@ final class ClipboardStore {
         }
         history = HistoryRetentionPolicy.retainedPrefix(of: merged, limit: mergeLimit)
 
-        var byID: [UUID: Pinboard] = Dictionary(uniqueKeysWithValues: pinboards.map { ($0.id, $0) })
-        for b in snap.pinboards {
+        pinboards = filteringDeletedPinboardItems(from: pinboards)
+        var byID: [UUID: Pinboard] = Dictionary(
+            uniqueKeysWithValues: pinboards.map { ($0.id, $0) }
+        )
+        for b in filteringDeletedPinboardItems(from: snap.pinboards) {
             if var existing = byID[b.id] {
                 for it in b.items where !existing.items.contains(where: { $0.sameContent(as: it) }) {
                     existing.items.append(it)
@@ -645,6 +819,7 @@ final class ClipboardStore {
         selectFirst()
         return history != previousHistory
             || pinboards != previousPinboards
+            || deletionsChanged
             || configurationChanged
             || configurationNeedsWrite
     }
