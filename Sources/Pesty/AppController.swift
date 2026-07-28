@@ -582,12 +582,14 @@ final class AppController: NSObject, NSApplicationDelegate {
             )
         let fallbackGuide =
             AccessibilitySettingsGuideLayout.presentation(
-                in: CGSize(width: 980, height: 620)
+                in: AccessibilitySettingsGuideLayout.referenceWindowSize,
+                listWasScrolled: true
             )
         guard exactGuide.mode == .exactPestyRow,
-              abs(exactGuide.highlightFrame.minX - 237.87) < 0.5,
-              abs(exactGuide.highlightFrame.minY - 406.8) < 0.5,
-              exactGuide.highlightFrame.height == 46,
+              abs(exactGuide.highlightFrame.minX - 223.05) < 0.5,
+              abs(exactGuide.highlightFrame.minY - 369) < 0.5,
+              abs(exactGuide.highlightFrame.maxX - 711) < 0.5,
+              exactGuide.highlightFrame.height == 40,
               fallbackGuide.mode == .applicationList,
               fallbackGuide.highlightFrame.width >= 260,
               fallbackGuide.highlightFrame.height >= 260 else {

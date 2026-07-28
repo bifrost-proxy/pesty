@@ -28,6 +28,14 @@ enum L10n {
         currentLanguage == .chinese ? chinese : english
     }
 
+    static func text(
+        _ english: String,
+        _ chinese: String,
+        language: AppLanguage
+    ) -> String {
+        language == .chinese ? chinese : english
+    }
+
     static var general: String { text("General", "通用") }
     static var about: String { text("About", "关于") }
     static var activation: String { text("Activation", "快捷操作") }
@@ -129,16 +137,22 @@ enum L10n {
     static var openAccessibilitySettingsAgain: String {
         text("Open System Settings Again", "再次打开系统设置")
     }
-    static var accessibilityGuideExactTitle: String {
-        text("Turn on Pesty here", "在这里打开 Pesty")
-    }
-    static var accessibilityGuideListTitle: String {
-        text("Find Pesty in this list", "在列表中找到 Pesty")
-    }
-    static var accessibilityGuideMessage: String {
+    static func accessibilityGuideExactPrompt(
+        language: AppLanguage
+    ) -> String {
         text(
-            "Turn on the switch on the right to finish.",
-            "打开右侧开关即可完成授权。"
+            "Find Pesty.app, then turn on the switch on the right.",
+            "找到 Pesty.app，然后打开右侧开关完成授权。",
+            language: language
+        )
+    }
+    static func accessibilityGuideListPrompt(
+        language: AppLanguage
+    ) -> String {
+        text(
+            "Find Pesty.app in this list, then turn on the switch on the right.",
+            "在列表中找到 Pesty.app，然后打开右侧开关完成授权。",
+            language: language
         )
     }
     static var accessibilityReadyToRestart: String {
