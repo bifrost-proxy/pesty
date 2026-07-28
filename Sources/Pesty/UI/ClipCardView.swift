@@ -33,7 +33,7 @@ struct ClipCardView: View {
         .animation(.easeOut(duration: 0.14), value: hovering)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture(count: 2) { AppController.shared.pasteItem(item) }
+        .onTapGesture(count: 2) { AppController.shared.quickPasteItem(item) }
         .onTapGesture { store.selectedID = item.id }
         .contextMenu { menu }
         .id(settings.language)
@@ -130,13 +130,24 @@ struct ClipCardView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .link:
-            VStack(spacing: 10) {
-                Spacer(minLength: 0)
-                Image(systemName: "safari").font(.system(size: 34, weight: .light))
-                    .foregroundStyle(palette.textTertiary.swiftUIColor)
-                Spacer(minLength: 0)
+            VStack(alignment: .leading, spacing: 10) {
+                Label {
+                    Text(item.displayTitle)
+                        .lineLimit(1)
+                } icon: {
+                    Image(systemName: "link")
+                }
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(headerColor)
+
+                Text(item.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(palette.textPrimary.swiftUIColor.opacity(0.9))
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(nil)
             }
-            .frame(maxWidth: .infinity)
+            .padding(.vertical, 3)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         default:
             Text(item.text ?? "")
                 .font(.system(size: 12.5))
@@ -184,8 +195,7 @@ struct ClipCardView: View {
         case .text, .richText:
             return L10n.characterCount(item.charCount)
         case .link:
-            return (item.text ?? "").replacingOccurrences(of: "https://", with: "")
-                                    .replacingOccurrences(of: "http://", with: "")
+            return L10n.characterCount(item.charCount)
         case .file:
             return L10n.fileCount(item.fileURLs.count)
         case .image:

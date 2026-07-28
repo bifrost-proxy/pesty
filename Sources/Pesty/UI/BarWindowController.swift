@@ -1,4 +1,5 @@
 import AppKit
+import CoreGraphics
 import SwiftUI
 
 final class BarPanel: NSPanel {
@@ -6,27 +7,45 @@ final class BarPanel: NSPanel {
     override var canBecomeMain: Bool { false }
 }
 
+final class BarHostingView: NSHostingView<BarView> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
 @MainActor
 final class BarWindowController: NSWindowController, NSWindowDelegate {
 
     private var isPresenting = false
+    private var isDismissing = false
+    private var hideCompletions: [() -> Void] = []
+    private var localOutsideClickMonitor: Any?
+    private var globalOutsideClickMonitor: Any?
 
     init() {
+        let initialScreenFrame = NSScreen.main?.frame
+            ?? NSRect(x: 0, y: 0, width: 800, height: 360)
         let initialHeight = CGFloat(Settings.shared.barHeight)
+        let initialFrame = NSRect(
+            x: initialScreenFrame.minX,
+            y: initialScreenFrame.minY,
+            width: initialScreenFrame.width,
+            height: initialHeight
+        )
         let panel = BarPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 800, height: initialHeight),
+            contentRect: initialFrame,
             styleMask: [.borderless],
             backing: .buffered,
             defer: false)
         panel.isFloatingPanel = true
-        panel.level = .modalPanel
+        panel.level = NSWindow.Level(
+            rawValue: Int(CGWindowLevelForKey(.dockWindow)) + 1
+        )
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.isMovable = false
-        panel.contentView = NSHostingView(rootView: BarView())
+        panel.contentView = BarHostingView(rootView: BarView())
         super.init(window: panel)
         panel.delegate = self
     }
@@ -38,19 +57,26 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
         isPresenting = true
         guard let screen = NSScreen.screens.first(where: { $0.frame.contains(NSEvent.mouseLocation) })
             ?? NSScreen.main ?? NSScreen.screens.first else { isPresenting = false; return }
-        let vf = screen.visibleFrame
+        let screenFrame = screen.frame
         let height = CGFloat(Settings.shared.barHeight)
-        let onScreen = NSRect(x: vf.minX, y: vf.minY, width: vf.width, height: height)
-        let offScreen = NSRect(x: vf.minX, y: vf.minY - height, width: vf.width, height: height)
-
-        panel.setFrame(offScreen, display: false)
+        let onScreen = NSRect(
+            x: screenFrame.minX,
+            y: screenFrame.minY,
+            width: screenFrame.width,
+            height: height
+        )
+        panel.makeFirstResponder(nil)
+        panel.alphaValue = 0
+        panel.setFrame(onScreen, display: false)
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+        panel.makeFirstResponder(nil)
+        startOutsideClickMonitoring()
 
         NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.22
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            panel.animator().setFrame(onScreen, display: true)
+            ctx.duration = 0.12
+            ctx.timingFunction = CAMediaTimingFunction(name: .linear)
+            panel.animator().alphaValue = 1
         }, completionHandler: { [weak self] in
             DispatchQueue.main.async {
                 guard let self, let panel = self.window else { return }
@@ -64,21 +90,90 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
         })
     }
 
-    func hide() {
-        guard let panel = window, panel.isVisible else { return }
-        let off = NSRect(x: panel.frame.minX, y: panel.frame.minY - panel.frame.height,
-                         width: panel.frame.width, height: panel.frame.height)
+    func hide(completion: (() -> Void)? = nil) {
+        if let completion {
+            hideCompletions.append(completion)
+        }
+        guard let panel = window, panel.isVisible else {
+            finishHiding()
+            return
+        }
+        guard !isDismissing else { return }
+        isDismissing = true
+        stopOutsideClickMonitoring()
+        panel.makeFirstResponder(nil)
         NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.16
-            ctx.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            panel.animator().setFrame(off, display: true)
-        }, completionHandler: {
+            ctx.duration = 0.08
+            ctx.timingFunction = CAMediaTimingFunction(name: .linear)
+            panel.animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
             panel.orderOut(nil)
+            self?.finishHiding()
         })
     }
 
     func windowDidResignKey(_ notification: Notification) {
         guard !isPresenting, !AppController.shared.suppressAutoHide else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.window?.isKeyWindow != true,
+                  !self.isMouseInsidePanel else { return }
+            AppController.shared.hideBar()
+        }
+    }
+
+    private func startOutsideClickMonitoring() {
+        stopOutsideClickMonitoring()
+        let mask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+
+        localOutsideClickMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] event in
+            guard let self else { return event }
+            let panelWindowNumber = self.window?.windowNumber
+            if event.windowNumber != panelWindowNumber,
+               !self.isMouseInsidePanel {
+                DispatchQueue.main.async { [weak self] in
+                    self?.hideForOutsideInteraction()
+                }
+            }
+            return event
+        }
+
+        globalOutsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, !self.isMouseInsidePanel else { return }
+                self.hideForOutsideInteraction()
+            }
+        }
+    }
+
+    private func stopOutsideClickMonitoring() {
+        if let monitor = localOutsideClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            localOutsideClickMonitor = nil
+        }
+        if let monitor = globalOutsideClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            globalOutsideClickMonitor = nil
+        }
+    }
+
+    private func hideForOutsideInteraction() {
+        guard !isPresenting,
+              window?.isVisible == true,
+              !isMouseInsidePanel,
+              !AppController.shared.suppressAutoHide else { return }
         AppController.shared.hideBar()
+    }
+
+    private var isMouseInsidePanel: Bool {
+        guard let panel = window, panel.isVisible else { return false }
+        return panel.frame.contains(NSEvent.mouseLocation)
+    }
+
+    private func finishHiding() {
+        isDismissing = false
+        let completions = hideCompletions
+        hideCompletions.removeAll()
+        completions.forEach { $0() }
     }
 }

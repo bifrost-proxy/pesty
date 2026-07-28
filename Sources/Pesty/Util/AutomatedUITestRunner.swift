@@ -128,10 +128,24 @@ enum AutomatedUITestRunner {
         let longChineseQueryFits: Bool
     }
 
+    private struct QuickPasteResult: Codable {
+        let phase: String
+        let success: Bool
+        let accessibilityTrusted: Bool
+        let expectedLength: Int
+        let promotedToFront: Bool
+        let returnedToTarget: Bool
+        let targetBundleID: String
+    }
+
     static func start(controller: AppController) {
         let environment = ProcessInfo.processInfo.environment
         let phase = environment["PESTY_AUTOMATED_UI_TEST"] ?? "verify"
         let runID = environment["PESTY_AUTOMATED_TEST_ID"] ?? "default"
+        if phase == "quick-paste" {
+            verifyQuickPaste(controller: controller, phase: phase)
+            return
+        }
         if phase == "performance" {
             runPerformanceTest(controller: controller, runID: runID)
             return
@@ -176,6 +190,68 @@ enum AutomatedUITestRunner {
         } else {
             showAndVerify(expected, controller: controller, phase: phase, originalItems: nil)
         }
+    }
+
+    private static func verifyQuickPaste(
+        controller: AppController,
+        phase: String
+    ) {
+        let pasteboardText = NSPasteboard.general.string(forType: .string) ?? ""
+        let requestedTargetBundleID = ProcessInfo.processInfo.environment[
+            "PESTY_AUTOMATED_TARGET_BUNDLE_ID"
+        ]
+        let target = requestedTargetBundleID.flatMap {
+            NSRunningApplication.runningApplications(withBundleIdentifier: $0).first
+        } ?? NSWorkspace.shared.frontmostApplication
+        let targetBundleID = target?.bundleIdentifier ?? ""
+        guard !pasteboardText.isEmpty,
+              targetBundleID != Bundle.main.bundleIdentifier,
+              let item = controller.store.history.first(where: { $0.text == pasteboardText })
+        else {
+            writeQuickPaste(QuickPasteResult(
+                phase: phase,
+                success: false,
+                accessibilityTrusted: accessibilityIsTrusted,
+                expectedLength: pasteboardText.count,
+                promotedToFront: false,
+                returnedToTarget: false,
+                targetBundleID: targetBundleID
+            ))
+            exit(EXIT_FAILURE)
+        }
+
+        controller.showBar()
+        if let target {
+            controller.setPasteTargetForAutomatedTest(target)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            controller.quickPasteItem(item)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+            let promoted = controller.store.history.first?.id == item.id
+            let returned = NSWorkspace.shared.frontmostApplication?.processIdentifier
+                == target?.processIdentifier
+            let success = promoted && returned && accessibilityIsTrusted
+            controller.store.saveNow()
+            writeQuickPaste(QuickPasteResult(
+                phase: phase,
+                success: success,
+                accessibilityTrusted: accessibilityIsTrusted,
+                expectedLength: pasteboardText.count,
+                promotedToFront: promoted,
+                returnedToTarget: returned,
+                targetBundleID: targetBundleID
+            ))
+            exit(success ? EXIT_SUCCESS : EXIT_FAILURE)
+        }
+    }
+
+    private static var accessibilityIsTrusted: Bool {
+        #if MAS
+        false
+        #else
+        PasteService.ensureAccessibility(prompt: false)
+        #endif
     }
 
     private static func runSearchInputTest(controller: AppController) {
@@ -857,6 +933,15 @@ enum AutomatedUITestRunner {
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(result) else { return }
         FileHandle.standardOutput.write(Data("AUTOMATED_SEARCH_INPUT_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeQuickPaste(_ result: QuickPasteResult) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(Data("AUTOMATED_QUICK_PASTE_RESULT ".utf8))
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data("\n".utf8))
     }

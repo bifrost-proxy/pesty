@@ -12,6 +12,30 @@ All notable changes to Pesty are documented here. The format is based on
   button by honoring the completed build before the update-launch marker and
   removing that one-shot marker from the restart environment.
 
+## [1.6.6] - 2026-07-28
+
+### Added
+
+- Added double-click quick paste that restores the previously focused input,
+  pastes automatically, and promotes the clip after the panel is hidden.
+- Added vertical mouse-wheel support for the horizontal clipboard strip.
+
+### Changed
+
+- Shortened and widened the clipboard cards, placed the panel over the Dock,
+  and made panel presentation and dismissal faster.
+- Expanded link cards to show the complete copied URL.
+
+### Fixed
+
+- Prevented card clicks from being mistaken for outside clicks that dismiss
+  the panel.
+- Kept modal rename and new-Pinboard text fields independent from clipboard
+  search keyboard handling.
+- Migrated the legacy 430-pixel panel height to the current 350-pixel default.
+
+[1.6.6]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.6.6
+
 ## [1.6.5] - 2026-07-28
 
 ### Added

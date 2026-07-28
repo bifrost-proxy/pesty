@@ -49,7 +49,7 @@ private enum ClipDateFormatters {
 }
 
 enum Theme {
-    static let cardWidth: CGFloat = 215
+    static let cardWidth: CGFloat = 260
     static let cardSpacing: CGFloat = 12
     static let cornerRadius: CGFloat = 16
     static let cardCorner: CGFloat = 13
