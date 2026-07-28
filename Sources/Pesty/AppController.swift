@@ -323,6 +323,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         let pid = String(ProcessInfo.processInfo.processIdentifier)
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        task.environment = restartEnvironment()
         task.arguments = [
             "-c",
             """
@@ -346,6 +347,15 @@ final class AppController: NSObject, NSApplicationDelegate {
                 error.localizedDescription
             )
         }
+    }
+
+    private static func restartEnvironment(
+        from environment: [String: String] =
+            ProcessInfo.processInfo.environment
+    ) -> [String: String] {
+        var environment = environment
+        environment.removeValue(forKey: "PESTY_UPDATE_HEALTH_MARKER")
+        return environment
     }
 
     func toggleBar() {
@@ -543,9 +553,26 @@ final class AppController: NSObject, NSApplicationDelegate {
             completedBuild: "2.0.0 (20)",
             currentBuild: "2.0.0 (20)",
             isUpdateRelaunch: true
+        ) == nil,
+        AccessibilityOnboardingPolicy.reason(
+            hasPreviouslyOnboarded: true,
+            completedBuild: "1.9.0 (19)",
+            currentBuild: "2.0.0 (20)",
+            isUpdateRelaunch: true
         ) == .update else {
             throw SettingsAccessVerificationFailure(
                 description: "Accessibility onboarding launch policy is incomplete"
+            )
+        }
+
+        let restartEnvironment = Self.restartEnvironment(from: [
+            "PATH": "/usr/bin",
+            "PESTY_UPDATE_HEALTH_MARKER": "/tmp/launch-healthy",
+        ])
+        guard restartEnvironment["PATH"] == "/usr/bin",
+              restartEnvironment["PESTY_UPDATE_HEALTH_MARKER"] == nil else {
+            throw SettingsAccessVerificationFailure(
+                description: "Pesty restart retained the update health marker"
             )
         }
 

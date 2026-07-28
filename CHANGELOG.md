@@ -6,6 +6,12 @@ All notable changes to Pesty are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- Prevented Accessibility onboarding from reappearing after its restart
+  button by honoring the completed build before the update-launch marker and
+  removing that one-shot marker from the restart environment.
+
 ## [1.6.6] - 2026-07-28
 
 ### Added

@@ -12,11 +12,11 @@ enum AccessibilityOnboardingPolicy {
         currentBuild: String,
         isUpdateRelaunch: Bool
     ) -> AccessibilityOnboardingReason? {
-        if isUpdateRelaunch {
-            return .update
-        }
         guard completedBuild != currentBuild else {
             return nil
+        }
+        if isUpdateRelaunch {
+            return .update
         }
         return hasPreviouslyOnboarded ? .update : .firstInstall
     }
