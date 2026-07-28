@@ -6,6 +6,27 @@ All notable changes to Pesty are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.6.4] - 2026-07-28
+
+### Added
+
+- Added guided Accessibility onboarding for first installs and app
+  replacements, with authorization polling and a restart action after access
+  is granted.
+
+### Changed
+
+- Redesigned Settings with persistent General/About navigation, a taller
+  780-pixel default height, and vertical resizing while keeping its width
+  fixed.
+
+### Fixed
+
+- Waited for the old Pesty process to exit before restarting after
+  Accessibility authorization.
+
+[1.6.4]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.6.4
+
 ## [1.6.3] - 2026-07-28
 
 ### Added
@@ -16,9 +37,6 @@ All notable changes to Pesty are documented here. The format is based on
 
 ### Changed
 
-- Redesigned Settings with persistent General/About navigation, a taller
-  780-pixel default height, and vertical resizing while keeping its width
-  fixed.
 - Synced the history retention limit through the iCloud-backed store so all
   Macs converge on the same finite or unlimited policy.
 - Delayed destructive trimming after a remotely received lower limit, giving
