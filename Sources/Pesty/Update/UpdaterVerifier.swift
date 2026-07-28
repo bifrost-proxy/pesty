@@ -9,6 +9,18 @@ enum UpdaterVerifier {
         guard UpdateManager.automaticCheckInterval == 3_600 else {
             throw Failure(description: "automatic update interval is not one hour")
         }
+        guard UpdateActivity.checking.isBusy,
+              UpdateActivity.downloading(progress: 0.42).isBusy,
+              UpdateActivity.downloading(progress: 0.42).downloadProgress == 0.42,
+              UpdateActivity.downloading(progress: -1).downloadProgress == 0,
+              UpdateActivity.downloading(progress: 2).downloadProgress == 1,
+              UpdateActivity.verifying.isBusy,
+              UpdateActivity.preparing.isBusy,
+              UpdateActivity.installing.isBusy,
+              !UpdateActivity.idle.isBusy,
+              !UpdateActivity.failed("test").isBusy else {
+            throw Failure(description: "update progress state is incomplete")
+        }
         guard UpdateService.isNewer("1.3.3", than: "1.3.2"),
               UpdateService.isNewer("2.0.0", than: "1.99.99"),
               UpdateService.isNewer("1.4.0-beta.2", than: "1.4.0-beta.1"),
