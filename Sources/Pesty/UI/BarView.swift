@@ -330,6 +330,7 @@ struct BarView: View {
         let visibleItems = store.visibleItems
         return VirtualizedClipStrip(
             items: visibleItems,
+            contentRevision: store.stripContentRevision,
             selectedID: store.selectedID,
             cardHeight: cardHeight,
             language: settings.language

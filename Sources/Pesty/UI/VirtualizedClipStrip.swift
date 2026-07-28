@@ -29,19 +29,33 @@ enum VirtualizedClipStripMetrics {
     private(set) static var createdCellCount = 0
     private(set) static var maximumVisibleCellCount = 0
     private(set) static var configuredItemIDs = Set<UUID>()
+    private(set) static var contentIndexRebuildCount = 0
+    private(set) static var lastSelectedItemID: UUID?
+    private(set) static var lastSelectedConfigurationTime: CFAbsoluteTime?
 
     static func reset() {
         createdCellCount = 0
         maximumVisibleCellCount = 0
         configuredItemIDs.removeAll(keepingCapacity: true)
+        contentIndexRebuildCount = 0
+        lastSelectedItemID = nil
+        lastSelectedConfigurationTime = nil
     }
 
     static func recordCreatedCell() {
         createdCellCount += 1
     }
 
-    static func recordConfiguredItem(_ id: UUID) {
+    static func recordConfiguredItem(_ id: UUID, selected: Bool) {
         configuredItemIDs.insert(id)
+        if selected {
+            lastSelectedItemID = id
+            lastSelectedConfigurationTime = CFAbsoluteTimeGetCurrent()
+        }
+    }
+
+    static func recordContentIndexRebuild() {
+        contentIndexRebuildCount += 1
     }
 
     static func recordVisibleCellCount(_ count: Int) {
@@ -51,6 +65,7 @@ enum VirtualizedClipStripMetrics {
 
 struct VirtualizedClipStrip: NSViewRepresentable {
     let items: [ClipItem]
+    let contentRevision: UInt64
     let selectedID: UUID?
     let cardHeight: CGFloat
     let language: AppLanguage
@@ -94,6 +109,7 @@ struct VirtualizedClipStrip: NSViewRepresentable {
         context.coordinator.attach(collectionView: collectionView)
         context.coordinator.update(
             items: items,
+            contentRevision: contentRevision,
             selectedID: selectedID,
             cardHeight: cardHeight,
             language: language
@@ -104,6 +120,7 @@ struct VirtualizedClipStrip: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.update(
             items: items,
+            contentRevision: contentRevision,
             selectedID: selectedID,
             cardHeight: cardHeight,
             language: language
@@ -120,6 +137,7 @@ struct VirtualizedClipStrip: NSViewRepresentable {
         private var items: [ClipItem] = []
         private var itemIDs: [UUID] = []
         private var indexByID: [UUID: Int] = [:]
+        private var contentRevision: UInt64?
         private var selectedID: UUID?
         private var cardHeight: CGFloat = 0
         private var effectiveCardHeight: CGFloat = 0
@@ -149,22 +167,29 @@ struct VirtualizedClipStrip: NSViewRepresentable {
 
         func update(
             items newItems: [ClipItem],
+            contentRevision newContentRevision: UInt64,
             selectedID newSelectedID: UUID?,
             cardHeight newCardHeight: CGFloat,
             language newLanguage: AppLanguage
         ) {
             guard let collectionView else { return }
 
-            let newIDs = newItems.map(\.id)
-            let contentChanged = newIDs != itemIDs
+            let contentChanged = newContentRevision != contentRevision
             let selectedChanged = newSelectedID != selectedID
             let layoutChanged = newCardHeight != cardHeight
             let languageChanged = newLanguage != language
             let previousSelectedID = selectedID
 
             items = newItems
-            itemIDs = newIDs
-            indexByID = Dictionary(uniqueKeysWithValues: newIDs.enumerated().map { ($1, $0) })
+            if contentChanged {
+                VirtualizedClipStripMetrics.recordContentIndexRebuild()
+                let newIDs = newItems.map(\.id)
+                itemIDs = newIDs
+                indexByID = Dictionary(
+                    uniqueKeysWithValues: newIDs.enumerated().map { ($1, $0) }
+                )
+            }
+            contentRevision = newContentRevision
             selectedID = newSelectedID
             cardHeight = newCardHeight
             language = newLanguage
@@ -188,7 +213,7 @@ struct VirtualizedClipStrip: NSViewRepresentable {
 
             recordVisibleCellCount()
             if contentChanged || selectedChanged || layoutChanged {
-                scrollToSelectedAfterLayout()
+                ensureSelectedIsVisibleAfterLayout()
             }
         }
 
@@ -226,12 +251,15 @@ struct VirtualizedClipStrip: NSViewRepresentable {
                     ? effectiveCardHeight
                     : cardHeight
             )
-            VirtualizedClipStripMetrics.recordConfiguredItem(item.id)
+            VirtualizedClipStripMetrics.recordConfiguredItem(
+                item.id,
+                selected: item.id == selectedID
+            )
             recordVisibleCellCount()
             return cell
         }
 
-        private func scrollToSelectedAfterLayout() {
+        private func ensureSelectedIsVisibleAfterLayout() {
             let expectedID = selectedID
             DispatchQueue.main.async { [weak self] in
                 guard let self,
@@ -244,10 +272,33 @@ struct VirtualizedClipStrip: NSViewRepresentable {
                     collectionView.reloadData()
                     collectionView.layoutSubtreeIfNeeded()
                 }
-                collectionView.scrollToItems(
-                    at: [IndexPath(item: index, section: 0)],
-                    scrollPosition: .centeredHorizontally
+                guard let attributes = collectionView.collectionViewLayout?
+                    .layoutAttributesForItem(
+                        at: IndexPath(item: index, section: 0)
+                    ) else { return }
+                // A click can only target a card that is already visible. Keep
+                // the user's scroll position stable in that case. Keyboard
+                // navigation to an off-screen card should reveal it with the
+                // smallest possible horizontal movement instead of centering.
+                guard !collectionView.visibleRect.intersects(attributes.frame) else {
+                    self.recordVisibleCellCount()
+                    return
+                }
+                guard let scrollView = collectionView.enclosingScrollView else {
+                    return
+                }
+                let visibleRect = collectionView.visibleRect
+                let requestedX = attributes.frame.maxX <= visibleRect.minX
+                    ? attributes.frame.minX
+                    : attributes.frame.maxX - visibleRect.width
+                let maximumX = max(
+                    0,
+                    collectionView.bounds.width - visibleRect.width
                 )
+                var origin = scrollView.contentView.bounds.origin
+                origin.x = min(maximumX, max(0, requestedX))
+                scrollView.contentView.scroll(to: origin)
+                scrollView.reflectScrolledClipView(scrollView.contentView)
                 collectionView.layoutSubtreeIfNeeded()
                 self.recordVisibleCellCount()
             }
@@ -260,7 +311,7 @@ struct VirtualizedClipStrip: NSViewRepresentable {
             }
             collectionView.collectionViewLayout?.invalidateLayout()
             collectionView.layoutSubtreeIfNeeded()
-            scrollToSelectedAfterLayout()
+            ensureSelectedIsVisibleAfterLayout()
         }
 
         @discardableResult
@@ -312,10 +363,10 @@ struct VirtualizedClipStrip: NSViewRepresentable {
 }
 
 @MainActor
-private final class ClipCollectionViewItem: NSCollectionViewItem {
+final class ClipCollectionViewItem: NSCollectionViewItem {
     static let reuseIdentifier = NSUserInterfaceItemIdentifier("PestyClipCard")
 
-    private var hostingView: NSHostingView<AnyView>?
+    private var hostingView: ClipCardHostingView?
 
     override func loadView() {
         view = NSView()
@@ -338,8 +389,14 @@ private final class ClipCollectionViewItem: NSCollectionViewItem {
 
         if let hostingView {
             hostingView.rootView = rootView
+            hostingView.onPrimaryClick = { [weak self] clickCount in
+                self?.handlePrimaryClick(item: item, clickCount: clickCount)
+            }
         } else {
-            let hostingView = NSHostingView(rootView: rootView)
+            let hostingView = ClipCardHostingView(rootView: rootView)
+            hostingView.onPrimaryClick = { [weak self] clickCount in
+                self?.handlePrimaryClick(item: item, clickCount: clickCount)
+            }
             hostingView.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(hostingView)
             NSLayoutConstraint.activate([
@@ -350,6 +407,34 @@ private final class ClipCollectionViewItem: NSCollectionViewItem {
             ])
             self.hostingView = hostingView
         }
+    }
+
+    func performPrimaryClickForAutomatedTest(clickCount: Int) {
+        guard AutomatedUITestProbe.isEnabled else { return }
+        hostingView?.performPrimaryClick(clickCount: clickCount)
+    }
+
+    private func handlePrimaryClick(item: ClipItem, clickCount: Int) {
+        ClipboardStore.shared.selectedID = item.id
+        if clickCount == 2 {
+            AppController.shared.quickPasteItem(item)
+        }
+    }
+}
+
+final class ClipCardHostingView: NSHostingView<AnyView> {
+    var onPrimaryClick: ((Int) -> Void)?
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        performPrimaryClick(clickCount: event.clickCount)
+    }
+
+    func performPrimaryClick(clickCount: Int) {
+        window?.makeFirstResponder(nil)
+        ClipboardStore.shared.isSearchFieldActive = false
+        onPrimaryClick?(clickCount)
     }
 }
 

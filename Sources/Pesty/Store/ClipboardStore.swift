@@ -39,12 +39,25 @@ struct ClipboardStoreSnapshot: Codable {
 final class ClipboardStore {
     static let shared = ClipboardStore()
 
-    private(set) var history: [ClipItem] = []
-    private(set) var pinboards: [Pinboard] = []
+    private(set) var stripContentRevision: UInt64 = 0
+    private(set) var history: [ClipItem] = [] {
+        didSet { stripContentRevision &+= 1 }
+    }
+    private(set) var pinboards: [Pinboard] = [] {
+        didSet { stripContentRevision &+= 1 }
+    }
     private(set) var storageUsageBytes: Int64 = 0
 
-    var source: BarSource = .history
-    var searchText: String = ""
+    var source: BarSource = .history {
+        didSet {
+            if source != oldValue { stripContentRevision &+= 1 }
+        }
+    }
+    var searchText: String = "" {
+        didSet {
+            if searchText != oldValue { stripContentRevision &+= 1 }
+        }
+    }
     var isSearchFieldActive = false
     var selectedID: UUID?
 
@@ -298,10 +311,11 @@ final class ClipboardStore {
         saveNow()
     }
 
-    func replaceHistoryForAutomatedPerformanceTest(_ items: [ClipItem]) {
+    func replaceHistoryForAutomatedStripTest(_ items: [ClipItem]) {
         let environment = ProcessInfo.processInfo.environment
+        let phase = environment["PESTY_AUTOMATED_UI_TEST"]
         guard ClipboardStore.automatedTestBase != nil,
-              environment["PESTY_AUTOMATED_UI_TEST"] == "performance" else { return }
+              phase == "performance" || phase == "mouse-selection" else { return }
         history = items
         pinboards = []
         source = .history

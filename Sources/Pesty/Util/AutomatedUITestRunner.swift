@@ -57,6 +57,27 @@ enum AutomatedUITestRunner {
         let maximumDurationMilliseconds: Int
     }
 
+    private struct MouseSelectionResult: Codable {
+        let phase: String
+        let success: Bool
+        let itemCount: Int
+        let selectionChangedSynchronously: Bool
+        let selectionLatencyMilliseconds: Double
+        let maximumSelectionLatencyMilliseconds: Double
+        let selectionRendered: Bool
+        let renderLatencyMilliseconds: Double
+        let maximumRenderLatencyMilliseconds: Double
+        let textEditorFocusedBeforeClick: Bool
+        let textEditorReleasedByClick: Bool
+        let rightArrowConsumedAfterClick: Bool
+        let rightArrowMovedSelectionAfterClick: Bool
+        let contentIndexRebuildCount: Int
+        let maximumContentIndexRebuildCount: Int
+        let visibleClickPreservedScrollPosition: Bool
+        let offscreenSelectionBecameVisible: Bool
+        let offscreenSelectionWasNotCentered: Bool
+    }
+
     private struct KeyboardDeleteResult: Codable {
         let phase: String
         let success: Bool
@@ -148,6 +169,10 @@ enum AutomatedUITestRunner {
         }
         if phase == "performance" {
             runPerformanceTest(controller: controller, runID: runID)
+            return
+        }
+        if phase == "mouse-selection" {
+            runMouseSelectionTest(controller: controller, runID: runID)
             return
         }
         if phase == "keyboard-delete" {
@@ -694,7 +719,7 @@ enum AutomatedUITestRunner {
         controller.monitor.stop()
         AutomatedUITestProbe.reset()
         VirtualizedClipStripMetrics.reset()
-        controller.store.replaceHistoryForAutomatedPerformanceTest(items)
+        controller.store.replaceHistoryForAutomatedStripTest(items)
         controller.showBar()
 
         visitCheckpoint(
@@ -761,6 +786,224 @@ enum AutomatedUITestRunner {
             writePerformance(result)
             exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
         }
+    }
+
+    private static func runMouseSelectionTest(
+        controller: AppController,
+        runID: String
+    ) {
+        let requestedItemCount = ProcessInfo.processInfo.environment[
+            "PESTY_AUTOMATED_MOUSE_SELECTION_ITEM_COUNT"
+        ].flatMap(Int.init)
+        let itemCount = max(20, requestedItemCount ?? 20)
+        let items = (0..<itemCount).map { index in
+            ClipItem(
+                type: .text,
+                text: "pesty-mouse-selection-\(runID)-\(index)",
+                sourceBundleID: "com.bifrostproxy.pesty.mouse-selection-test",
+                sourceAppName: "Pesty Mouse Selection Test",
+                createdAt: Date(timeIntervalSinceNow: -Double(index))
+            )
+        }
+
+        controller.monitor.stop()
+        VirtualizedClipStripMetrics.reset()
+        controller.store.replaceHistoryForAutomatedStripTest(items)
+        controller.showBar()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            guard let collectionView = firstCollectionView(),
+                  let scrollView = collectionView.enclosingScrollView else {
+                writeMouseSelection(MouseSelectionResult(
+                    phase: "mouse-selection",
+                    success: false,
+                    itemCount: itemCount,
+                    selectionChangedSynchronously: false,
+                    selectionLatencyMilliseconds: -1,
+                    maximumSelectionLatencyMilliseconds: 100,
+                    selectionRendered: false,
+                    renderLatencyMilliseconds: -1,
+                    maximumRenderLatencyMilliseconds: 100,
+                    textEditorFocusedBeforeClick: false,
+                    textEditorReleasedByClick: false,
+                    rightArrowConsumedAfterClick: false,
+                    rightArrowMovedSelectionAfterClick: false,
+                    contentIndexRebuildCount: -1,
+                    maximumContentIndexRebuildCount: 1,
+                    visibleClickPreservedScrollPosition: false,
+                    offscreenSelectionBecameVisible: false,
+                    offscreenSelectionWasNotCentered: false
+                ))
+                exit(EXIT_FAILURE)
+            }
+
+            collectionView.layoutSubtreeIfNeeded()
+            let visibleTargetIndex = min(1, items.count - 1)
+            let visibleTargetPath = IndexPath(item: visibleTargetIndex, section: 0)
+            guard let visibleCell = collectionView.item(
+                at: visibleTargetPath
+            ) as? ClipCollectionViewItem else {
+                writeMouseSelection(MouseSelectionResult(
+                    phase: "mouse-selection",
+                    success: false,
+                    itemCount: itemCount,
+                    selectionChangedSynchronously: false,
+                    selectionLatencyMilliseconds: -1,
+                    maximumSelectionLatencyMilliseconds: 100,
+                    selectionRendered: false,
+                    renderLatencyMilliseconds: -1,
+                    maximumRenderLatencyMilliseconds: 100,
+                    textEditorFocusedBeforeClick: false,
+                    textEditorReleasedByClick: false,
+                    rightArrowConsumedAfterClick: false,
+                    rightArrowMovedSelectionAfterClick: false,
+                    contentIndexRebuildCount: -1,
+                    maximumContentIndexRebuildCount: 1,
+                    visibleClickPreservedScrollPosition: false,
+                    offscreenSelectionBecameVisible: false,
+                    offscreenSelectionWasNotCentered: false
+                ))
+                exit(EXIT_FAILURE)
+            }
+
+            let initialOriginX = scrollView.contentView.bounds.origin.x
+            let focusProbe = NSTextField(
+                frame: NSRect(x: -2, y: -2, width: 1, height: 1)
+            )
+            collectionView.window?.contentView?.addSubview(focusProbe)
+            controller.store.isSearchFieldActive = true
+            _ = collectionView.window?.makeFirstResponder(focusProbe)
+            let textEditorFocusedBeforeClick =
+                collectionView.window?.firstResponder as? NSTextView != nil
+            let startedAt = CFAbsoluteTimeGetCurrent()
+            visibleCell.performPrimaryClickForAutomatedTest(clickCount: 1)
+            let selectionLatencyMilliseconds =
+                (CFAbsoluteTimeGetCurrent() - startedAt) * 1_000
+            let selectionChangedSynchronously =
+                controller.store.selectedID == items[visibleTargetIndex].id
+            let textEditorReleasedByClick =
+                collectionView.window?.firstResponder as? NSTextView == nil
+                && !controller.store.isSearchFieldActive
+            focusProbe.removeFromSuperview()
+            let maximumSelectionLatencyMilliseconds = 100.0
+            let maximumRenderLatencyMilliseconds = 100.0
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                let selectionRendered =
+                    VirtualizedClipStripMetrics.lastSelectedItemID
+                        == items[visibleTargetIndex].id
+                let renderLatencyMilliseconds =
+                    VirtualizedClipStripMetrics.lastSelectedConfigurationTime
+                        .map { ($0 - startedAt) * 1_000 } ?? -1
+                let visibleClickPreservedScrollPosition = abs(
+                    scrollView.contentView.bounds.origin.x - initialOriginX
+                ) < 0.5
+                let rightArrowEvent = makeKeyEvent(
+                    keyCode: UInt16(kVK_RightArrow),
+                    characters: ""
+                )
+                let rightArrowConsumedAfterClick = rightArrowEvent.map {
+                    controller.handleKey($0) == nil
+                } ?? false
+                let rightArrowMovedSelectionAfterClick =
+                    controller.store.selectedID
+                        == items[min(visibleTargetIndex + 1, items.count - 1)].id
+                let offscreenIndex = items.count - 1
+                controller.store.selectedID = items[offscreenIndex].id
+
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    collectionView.layoutSubtreeIfNeeded()
+                    let selectedPath = IndexPath(
+                        item: offscreenIndex,
+                        section: 0
+                    )
+                    let selectedFrame = collectionView.collectionViewLayout?
+                        .layoutAttributesForItem(at: selectedPath)?.frame
+                    let visibleRect = collectionView.visibleRect
+                    let offscreenSelectionBecameVisible =
+                        selectedFrame.map(visibleRect.intersects) ?? false
+                    let offscreenSelectionWasNotCentered = selectedFrame.map {
+                        abs($0.midX - visibleRect.midX) > 1
+                    } ?? false
+                    let contentIndexRebuildCount =
+                        VirtualizedClipStripMetrics.contentIndexRebuildCount
+                    let maximumContentIndexRebuildCount = 1
+                    let success = selectionChangedSynchronously
+                        && selectionLatencyMilliseconds
+                            <= maximumSelectionLatencyMilliseconds
+                        && selectionRendered
+                        && renderLatencyMilliseconds >= 0
+                        && renderLatencyMilliseconds
+                            <= maximumRenderLatencyMilliseconds
+                        && textEditorFocusedBeforeClick
+                        && textEditorReleasedByClick
+                        && rightArrowConsumedAfterClick
+                        && rightArrowMovedSelectionAfterClick
+                        && contentIndexRebuildCount
+                            <= maximumContentIndexRebuildCount
+                        && visibleClickPreservedScrollPosition
+                        && offscreenSelectionBecameVisible
+                        && offscreenSelectionWasNotCentered
+                    controller.store.saveNow()
+                    writeMouseSelection(MouseSelectionResult(
+                        phase: "mouse-selection",
+                        success: success,
+                        itemCount: itemCount,
+                        selectionChangedSynchronously:
+                            selectionChangedSynchronously,
+                        selectionLatencyMilliseconds:
+                            selectionLatencyMilliseconds,
+                        maximumSelectionLatencyMilliseconds:
+                            maximumSelectionLatencyMilliseconds,
+                        selectionRendered: selectionRendered,
+                        renderLatencyMilliseconds:
+                            renderLatencyMilliseconds,
+                        maximumRenderLatencyMilliseconds:
+                            maximumRenderLatencyMilliseconds,
+                        textEditorFocusedBeforeClick:
+                            textEditorFocusedBeforeClick,
+                        textEditorReleasedByClick:
+                            textEditorReleasedByClick,
+                        rightArrowConsumedAfterClick:
+                            rightArrowConsumedAfterClick,
+                        rightArrowMovedSelectionAfterClick:
+                            rightArrowMovedSelectionAfterClick,
+                        contentIndexRebuildCount: contentIndexRebuildCount,
+                        maximumContentIndexRebuildCount:
+                            maximumContentIndexRebuildCount,
+                        visibleClickPreservedScrollPosition:
+                            visibleClickPreservedScrollPosition,
+                        offscreenSelectionBecameVisible:
+                            offscreenSelectionBecameVisible,
+                        offscreenSelectionWasNotCentered:
+                            offscreenSelectionWasNotCentered
+                    ))
+                    exit(success ? EXIT_SUCCESS : EXIT_FAILURE)
+                }
+            }
+        }
+    }
+
+    private static func firstCollectionView() -> NSCollectionView? {
+        for window in NSApp.windows where window.isVisible {
+            if let collectionView = firstCollectionView(in: window.contentView) {
+                return collectionView
+            }
+        }
+        return nil
+    }
+
+    private static func firstCollectionView(in view: NSView?) -> NSCollectionView? {
+        guard let view else { return nil }
+        if let collectionView = view as? NSCollectionView {
+            return collectionView
+        }
+        for subview in view.subviews {
+            if let collectionView = firstCollectionView(in: subview) {
+                return collectionView
+            }
+        }
+        return nil
     }
 
     private static func visitCheckpoint(
@@ -951,6 +1194,15 @@ enum AutomatedUITestRunner {
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(result) else { return }
         FileHandle.standardOutput.write(Data("AUTOMATED_PERFORMANCE_TEST_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeMouseSelection(_ result: MouseSelectionResult) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try! encoder.encode(result)
+        FileHandle.standardOutput.write(Data("AUTOMATED_MOUSE_SELECTION_RESULT ".utf8))
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data("\n".utf8))
     }
