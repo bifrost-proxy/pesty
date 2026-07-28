@@ -106,6 +106,13 @@ enum PasteService {
         )
     }
 
+    static func openAccessibilitySettings() {
+        guard let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        ) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
     /// Removes only Pesty's stale Accessibility authorization so macOS can
     /// register the current ad-hoc-signed build. The user must still grant
     /// access in System Settings.

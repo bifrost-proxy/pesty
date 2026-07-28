@@ -1,171 +1,257 @@
-import SwiftUI
 import AppKit
+import SwiftUI
 
 struct SettingsView: View {
+    @Bindable var state: SettingsWindowState
     @Bindable private var settings = Settings.shared
 
     var body: some View {
-        TabView {
-            GeneralSettings()
-                .tabItem { Label(L10n.general, systemImage: "gearshape") }
-            AboutView()
-                .tabItem { Label(L10n.about, systemImage: "info.circle") }
+        ZStack {
+            VisualEffectView(
+                material: .underWindowBackground,
+                blending: .behindWindow
+            )
+            .ignoresSafeArea()
+
+            Color.accentColor.opacity(0.025)
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                SettingsTopBar(selection: $state.selectedPane)
+                Divider().opacity(0.45)
+
+                Group {
+                    switch state.selectedPane {
+                    case .general:
+                        GeneralSettings(
+                            onboardingReason:
+                                state.accessibilityOnboardingReason
+                        )
+                    case .about:
+                        AboutView()
+                    }
+                }
+                .transition(.opacity)
+            }
         }
-        .frame(width: 520, height: 560)
+        .frame(width: 680, height: 680)
         .id(settings.language)
+    }
+}
+
+private struct SettingsTopBar: View {
+    @Binding var selection: SettingsPane
+
+    var body: some View {
+        Picker(L10n.settingsWindowTitle, selection: $selection) {
+            Text(L10n.general).tag(SettingsPane.general)
+            Text(L10n.about).tag(SettingsPane.about)
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .frame(width: 230)
+        .accessibilityLabel(L10n.settingsWindowTitle)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
+        .frame(maxWidth: .infinity)
     }
 }
 
 private struct GeneralSettings: View {
     @Bindable private var settings = Settings.shared
     @Bindable private var store = ClipboardStore.shared
+    let onboardingReason: AccessibilityOnboardingReason?
+
     @State private var retentionSliderPosition =
         Settings.shared.historyRetentionSliderPosition
-    #if !MAS
-    @State private var accessibilityGranted = AXIsProcessTrusted()
-    @State private var requestedGrant = false
-    @State private var isRepairingAccessibility = false
-    @State private var accessibilityRepairFailure: String?
-
-    private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-    #endif
 
     var body: some View {
-        Form {
-            Section(L10n.activation) {
-                LabeledContent(L10n.showPesty) { HotkeyRecorderView() }
-                VStack(alignment: .leading, spacing: 8) {
-                    LabeledContent(
-                        L10n.historyLimit,
-                        value: retentionDisplayValue
-                    )
-                    Slider(
-                        value: $retentionSliderPosition,
-                        in: 0...HistoryRetentionPolicy.unlimitedSliderPosition,
-                        step: 1,
-                        onEditingChanged: { editing in
-                            guard !editing else { return }
-                            settings.setHistoryRetentionSliderPosition(
-                                retentionSliderPosition
-                            )
-                        }
-                    )
-                    .labelsHidden()
-                    HStack {
-                        Text("100")
-                        Spacer()
-                        Text("1,000")
-                        Spacer()
-                        Text("10,000")
-                        Text("∞")
+        ScrollView {
+            LazyVStack(spacing: 18) {
+                #if !MAS
+                if let onboardingReason {
+                    AccessibilityAccessCard(reason: onboardingReason)
+                }
+                #endif
+
+                SettingsSection(
+                    title: L10n.activation,
+                    systemImage: "command"
+                ) {
+                    SettingsRow(title: L10n.showPesty) {
+                        HotkeyRecorderView()
                     }
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    Text(L10n.historyLimitDelayDescription)
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        SettingsRow(
+                            title: L10n.historyLimit,
+                            value: retentionDisplayValue
+                        )
+                        Slider(
+                            value: $retentionSliderPosition,
+                            in: 0...HistoryRetentionPolicy
+                                .unlimitedSliderPosition,
+                            step: 1,
+                            onEditingChanged: { editing in
+                                guard !editing else { return }
+                                settings.setHistoryRetentionSliderPosition(
+                                    retentionSliderPosition
+                                )
+                            }
+                        )
+                        .labelsHidden()
+                        HStack {
+                            Text("100")
+                            Spacer()
+                            Text("1,000")
+                            Spacer()
+                            Text("10,000")
+                            Text("∞")
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        Text(L10n.historyLimitDelayDescription)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Divider()
+
+                    SettingsRow(
+                        title: L10n.storageUsed,
+                        value: storageDisplayValue
+                    )
+                }
+
+                SettingsSection(
+                    title: L10n.behavior,
+                    systemImage: "slider.horizontal.3"
+                ) {
+                    #if !MAS
+                    SettingsToggleRow(
+                        title: L10n.pasteDirectly,
+                        isOn: $settings.pasteDirectly
+                    )
+                    Divider()
+                    #endif
+                    SettingsToggleRow(
+                        title: L10n.ignorePasswords,
+                        isOn: $settings.ignoreConcealed
+                    )
+                    Divider()
+                    SettingsToggleRow(
+                        title: L10n.playSound,
+                        isOn: $settings.playSound
+                    )
+                    Divider()
+                    SettingsToggleRow(
+                        title: L10n.launchAtLogin,
+                        isOn: $settings.launchAtLogin
+                    )
+                    Divider()
+                    SettingsToggleRow(
+                        title: L10n.showMenuBarIcon,
+                        subtitle: L10n.showMenuBarIconDescription,
+                        isOn: $settings.showMenuBarIcon
+                    )
+                    Divider()
+                    VStack(alignment: .leading, spacing: 10) {
+                        SettingsRow(
+                            title: L10n.barHeight,
+                            value: "\(Int(settings.barHeight)) \(L10n.px)"
+                        )
+                        Slider(
+                            value: $settings.barHeight,
+                            in: 300...720,
+                            step: 10
+                        )
+                    }
+                    #if MAS
+                    Text(L10n.selectClip)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    #endif
                 }
-                LabeledContent(
-                    L10n.storageUsed,
-                    value: storageDisplayValue
-                )
-            }
 
-            Section(L10n.behavior) {
+                SettingsSection(
+                    title: L10n.sync,
+                    systemImage: "icloud"
+                ) {
+                    SettingsToggleRow(
+                        title: L10n.syncClipboard,
+                        subtitle: ClipboardStore.shared.iCloudAvailable
+                            ? L10n.syncAvailable
+                            : L10n.syncUnavailable,
+                        isOn: Binding(
+                            get: { settings.iCloudSync },
+                            set: { _ in
+                                AppController.shared.toggleICloudSync()
+                            }
+                        )
+                    )
+                }
+
                 #if !MAS
-                Toggle(L10n.pasteDirectly, isOn: $settings.pasteDirectly)
-                #endif
-                Toggle(L10n.ignorePasswords, isOn: $settings.ignoreConcealed)
-                Toggle(L10n.playSound, isOn: $settings.playSound)
-                Toggle(L10n.launchAtLogin, isOn: $settings.launchAtLogin)
-                Toggle(L10n.showMenuBarIcon, isOn: $settings.showMenuBarIcon)
-                Text(L10n.showMenuBarIconDescription)
-                    .font(.caption).foregroundStyle(.secondary)
-                VStack(alignment: .leading) {
-                    LabeledContent(L10n.barHeight, value: "\(Int(settings.barHeight)) \(L10n.px)")
-                    Slider(value: $settings.barHeight, in: 300...720, step: 10)
-                }
-                #if MAS
-                Text(L10n.selectClip)
-                    .font(.caption).foregroundStyle(.secondary)
-                #endif
-            }
-
-            Section(L10n.sync) {
-                Toggle(L10n.syncClipboard, isOn: Binding(
-                    get: { settings.iCloudSync },
-                    set: { _ in AppController.shared.toggleICloudSync() }))
-                Text(ClipboardStore.shared.iCloudAvailable
-                     ? L10n.syncAvailable
-                     : L10n.syncUnavailable)
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-
-            #if !MAS
-            Section(L10n.permissions) {
-                HStack(spacing: 10) {
-                    Image(systemName: accessibilityGranted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                        .foregroundStyle(accessibilityGranted ? .green : .orange)
-                        .font(.title3)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(L10n.accessibility)
-                        Text(accessibilityStatus)
-                            .font(.caption)
-                            .foregroundStyle(
-                                accessibilityGranted
-                                    ? .green
-                                    : (accessibilityRepairFailure == nil ? .secondary : .red)
-                            )
+                if onboardingReason == nil {
+                    SettingsSection(
+                        title: L10n.permissions,
+                        systemImage: "hand.raised"
+                    ) {
+                        AccessibilityAccessCard(reason: nil)
                     }
-                    Spacer()
-                    if !accessibilityGranted {
-                        Button {
-                            repairAccessibility()
-                        } label: {
-                            if isRepairingAccessibility {
-                                ProgressView()
-                                    .controlSize(.small)
-                            } else {
-                                Text(L10n.repairAccessibility)
+                }
+                #endif
+
+                SettingsSection(
+                    title: L10n.languageLabel,
+                    systemImage: "globe"
+                ) {
+                    SettingsRow(
+                        title: L10n.languageLabel,
+                        subtitle: L10n.languageDescription
+                    ) {
+                        Picker(
+                            L10n.languageLabel,
+                            selection: $settings.language
+                        ) {
+                            ForEach(AppLanguage.allCases) { language in
+                                Text(language.displayName).tag(language)
                             }
                         }
-                        .disabled(isRepairingAccessibility)
-                    } else if requestedGrant {
-                        Button(L10n.restartPesty) { AppController.restart() }
+                        .labelsHidden()
+                        .frame(width: 140)
+                    }
+                }
+
+                SettingsSection(
+                    title: L10n.data,
+                    systemImage: "externaldrive"
+                ) {
+                    HStack {
+                        Text(L10n.clearClipboardHistory)
+                        Spacer()
+                        Button(
+                            L10n.clearHistory,
+                            role: .destructive
+                        ) {
+                            AppController.shared
+                                .requestClearHistoryConfirmation()
+                        }
                     }
                 }
             }
-            #endif
-
-            Section(L10n.languageLabel) {
-                Picker(L10n.languageLabel, selection: $settings.language) {
-                    ForEach(AppLanguage.allCases) { language in
-                        Text(language.displayName).tag(language)
-                    }
-                }
-                Text(L10n.languageDescription)
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-
-            Section(L10n.data) {
-                Button(L10n.clearClipboardHistory, role: .destructive) {
-                    AppController.shared.requestClearHistoryConfirmation()
-                }
-            }
+            .padding(.horizontal, 28)
+            .padding(.vertical, 24)
+            .frame(maxWidth: 650)
+            .frame(maxWidth: .infinity)
         }
-        .formStyle(.grouped)
         .onAppear {
-            retentionSliderPosition = settings.historyRetentionSliderPosition
+            retentionSliderPosition =
+                settings.historyRetentionSliderPosition
             store.refreshStorageUsage()
         }
-        #if !MAS
-        .onAppear { accessibilityGranted = AXIsProcessTrusted() }
-        .onReceive(poll) { _ in
-            let now = AXIsProcessTrusted()
-            if now != accessibilityGranted { accessibilityGranted = now }
-        }
-        #endif
-        .id(settings.language)
     }
 
     private var retentionDisplayValue: String {
@@ -184,14 +270,201 @@ private struct GeneralSettings: View {
             countStyle: .file
         )
     }
+}
 
-    #if !MAS
+#if !MAS
+private struct AccessibilityAccessCard: View {
+    let reason: AccessibilityOnboardingReason?
+
+    @State private var accessibilityGranted = AXIsProcessTrusted()
+    @State private var requestedGrant = false
+    @State private var isRepairingAccessibility = false
+    @State private var accessibilityRepairFailure: String?
+
+    private let poll = Timer.publish(
+        every: 1,
+        on: .main,
+        in: .common
+    ).autoconnect()
+
+    var body: some View {
+        if let reason {
+            onboardingContent(reason: reason)
+                .padding(24)
+                .settingsCardSurface(emphasized: true)
+                .onAppear { refreshAuthorization() }
+                .onReceive(poll) { _ in refreshAuthorization() }
+        } else {
+            compactContent
+                .onAppear { refreshAuthorization() }
+                .onReceive(poll) { _ in refreshAuthorization() }
+        }
+    }
+
+    private func onboardingContent(
+        reason: AccessibilityOnboardingReason
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 22) {
+            HStack(alignment: .top, spacing: 16) {
+                Image(
+                    systemName: accessibilityGranted
+                        ? "checkmark.shield.fill"
+                        : "hand.raised.fill"
+                )
+                .font(.system(size: 34, weight: .semibold))
+                .foregroundStyle(
+                    accessibilityGranted ? .green : Color.accentColor
+                )
+                .frame(width: 46, height: 46)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(L10n.accessibilitySetupTitle)
+                        .font(.title2.weight(.semibold))
+                    Text(onboardingDescription(for: reason))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 14) {
+                OnboardingStep(
+                    number: 1,
+                    title: L10n.accessibilityStepOpen,
+                    isComplete: requestedGrant || accessibilityGranted
+                )
+                OnboardingStep(
+                    number: 2,
+                    title: L10n.accessibilityStepEnable,
+                    isComplete: accessibilityGranted
+                )
+                OnboardingStep(
+                    number: 3,
+                    title: L10n.accessibilityStepRestart,
+                    isComplete: false
+                )
+            }
+
+            HStack(spacing: 12) {
+                statusLabel
+                Spacer()
+                if accessibilityGranted {
+                    Button(L10n.restartPesty) {
+                        restartAfterAuthorization()
+                    }
+                    .settingsPrimaryButton()
+                    .keyboardShortcut(.defaultAction)
+                } else {
+                    Button {
+                        beginAuthorization()
+                    } label: {
+                        if isRepairingAccessibility {
+                            ProgressView()
+                                .controlSize(.small)
+                                .frame(minWidth: 150)
+                        } else {
+                            Text(
+                                requestedGrant
+                                    ? L10n.openAccessibilitySettingsAgain
+                                    : L10n.openAccessibilitySettings
+                            )
+                        }
+                    }
+                    .settingsPrimaryButton()
+                    .disabled(isRepairingAccessibility)
+                    .keyboardShortcut(.defaultAction)
+                }
+            }
+        }
+    }
+
+    private var compactContent: some View {
+        HStack(spacing: 12) {
+            Image(
+                systemName: accessibilityGranted
+                    ? "checkmark.circle.fill"
+                    : "exclamationmark.triangle.fill"
+            )
+            .foregroundStyle(accessibilityGranted ? .green : .orange)
+            .font(.title3)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(L10n.accessibility)
+                Text(accessibilityStatus)
+                    .font(.caption)
+                    .foregroundStyle(
+                        accessibilityGranted
+                            ? .green
+                            : (
+                                accessibilityRepairFailure == nil
+                                    ? .secondary
+                                    : .red
+                            )
+                    )
+            }
+
+            Spacer()
+
+            if !accessibilityGranted {
+                Button {
+                    beginAuthorization()
+                } label: {
+                    if isRepairingAccessibility {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text(L10n.repairAccessibility)
+                    }
+                }
+                .disabled(isRepairingAccessibility)
+            } else if requestedGrant {
+                Button(L10n.restartPesty) {
+                    restartAfterAuthorization()
+                }
+                .settingsPrimaryButton()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var statusLabel: some View {
+        Label(
+            accessibilityStatus,
+            systemImage: accessibilityGranted
+                ? "checkmark.circle.fill"
+                : "circle.dotted"
+        )
+        .font(.callout)
+        .foregroundStyle(
+            accessibilityGranted
+                ? .green
+                : (
+                    accessibilityRepairFailure == nil
+                        ? .secondary
+                        : .red
+                )
+        )
+    }
+
+    private func onboardingDescription(
+        for reason: AccessibilityOnboardingReason
+    ) -> String {
+        switch reason {
+        case .firstInstall:
+            return L10n.accessibilityFirstInstallDescription
+        case .update:
+            return L10n.accessibilityUpdateDescription
+        }
+    }
+
     private var accessibilityStatus: String {
         if accessibilityGranted {
-            return L10n.accessibilityGranted
+            return reason == nil
+                ? L10n.accessibilityGranted
+                : L10n.accessibilityReadyToRestart
         }
         if let accessibilityRepairFailure {
-            return L10n.accessibilityRepairFailed(accessibilityRepairFailure)
+            return L10n.accessibilityRepairFailed(
+                accessibilityRepairFailure
+            )
         }
         if isRepairingAccessibility {
             return L10n.accessibilityRepairing
@@ -202,14 +475,27 @@ private struct GeneralSettings: View {
         return L10n.accessibilityRequired
     }
 
-    private func repairAccessibility() {
-        guard !isRepairingAccessibility else { return }
-        requestedGrant = false
-        accessibilityRepairFailure = nil
-        isRepairingAccessibility = true
+    private func refreshAuthorization() {
+        let current = AXIsProcessTrusted()
+        if current != accessibilityGranted {
+            accessibilityGranted = current
+        }
+    }
 
+    private func beginAuthorization() {
+        guard !isRepairingAccessibility else { return }
+        accessibilityRepairFailure = nil
+
+        if requestedGrant {
+            PasteService.ensureAccessibility(prompt: true)
+            PasteService.openAccessibilitySettings()
+            return
+        }
+
+        isRepairingAccessibility = true
         Task { @MainActor in
-            let failure = await PasteService.resetAccessibilityAuthorization()
+            let failure =
+                await PasteService.resetAccessibilityAuthorization()
             isRepairingAccessibility = false
             if let failure {
                 accessibilityRepairFailure = failure
@@ -218,47 +504,233 @@ private struct GeneralSettings: View {
 
             requestedGrant = true
             PasteService.ensureAccessibility(prompt: true)
-            openAccessibilityPane()
+            PasteService.openAccessibilitySettings()
         }
     }
 
-    private func openAccessibilityPane() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-            NSWorkspace.shared.open(url)
+    private func restartAfterAuthorization() {
+        guard AXIsProcessTrusted() else {
+            refreshAuthorization()
+            return
+        }
+        Settings.shared.markAccessibilityOnboardingCompleted(
+            for: Bundle.main.appVersion
+        )
+        AppController.restart()
+    }
+}
+
+private struct OnboardingStep: View {
+    let number: Int
+    let title: String
+    let isComplete: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(
+                        isComplete
+                            ? Color.green
+                            : Color.secondary.opacity(0.16)
+                    )
+                if isComplete {
+                    Image(systemName: "checkmark")
+                        .font(.caption.bold())
+                        .foregroundStyle(.white)
+                } else {
+                    Text("\(number)")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 24, height: 24)
+
+            Text(title)
+                .font(.callout)
         }
     }
-    #endif
+}
+#endif
+
+private struct SettingsSection<Content: View>: View {
+    let title: String
+    let systemImage: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label(title, systemImage: systemImage)
+                .font(.headline)
+                .foregroundStyle(.primary)
+
+            content
+        }
+        .padding(18)
+        .settingsCardSurface()
+    }
+}
+
+private struct SettingsRow<Trailing: View>: View {
+    let title: String
+    var subtitle: String?
+    @ViewBuilder let trailing: Trailing
+
+    init(
+        title: String,
+        subtitle: String? = nil,
+        @ViewBuilder trailing: () -> Trailing
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.trailing = trailing()
+    }
+
+    var body: some View {
+        HStack(alignment: subtitle == nil ? .center : .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 12)
+            trailing
+        }
+    }
+}
+
+private extension SettingsRow where Trailing == Text {
+    init(title: String, value: String) {
+        self.init(title: title) {
+            Text(value).foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct SettingsToggleRow: View {
+    let title: String
+    var subtitle: String?
+    @Binding var isOn: Bool
+
+    var body: some View {
+        SettingsRow(title: title, subtitle: subtitle) {
+            Toggle(title, isOn: $isOn)
+                .labelsHidden()
+        }
+    }
+}
+
+private struct SettingsCardSurfaceModifier: ViewModifier {
+    var emphasized: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.glassEffect(
+                emphasized ? .regular.tint(.accentColor.opacity(0.08)) : .regular,
+                in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+            )
+        } else {
+            content
+                .background(
+                    .regularMaterial,
+                    in: RoundedRectangle(
+                        cornerRadius: 18,
+                        style: .continuous
+                    )
+                )
+                .overlay {
+                    RoundedRectangle(
+                        cornerRadius: 18,
+                        style: .continuous
+                    )
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                }
+        }
+    }
+}
+
+private struct SettingsPrimaryButtonModifier: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.buttonStyle(.glassProminent)
+        } else {
+            content.buttonStyle(.borderedProminent)
+        }
+    }
+}
+
+private extension View {
+    func settingsCardSurface(
+        emphasized: Bool = false
+    ) -> some View {
+        modifier(SettingsCardSurfaceModifier(emphasized: emphasized))
+    }
+
+    func settingsPrimaryButton() -> some View {
+        modifier(SettingsPrimaryButtonModifier())
+    }
 }
 
 private struct AboutView: View {
     @Bindable private var updater = UpdateManager.shared
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 16) {
+            Spacer()
+
             Image(nsImage: NSApp.applicationIconImage ?? NSImage())
-                .resizable().frame(width: 88, height: 88)
-            Text("Pesty").font(.system(size: 26, weight: .bold))
+                .resizable()
+                .frame(width: 104, height: 104)
+                .shadow(color: .black.opacity(0.16), radius: 18, y: 8)
+
+            Text("Pesty")
+                .font(.system(size: 30, weight: .bold))
             Text(L10n.version(Bundle.main.appVersion))
-                .font(.subheadline).foregroundStyle(.secondary)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
             Text(L10n.aboutDescription)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal)
+
             Button(L10n.checkForUpdates) {
                 AppController.shared.checkForUpdatesManually()
             }
-            .disabled(updater.activity == .checking || updater.isInstalling)
-            HStack(spacing: 16) {
-                Link("GitHub", destination: URL(string: "https://github.com/\(Repository.current)")!)
-                Link(L10n.reportIssue,
-                     destination: URL(string: "https://github.com/\(Repository.current)/issues")!)
+            .settingsPrimaryButton()
+            .disabled(
+                updater.activity == .checking || updater.isInstalling
+            )
+
+            HStack(spacing: 18) {
+                Link(
+                    "GitHub",
+                    destination: URL(
+                        string: "https://github.com/\(Repository.current)"
+                    )!
+                )
+                Link(
+                    L10n.reportIssue,
+                    destination: URL(
+                        string: "https://github.com/\(Repository.current)/issues"
+                    )!
+                )
             }
             .padding(.top, 4)
+
             Spacer()
+
             Text(L10n.licenseDescription)
-                .font(.caption).foregroundStyle(.tertiary)
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .padding(.bottom, 24)
         }
-        .padding(28)
+        .padding(30)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

@@ -12,6 +12,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var barController: BarWindowController?
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
+    private let settingsWindowState = SettingsWindowState()
     private var keyMonitor: Any?
     private var languageObserver: NSObjectProtocol?
     private var updateObserver: NSObjectProtocol?
@@ -90,7 +91,27 @@ final class AppController: NSObject, NSApplicationDelegate {
             return
         }
 
-        if !Settings.shared.onboarded {
+        #if MAS
+        let accessibilityOnboardingReason:
+            AccessibilityOnboardingReason? = nil
+        #else
+        let accessibilityOnboardingReason = AccessibilityOnboardingPolicy.reason(
+            hasPreviouslyOnboarded: Settings.shared.onboarded,
+            completedBuild: Settings.shared.accessibilityAuthorizedBuild,
+            currentBuild: Bundle.main.appVersion,
+            isUpdateRelaunch: ProcessInfo.processInfo.environment[
+                "PESTY_UPDATE_HEALTH_MARKER"
+            ] != nil
+        )
+        #endif
+
+        if let accessibilityOnboardingReason {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                self?.showSettings(
+                    accessibilityOnboarding: accessibilityOnboardingReason
+                )
+            }
+        } else if !Settings.shared.onboarded {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
                 self?.showSettings()
             }
@@ -279,11 +300,32 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     static func restart() {
         let path = Bundle.main.bundlePath
+        let pid = String(ProcessInfo.processInfo.processIdentifier)
         let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        task.arguments = ["-n", path]
-        try? task.run()
-        NSApp.terminate(nil)
+        task.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        task.arguments = [
+            "-c",
+            """
+            old_pid="$1"
+            app_path="$2"
+            while /bin/kill -0 "$old_pid" 2>/dev/null; do
+              /bin/sleep 0.1
+            done
+            /usr/bin/open -n "$app_path"
+            """,
+            "--",
+            pid,
+            path,
+        ]
+        do {
+            try task.run()
+            NSApp.terminate(nil)
+        } catch {
+            NSLog(
+                "Pesty restart helper failed to start: %@",
+                error.localizedDescription
+            )
+        }
     }
 
     func toggleBar() {
@@ -335,18 +377,28 @@ final class AppController: NSObject, NSApplicationDelegate {
         hideBar()
     }
 
-    func showSettings() {
+    func showSettings(
+        accessibilityOnboarding reason: AccessibilityOnboardingReason? = nil
+    ) {
         NSApp.activate(ignoringOtherApps: true)
+        if let reason {
+            settingsWindowState.presentAccessibilityOnboarding(reason: reason)
+        }
         if let win = settingsWindow {
             win.makeKeyAndOrderFront(nil)
             return
         }
-        let view = SettingsView()
+        let view = SettingsView(state: settingsWindowState)
         let host = NSHostingController(rootView: view)
         let win = NSWindow(contentViewController: host)
         win.title = L10n.settingsWindowTitle
-        win.styleMask = [.titled, .closable, .miniaturizable]
-        win.setContentSize(NSSize(width: 520, height: 560))
+        win.styleMask = [.titled, .closable, .fullSizeContentView]
+        win.titleVisibility = .hidden
+        win.titlebarAppearsTransparent = true
+        win.titlebarSeparatorStyle = .none
+        win.isMovableByWindowBackground = true
+        win.backgroundColor = .clear
+        win.setContentSize(NSSize(width: 680, height: 680))
         win.center()
         win.isReleasedWhenClosed = false
         settingsWindow = win
@@ -380,6 +432,35 @@ final class AppController: NSObject, NSApplicationDelegate {
               ] else {
             throw SettingsAccessVerificationFailure(
                 description: "Accessibility repair did not target only Pesty"
+            )
+        }
+
+        guard AccessibilityOnboardingPolicy.reason(
+            hasPreviouslyOnboarded: false,
+            completedBuild: nil,
+            currentBuild: "2.0.0 (20)",
+            isUpdateRelaunch: false
+        ) == .firstInstall,
+        AccessibilityOnboardingPolicy.reason(
+            hasPreviouslyOnboarded: true,
+            completedBuild: "1.9.0 (19)",
+            currentBuild: "2.0.0 (20)",
+            isUpdateRelaunch: false
+        ) == .update,
+        AccessibilityOnboardingPolicy.reason(
+            hasPreviouslyOnboarded: true,
+            completedBuild: "2.0.0 (20)",
+            currentBuild: "2.0.0 (20)",
+            isUpdateRelaunch: false
+        ) == nil,
+        AccessibilityOnboardingPolicy.reason(
+            hasPreviouslyOnboarded: true,
+            completedBuild: "2.0.0 (20)",
+            currentBuild: "2.0.0 (20)",
+            isUpdateRelaunch: true
+        ) == .update else {
+            throw SettingsAccessVerificationFailure(
+                description: "Accessibility onboarding launch policy is incomplete"
             )
         }
 
@@ -424,9 +505,13 @@ final class AppController: NSObject, NSApplicationDelegate {
             NSApp,
             hasVisibleWindows: false
         )
-        guard !shouldUseDefaultReopenBehavior, settingsWindow?.isVisible == true else {
+        guard !shouldUseDefaultReopenBehavior,
+              settingsWindow?.isVisible == true,
+              settingsWindow?.styleMask.contains(.fullSizeContentView) == true,
+              settingsWindow?.titleVisibility == .hidden,
+              settingsWindow?.titlebarAppearsTransparent == true else {
             throw SettingsAccessVerificationFailure(
-                description: "reopening Pesty did not show Settings"
+                description: "reopening Pesty did not show the immersive Settings window"
             )
         }
     }

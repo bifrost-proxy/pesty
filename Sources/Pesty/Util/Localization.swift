@@ -90,6 +90,51 @@ enum L10n {
         text("Required to paste directly into other apps.",
              "直接粘贴到其他应用需要此权限。")
     }
+    static var accessibilitySetupTitle: String {
+        text("Finish Setting Up Pesty", "完成 Pesty 设置")
+    }
+    static var accessibilityFirstInstallDescription: String {
+        text(
+            "Pesty needs Accessibility access to paste a selected clip directly into another app. macOS requires you to approve this once, then restart Pesty.",
+            "Pesty 需要辅助功能权限，才能把选中的内容直接粘贴到其他应用。macOS 要求你先完成一次授权，然后重启 Pesty。"
+        )
+    }
+    static var accessibilityUpdateDescription: String {
+        text(
+            "This update replaces the Pesty app, so macOS requires Accessibility access to be approved again. Your clipboard history and settings are unchanged.",
+            "本次更新替换了 Pesty 应用，因此 macOS 要求重新授权辅助功能。你的剪贴板历史和设置不会受到影响。"
+        )
+    }
+    static var accessibilityStepOpen: String {
+        text(
+            "Open Privacy & Security > Accessibility.",
+            "打开“隐私与安全性”>“辅助功能”。"
+        )
+    }
+    static var accessibilityStepEnable: String {
+        text(
+            "Turn on Pesty in the app list.",
+            "在应用列表中打开 Pesty。"
+        )
+    }
+    static var accessibilityStepRestart: String {
+        text(
+            "Return here and click Restart Pesty.",
+            "返回这里并点击“重启 Pesty”。"
+        )
+    }
+    static var openAccessibilitySettings: String {
+        text("Open Accessibility Settings", "打开辅助功能设置")
+    }
+    static var openAccessibilitySettingsAgain: String {
+        text("Open System Settings Again", "再次打开系统设置")
+    }
+    static var accessibilityReadyToRestart: String {
+        text(
+            "Access granted. Restart Pesty to finish.",
+            "授权成功。重启 Pesty 即可完成。"
+        )
+    }
     static var repairAccessibility: String {
         text("Repair Access", "修复权限")
     }

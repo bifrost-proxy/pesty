@@ -99,6 +99,7 @@ final class Settings {
         static let ignoreConcealed = "ignoreConcealed"
         static let barHeight = "barHeight"
         static let onboarded = "onboarded"
+        static let accessibilityAuthorizedBuild = "accessibilityAuthorizedBuild"
         static let iCloudSync = "iCloudSync"
         static let language = "language"
     }
@@ -157,6 +158,8 @@ final class Settings {
     var onboarded: Bool {
         didSet { guard isLoaded else { return }; d.set(onboarded, forKey: Keys.onboarded) }
     }
+
+    private(set) var accessibilityAuthorizedBuild: String?
 
     var iCloudSync: Bool {
         didSet { guard isLoaded else { return }; d.set(iCloudSync, forKey: Keys.iCloudSync) }
@@ -222,6 +225,9 @@ final class Settings {
         ignoreConcealed = d.bool(forKey: Keys.ignoreConcealed)
         barHeight = d.double(forKey: Keys.barHeight)
         onboarded = d.bool(forKey: Keys.onboarded)
+        accessibilityAuthorizedBuild = d.string(
+            forKey: Keys.accessibilityAuthorizedBuild
+        )
         iCloudSync = d.bool(forKey: Keys.iCloudSync)
         language = AppLanguage(rawValue: d.string(forKey: Keys.language) ?? "") ?? .systemDefault
         isLoaded = true
@@ -240,6 +246,12 @@ final class Settings {
             limit: historyLimit,
             unlimited: historyLimitUnlimited
         )
+    }
+
+    func markAccessibilityOnboardingCompleted(for build: String) {
+        accessibilityAuthorizedBuild = build
+        d.set(build, forKey: Keys.accessibilityAuthorizedBuild)
+        onboarded = true
     }
 
     func setHistoryRetentionSliderPosition(_ position: Double) {
