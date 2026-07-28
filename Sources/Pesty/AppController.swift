@@ -523,35 +523,50 @@ final class AppController: NSObject, NSApplicationDelegate {
             NSApp,
             hasVisibleWindows: false
         )
+        guard let settingsWindow,
+              let contentView = settingsWindow.contentView else {
+            throw SettingsAccessVerificationFailure(
+                description: "reopening Pesty did not create the Settings window"
+            )
+        }
+        let initialContentSize = contentView.frame.size
         guard !shouldUseDefaultReopenBehavior,
-              settingsWindow?.isVisible == true,
-              settingsWindow?.contentView?.frame.size == NSSize(
-                  width: SettingsWindowLayout.width,
-                  height: SettingsWindowLayout.initialHeight
-              ),
-              settingsWindow?.styleMask.contains(.resizable) == true,
-              settingsWindow?.contentMinSize == NSSize(
+              settingsWindow.isVisible,
+              initialContentSize.width == SettingsWindowLayout.width,
+              initialContentSize.height >= SettingsWindowLayout.minimumHeight,
+              settingsWindow.styleMask.contains(.resizable),
+              settingsWindow.contentMinSize == NSSize(
                   width: SettingsWindowLayout.width,
                   height: SettingsWindowLayout.minimumHeight
               ),
-              settingsWindow?.contentMaxSize.width
+              settingsWindow.contentMaxSize.width
                   == SettingsWindowLayout.width,
-              settingsWindow?.styleMask.contains(.fullSizeContentView) == true,
-              settingsWindow?.titleVisibility == .hidden,
-              settingsWindow?.titlebarAppearsTransparent == true else {
+              settingsWindow.styleMask.contains(.fullSizeContentView),
+              settingsWindow.titleVisibility == .hidden,
+              settingsWindow.titlebarAppearsTransparent else {
             throw SettingsAccessVerificationFailure(
-                description: "reopening Pesty did not show the immersive Settings window"
+                description:
+                    "reopening Pesty did not show the fixed-width, vertically resizable Settings window"
             )
         }
 
-        let resizedHeight = SettingsWindowLayout.initialHeight - 80
-        settingsWindow?.setContentSize(
+        let resizedHeight = initialContentSize.height
+            > SettingsWindowLayout.minimumHeight + 40
+            ? max(
+                SettingsWindowLayout.minimumHeight,
+                initialContentSize.height - 80
+            )
+            : min(
+                SettingsWindowLayout.initialHeight,
+                initialContentSize.height + 80
+            )
+        settingsWindow.setContentSize(
             NSSize(
                 width: SettingsWindowLayout.width,
                 height: resizedHeight
             )
         )
-        guard settingsWindow?.contentView?.frame.size == NSSize(
+        guard contentView.frame.size == NSSize(
             width: SettingsWindowLayout.width,
             height: resizedHeight
         ) else {
