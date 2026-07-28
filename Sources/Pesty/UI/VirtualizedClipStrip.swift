@@ -1,6 +1,29 @@
 import AppKit
 import SwiftUI
 
+private final class HorizontalWheelScrollView: NSScrollView {
+    override func scrollWheel(with event: NSEvent) {
+        let horizontalDelta = event.scrollingDeltaX
+        let verticalDelta = event.scrollingDeltaY
+        guard abs(verticalDelta) > abs(horizontalDelta),
+              abs(verticalDelta) > 0.01,
+              let documentView else {
+            super.scrollWheel(with: event)
+            return
+        }
+
+        var origin = contentView.bounds.origin
+        let maximumX = max(0, documentView.bounds.width - contentView.bounds.width)
+        let multiplier: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 28
+        origin.x = min(
+            maximumX,
+            max(0, origin.x - verticalDelta * multiplier)
+        )
+        contentView.scroll(to: origin)
+        reflectScrolledClipView(contentView)
+    }
+}
+
 @MainActor
 enum VirtualizedClipStripMetrics {
     private(set) static var createdCellCount = 0
@@ -42,6 +65,10 @@ struct VirtualizedClipStrip: NSViewRepresentable {
         layout.minimumInteritemSpacing = Theme.cardSpacing
         layout.minimumLineSpacing = Theme.cardSpacing
         layout.sectionInset = NSEdgeInsets(top: 4, left: 18, bottom: 18, right: 18)
+        layout.itemSize = NSSize(
+            width: Theme.cardWidth,
+            height: min(cardHeight, 160)
+        )
 
         let collectionView = NSCollectionView()
         collectionView.collectionViewLayout = layout
@@ -53,7 +80,7 @@ struct VirtualizedClipStrip: NSViewRepresentable {
             forItemWithIdentifier: ClipCollectionViewItem.reuseIdentifier
         )
 
-        let scrollView = NSScrollView()
+        let scrollView = HorizontalWheelScrollView()
         scrollView.drawsBackground = false
         scrollView.borderType = .noBorder
         scrollView.hasHorizontalScroller = false
@@ -95,6 +122,7 @@ struct VirtualizedClipStrip: NSViewRepresentable {
         private var indexByID: [UUID: Int] = [:]
         private var selectedID: UUID?
         private var cardHeight: CGFloat = 0
+        private var effectiveCardHeight: CGFloat = 0
         private var language: AppLanguage = .systemDefault
         private var presentationObserver: NSObjectProtocol?
 
@@ -141,13 +169,9 @@ struct VirtualizedClipStrip: NSViewRepresentable {
             cardHeight = newCardHeight
             language = newLanguage
 
-            if let layout = collectionView.collectionViewLayout as? NSCollectionViewFlowLayout,
-               layout.itemSize != NSSize(width: Theme.cardWidth, height: newCardHeight) {
-                layout.itemSize = NSSize(width: Theme.cardWidth, height: newCardHeight)
-                layout.invalidateLayout()
-            }
+            let effectiveHeightChanged = updateItemSizeIfPossible()
 
-            if contentChanged || layoutChanged || languageChanged {
+            if contentChanged || layoutChanged || languageChanged || effectiveHeightChanged {
                 collectionView.reloadData()
             } else if selectedChanged {
                 var changed = Set<IndexPath>()
@@ -198,7 +222,9 @@ struct VirtualizedClipStrip: NSViewRepresentable {
                 item: item,
                 index: indexPath.item,
                 selected: item.id == selectedID,
-                height: cardHeight
+                height: effectiveCardHeight > 0
+                    ? effectiveCardHeight
+                    : cardHeight
             )
             VirtualizedClipStripMetrics.recordConfiguredItem(item.id)
             recordVisibleCellCount()
@@ -214,6 +240,10 @@ struct VirtualizedClipStrip: NSViewRepresentable {
                       let index = self.indexByID[expectedID],
                       let collectionView = self.collectionView else { return }
                 collectionView.layoutSubtreeIfNeeded()
+                if self.updateItemSizeIfPossible() {
+                    collectionView.reloadData()
+                    collectionView.layoutSubtreeIfNeeded()
+                }
                 collectionView.scrollToItems(
                     at: [IndexPath(item: index, section: 0)],
                     scrollPosition: .centeredHorizontally
@@ -225,9 +255,51 @@ struct VirtualizedClipStrip: NSViewRepresentable {
 
         private func refreshAfterPresentation() {
             guard let collectionView else { return }
+            if updateItemSizeIfPossible() {
+                collectionView.reloadData()
+            }
             collectionView.collectionViewLayout?.invalidateLayout()
             collectionView.layoutSubtreeIfNeeded()
             scrollToSelectedAfterLayout()
+        }
+
+        @discardableResult
+        private func updateItemSizeIfPossible() -> Bool {
+            guard let collectionView,
+                  let layout = collectionView.collectionViewLayout
+                    as? NSCollectionViewFlowLayout else { return false }
+            let scrollInsets = collectionView.enclosingScrollView?.contentInsets
+                ?? NSEdgeInsets()
+            let viewportHeight = collectionView.enclosingScrollView?.contentSize.height
+                ?? collectionView.bounds.height
+            let availableHeight = viewportHeight
+                - layout.sectionInset.top
+                - layout.sectionInset.bottom
+                - scrollInsets.top
+                - scrollInsets.bottom
+            guard availableHeight > 1 else { return false }
+            // The viewport loses roughly one scrollbar-width while AppKit
+            // completes its first collection layout. Reserve that transition
+            // only for the initial resolution; subsequent passes can use the
+            // final measured height directly.
+            let safetyMargin: CGFloat = effectiveCardHeight == 0 ? 16 : 1
+            let resolvedHeight = min(
+                cardHeight,
+                floor(availableHeight) - safetyMargin
+            )
+            guard resolvedHeight > 0 else { return false }
+            let newSize = NSSize(
+                width: Theme.cardWidth,
+                height: resolvedHeight
+            )
+            guard layout.itemSize != newSize else {
+                effectiveCardHeight = resolvedHeight
+                return false
+            }
+            effectiveCardHeight = resolvedHeight
+            layout.itemSize = newSize
+            layout.invalidateLayout()
+            return true
         }
 
         private func recordVisibleCellCount() {
