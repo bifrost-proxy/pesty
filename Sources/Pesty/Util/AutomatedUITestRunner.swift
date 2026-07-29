@@ -6,6 +6,7 @@ import Foundation
 @MainActor
 enum AutomatedUITestProbe {
     private(set) static var renderedTexts = Set<String>()
+    private(set) static var renderedItemIDs = Set<UUID>()
 
     static var isEnabled: Bool {
         ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"] != nil
@@ -13,10 +14,15 @@ enum AutomatedUITestProbe {
 
     static func reset() {
         renderedTexts.removeAll()
+        renderedItemIDs.removeAll()
     }
 
     static func record(_ item: ClipItem) {
-        guard isEnabled, let text = item.text else { return }
+        guard isEnabled else { return }
+        renderedItemIDs.insert(item.id)
+        guard ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"]
+                != "performance",
+              let text = item.text else { return }
         renderedTexts.insert(text)
     }
 }
@@ -36,6 +42,13 @@ enum AutomatedUITestRunner {
         let searchLength: Int
     }
 
+    private struct CleanupResult: Codable {
+        let phase: String
+        let success: Bool
+        let historyCount: Int
+        let removedCount: Int
+    }
+
     private struct PerformanceResult: Codable {
         let phase: String
         let success: Bool
@@ -50,6 +63,13 @@ enum AutomatedUITestRunner {
         let createdCellCount: Int
         let maximumVisibleCellCount: Int
         let maximumAllowedCells: Int
+        let hostingRootCreationCount: Int
+        let maximumHostingRootCreationCount: Int
+        let cellConfigurationCount: Int
+        let configuredItemCount: Int
+        let rapidScrollStepCount: Int
+        let previewBounded: Bool
+        let imageItemCount: Int
         let finalSelectedIndex: Int?
         let source: String
         let searchLength: Int
@@ -934,10 +954,35 @@ enum AutomatedUITestRunner {
     private static func runPerformanceTest(controller: AppController, runID: String) {
         let itemCount = 1_000
         let checkpointIndices = [0, 249, 499, 749, 999]
+        let includeImages = ProcessInfo.processInfo.environment[
+            "PESTY_PERFORMANCE_INCLUDE_IMAGES"
+        ] == "1"
+        controller.monitor.stop()
+        let syntheticImageData = includeImages ? makePerformanceImageData() : nil
         let items = (0..<itemCount).map { index in
-            ClipItem(
+            if includeImages,
+               index % 64 == 32,
+               let syntheticImageData,
+               let imageFileName = controller.store.storeImageData(
+                    syntheticImageData
+               ) {
+                return ClipItem(
+                    type: .image,
+                    imageFileName: imageFileName,
+                    imageHash: "pesty-performance-image-\(index)",
+                    sourceBundleID: "com.bifrostproxy.pesty.performance-test",
+                    sourceAppName: "Pesty Performance Test",
+                    createdAt: Date(timeIntervalSinceNow: -Double(index))
+                )
+            }
+            let prefix =
+                "pesty-performance-\(runID)-\(String(format: "%04d", index))"
+            let text = index % 250 == 0
+                ? prefix + String(repeating: "-long-preview", count: 13_000)
+                : prefix
+            return ClipItem(
                 type: .text,
-                text: "pesty-performance-\(runID)-\(String(format: "%04d", index))",
+                text: text,
                 sourceBundleID: "com.bifrostproxy.pesty.performance-test",
                 sourceAppName: "Pesty Performance Test",
                 createdAt: Date(timeIntervalSinceNow: -Double(index))
@@ -946,10 +991,12 @@ enum AutomatedUITestRunner {
         let expectedIDs = items.map(\.id)
         let expectedTexts = items.compactMap(\.text)
         let checkpointIDs = checkpointIndices.map { items[$0].id }
-        let checkpointTexts = checkpointIndices.compactMap { items[$0].text }
         let startedAt = Date()
+        let previewBounded = items.allSatisfy {
+            ClipCardPreview.text($0.text).count
+                <= ClipCardPreview.maximumCharacterCount + 1
+        }
 
-        controller.monitor.stop()
         AutomatedUITestProbe.reset()
         VirtualizedClipStripMetrics.reset()
         controller.store.replaceHistoryForAutomatedStripTest(items)
@@ -960,64 +1007,199 @@ enum AutomatedUITestRunner {
             checkpointIDs: checkpointIDs,
             controller: controller
         ) {
-            let history = controller.store.history
-            let visible = controller.store.visibleItems
-            let rendered = AutomatedUITestProbe.renderedTexts
-            let configured = VirtualizedClipStripMetrics.configuredItemIDs
-            let source: String
-            switch controller.store.source {
-            case .history:
-                source = "history"
-            case .pinboard:
-                source = "pinboard"
+            guard let collectionView = firstCollectionView() else {
+                finishPerformanceTest(
+                    controller: controller,
+                    items: items,
+                    expectedIDs: expectedIDs,
+                    expectedTexts: expectedTexts,
+                    checkpointIDs: checkpointIDs,
+                    checkpointIndices: checkpointIndices,
+                    startedAt: startedAt,
+                    previewBounded: previewBounded,
+                    rapidScrollStepCount: -1
+                )
+                return
             }
-            let maximumAllowedCells = 40
-            let maximumDurationMilliseconds = 6_000
-            let durationMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
-            let finalSelectedIndex = controller.store.selectedID.flatMap {
-                expectedIDs.firstIndex(of: $0)
+            performRapidScrollStress(in: collectionView) { stepCount in
+                finishPerformanceTest(
+                    controller: controller,
+                    items: items,
+                    expectedIDs: expectedIDs,
+                    expectedTexts: expectedTexts,
+                    checkpointIDs: checkpointIDs,
+                    checkpointIndices: checkpointIndices,
+                    startedAt: startedAt,
+                    previewBounded: previewBounded,
+                    rapidScrollStepCount: stepCount
+                )
             }
-            let persistedInOrder = history.map(\.id) == expectedIDs
-                && history.compactMap(\.text) == expectedTexts
-            let visibleInOrder = visible.map(\.id) == expectedIDs
-                && visible.compactMap(\.text) == expectedTexts
-            let renderedCheckpoints = checkpointTexts.filter(rendered.contains).count
-            let configuredCheckpoints = checkpointIDs.filter(configured.contains).count
-            let result = PerformanceResult(
-                phase: "performance",
-                success: history.count == itemCount
-                    && visible.count == itemCount
-                    && persistedInOrder
-                    && visibleInOrder
-                    && renderedCheckpoints == checkpointIndices.count
-                    && configuredCheckpoints == checkpointIndices.count
-                    && VirtualizedClipStripMetrics.createdCellCount <= maximumAllowedCells
-                    && VirtualizedClipStripMetrics.maximumVisibleCellCount <= maximumAllowedCells
-                    && finalSelectedIndex == checkpointIndices.last
-                    && source == "history"
-                    && controller.store.searchText.isEmpty
-                    && durationMilliseconds <= maximumDurationMilliseconds,
-                historyCount: history.count,
-                visibleCount: visible.count,
-                expectedCount: itemCount,
-                persistedInOrder: persistedInOrder,
-                visibleInOrder: visibleInOrder,
-                checkpointCount: checkpointIndices.count,
-                renderedCheckpoints: renderedCheckpoints,
-                configuredCheckpoints: configuredCheckpoints,
-                createdCellCount: VirtualizedClipStripMetrics.createdCellCount,
-                maximumVisibleCellCount: VirtualizedClipStripMetrics.maximumVisibleCellCount,
-                maximumAllowedCells: maximumAllowedCells,
-                finalSelectedIndex: finalSelectedIndex,
-                source: source,
-                searchLength: controller.store.searchText.count,
-                durationMilliseconds: durationMilliseconds,
-                maximumDurationMilliseconds: maximumDurationMilliseconds
-            )
+        }
+    }
 
-            controller.store.saveNow()
-            writePerformance(result)
-            exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+    private static func finishPerformanceTest(
+        controller: AppController,
+        items: [ClipItem],
+        expectedIDs: [UUID],
+        expectedTexts: [String],
+        checkpointIDs: [UUID],
+        checkpointIndices: [Int],
+        startedAt: Date,
+        previewBounded: Bool,
+        rapidScrollStepCount: Int
+    ) {
+        let history = controller.store.history
+        let visible = controller.store.visibleItems
+        let rendered = AutomatedUITestProbe.renderedItemIDs
+        let configured = VirtualizedClipStripMetrics.configuredItemIDs
+        let source: String
+        switch controller.store.source {
+        case .history:
+            source = "history"
+        case .pinboard:
+            source = "pinboard"
+        }
+        let maximumAllowedCells = 40
+        let maximumHostingRootCreationCount = 40
+        let maximumDurationMilliseconds = 6_000
+        let durationMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
+        let finalSelectedIndex = controller.store.selectedID.flatMap {
+            expectedIDs.firstIndex(of: $0)
+        }
+        let persistedInOrder = history.map(\.id) == expectedIDs
+            && history.compactMap(\.text) == expectedTexts
+        let visibleInOrder = visible.map(\.id) == expectedIDs
+            && visible.compactMap(\.text) == expectedTexts
+        let renderedCheckpoints = checkpointIDs.filter(rendered.contains).count
+        let configuredCheckpoints = checkpointIDs.filter(configured.contains).count
+        let result = PerformanceResult(
+            phase: "performance",
+            success: history.count == items.count
+                && visible.count == items.count
+                && persistedInOrder
+                && visibleInOrder
+                && renderedCheckpoints == checkpointIndices.count
+                && configuredCheckpoints == checkpointIndices.count
+                && configured.count == items.count
+                && rapidScrollStepCount > 0
+                && previewBounded
+                && VirtualizedClipStripMetrics.createdCellCount
+                    <= maximumAllowedCells
+                && VirtualizedClipStripMetrics.maximumVisibleCellCount
+                    <= maximumAllowedCells
+                && VirtualizedClipStripMetrics.hostingRootCreationCount
+                    <= maximumHostingRootCreationCount
+                && finalSelectedIndex == checkpointIndices.last
+                && source == "history"
+                && controller.store.searchText.isEmpty
+                && durationMilliseconds <= maximumDurationMilliseconds,
+            historyCount: history.count,
+            visibleCount: visible.count,
+            expectedCount: items.count,
+            persistedInOrder: persistedInOrder,
+            visibleInOrder: visibleInOrder,
+            checkpointCount: checkpointIndices.count,
+            renderedCheckpoints: renderedCheckpoints,
+            configuredCheckpoints: configuredCheckpoints,
+            createdCellCount: VirtualizedClipStripMetrics.createdCellCount,
+            maximumVisibleCellCount:
+                VirtualizedClipStripMetrics.maximumVisibleCellCount,
+            maximumAllowedCells: maximumAllowedCells,
+            hostingRootCreationCount:
+                VirtualizedClipStripMetrics.hostingRootCreationCount,
+            maximumHostingRootCreationCount: maximumHostingRootCreationCount,
+            cellConfigurationCount:
+                VirtualizedClipStripMetrics.cellConfigurationCount,
+            configuredItemCount: configured.count,
+            rapidScrollStepCount: rapidScrollStepCount,
+            previewBounded: previewBounded,
+            imageItemCount: items.filter { $0.type == .image }.count,
+            finalSelectedIndex: finalSelectedIndex,
+            source: source,
+            searchLength: controller.store.searchText.count,
+            durationMilliseconds: durationMilliseconds,
+            maximumDurationMilliseconds: maximumDurationMilliseconds
+        )
+
+        controller.store.saveNow()
+        writePerformance(result)
+        exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+    }
+
+    private static func performRapidScrollStress(
+        in collectionView: NSCollectionView,
+        attempt: Int = 0,
+        completion: @escaping @MainActor (Int) -> Void
+    ) {
+        collectionView.layoutSubtreeIfNeeded()
+        guard let scrollView = collectionView.enclosingScrollView else {
+            completion(-1)
+            return
+        }
+        let viewportWidth = scrollView.contentView.bounds.width
+        let contentWidth = collectionView.collectionViewLayout?
+            .collectionViewContentSize.width ?? collectionView.bounds.width
+        let maximumX = max(0, contentWidth - viewportWidth)
+        guard maximumX > 0 else {
+            if attempt < 10 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    performRapidScrollStress(
+                        in: collectionView,
+                        attempt: attempt + 1,
+                        completion: completion
+                    )
+                }
+                return
+            }
+            completion(-1)
+            return
+        }
+
+        let increment = max(Theme.cardWidth, viewportWidth * 0.95)
+        var forward: [CGFloat] = []
+        var position: CGFloat = 0
+        while position < maximumX {
+            forward.append(position)
+            position += increment
+        }
+        forward.append(maximumX)
+        let positions = Array(forward.reversed()) + forward
+
+        func visit(_ index: Int) {
+            guard index < positions.count else {
+                DispatchQueue.main.async {
+                    completion(positions.count)
+                }
+                return
+            }
+            var origin = scrollView.contentView.bounds.origin
+            origin.x = positions[index]
+            scrollView.contentView.scroll(to: origin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            collectionView.layoutSubtreeIfNeeded()
+            DispatchQueue.main.async {
+                visit(index + 1)
+            }
+        }
+        visit(0)
+    }
+
+    private static func makePerformanceImageData() -> Data? {
+        autoreleasepool {
+            guard let image = NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: 1_024,
+                pixelsHigh: 1_024,
+                bitsPerSample: 8,
+                samplesPerPixel: 4,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: .deviceRGB,
+                bytesPerRow: 0,
+                bitsPerPixel: 0
+            ), let bitmapData = image.bitmapData else { return nil }
+            memset(bitmapData, 0x7f, image.bytesPerRow * image.pixelsHigh)
+            return image.representation(using: .png, properties: [:])
         }
     }
 
@@ -1285,13 +1467,13 @@ enum AutomatedUITestRunner {
         completion: @escaping @MainActor () -> Void
     ) {
         guard position < checkpointIDs.count else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                 completion()
             }
             return
         }
         controller.store.selectedID = checkpointIDs[position]
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
             visitCheckpoint(
                 at: position + 1,
                 checkpointIDs: checkpointIDs,
@@ -1361,7 +1543,21 @@ enum AutomatedUITestRunner {
 
             controller.store.saveNow()
             if ProcessInfo.processInfo.environment["PESTY_AUTOMATED_TEST_CLEANUP"] == "1" {
+                let historyCountBeforeCleanup = controller.store.history.count
                 controller.store.removeAutomatedTestItems(withTexts: Set(expected))
+                let cleanupResult = CleanupResult(
+                    phase: "cleanup",
+                    success: expected.allSatisfy {
+                        expectedText in
+                        !controller.store.history.contains {
+                            $0.text == expectedText
+                        }
+                    },
+                    historyCount: controller.store.history.count,
+                    removedCount: historyCountBeforeCleanup
+                        - controller.store.history.count
+                )
+                writeCleanup(cleanupResult)
             }
             if let originalItems {
                 restore(originalItems, to: .general)
@@ -1403,6 +1599,17 @@ enum AutomatedUITestRunner {
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(result) else { return }
         FileHandle.standardOutput.write(Data("AUTOMATED_UI_TEST_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeCleanup(_ result: CleanupResult) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(
+            Data("AUTOMATED_UI_TEST_CLEANUP_RESULT ".utf8)
+        )
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data("\n".utf8))
     }

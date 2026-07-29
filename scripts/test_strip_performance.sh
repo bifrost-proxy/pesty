@@ -4,6 +4,8 @@ cd "$(dirname "$0")/.."
 
 binary="${1:-.build/release/Pesty}"
 maximum_rss_bytes="${PESTY_MAX_RSS_BYTES:-100000000}"
+maximum_footprint_bytes="${PESTY_MAX_FOOTPRINT_BYTES:-100000000}"
+include_images="${PESTY_PERFORMANCE_INCLUDE_IMAGES:-0}"
 
 if [[ ! -x "$binary" ]]; then
   echo "Performance test binary is missing or not executable: $binary" >&2
@@ -25,6 +27,7 @@ env \
   PESTY_AUTOMATED_TEST_DATA_DIR="$test_dir/data" \
   PESTY_AUTOMATED_UI_TEST=performance \
   PESTY_AUTOMATED_TEST_ID="$run_id" \
+  PESTY_PERFORMANCE_INCLUDE_IMAGES="$include_images" \
   /usr/bin/time -l "$binary" -historyLimit 5000 >"$output_file" 2>"$time_file"
 app_exit_code=$?
 set -e
@@ -63,6 +66,17 @@ if (( max_rss > maximum_rss_bytes )); then
   exit 1
 fi
 
+if [[ -z "$peak_footprint" ]] || ! [[ "$peak_footprint" =~ ^[0-9]+$ ]]; then
+  echo "Unable to read peak memory footprint from /usr/bin/time." >&2
+  exit 1
+fi
+
+if (( peak_footprint > maximum_footprint_bytes )); then
+  echo "$result_line"
+  echo "Peak footprint $peak_footprint exceeds the $maximum_footprint_bytes byte limit." >&2
+  exit 1
+fi
+
 persisted_count="$(jq -r '.history | length' "$test_dir/data/store.json")"
 if [[ "$persisted_count" != "1000" ]]; then
   echo "Persisted store contains $persisted_count items instead of 1000." >&2
@@ -70,4 +84,4 @@ if [[ "$persisted_count" != "1000" ]]; then
 fi
 
 echo "$result_line"
-echo "PERFORMANCE_MEMORY_RESULT {\"maximumRSSBytes\":$max_rss,\"peakFootprintBytes\":${peak_footprint:-0},\"limitBytes\":$maximum_rss_bytes}"
+echo "PERFORMANCE_MEMORY_RESULT {\"maximumRSSBytes\":$max_rss,\"peakFootprintBytes\":$peak_footprint,\"rssLimitBytes\":$maximum_rss_bytes,\"footprintLimitBytes\":$maximum_footprint_bytes,\"includesImages\":$include_images}"
