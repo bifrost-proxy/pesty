@@ -26,7 +26,9 @@ struct ClipThumbnailView: View {
         .task(id: item.imageFileName) {
             image = nil
             guard let url = ClipboardStore.shared.imageURL(for: item) else { return }
-            image = await ClipThumbnailProvider.shared.thumbnail(for: url)
+            let thumbnail = await ClipThumbnailProvider.shared.thumbnail(for: url)
+            guard !Task.isCancelled else { return }
+            image = thumbnail
         }
     }
 }
@@ -36,11 +38,11 @@ private final class ClipThumbnailProvider {
     static let shared = ClipThumbnailProvider()
 
     private let cache = NSCache<NSString, NSImage>()
-    private var inFlight: [String: Task<CGImage?, Never>] = [:]
+    private let decoder = ClipThumbnailDecoder()
 
     private init() {
-        cache.countLimit = 64
-        cache.totalCostLimit = 8_000_000
+        cache.countLimit = 8
+        cache.totalCostLimit = 4_000_000
     }
 
     func thumbnail(for url: URL) async -> NSImage? {
@@ -49,36 +51,8 @@ private final class ClipThumbnailProvider {
             return cached
         }
 
-        let path = url.path
-        let task: Task<CGImage?, Never>
-        if let existing = inFlight[path] {
-            task = existing
-        } else {
-            task = Task.detached(priority: .utility) {
-                autoreleasepool {
-                    guard let source = CGImageSourceCreateWithURL(
-                        URL(fileURLWithPath: path) as CFURL,
-                        nil
-                    ) else { return nil }
-                    let options: [CFString: Any] = [
-                        kCGImageSourceCreateThumbnailFromImageAlways: true,
-                        kCGImageSourceCreateThumbnailWithTransform: true,
-                        kCGImageSourceShouldCacheImmediately: true,
-                        kCGImageSourceThumbnailMaxPixelSize: 512
-                    ]
-                    return CGImageSourceCreateThumbnailAtIndex(
-                        source,
-                        0,
-                        options as CFDictionary
-                    )
-                }
-            }
-            inFlight[path] = task
-        }
-
-        let cgImage = await task.value
-        inFlight[path] = nil
-        guard let cgImage else { return nil }
+        guard let cgImage = await decoder.thumbnail(at: url),
+              !Task.isCancelled else { return nil }
 
         let image = NSImage(
             cgImage: cgImage,
@@ -90,5 +64,71 @@ private final class ClipThumbnailProvider {
             cost: cgImage.bytesPerRow * cgImage.height
         )
         return image
+    }
+}
+
+private final class ClipThumbnailRequest: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
+    }
+}
+
+private final class ClipThumbnailDecoder: @unchecked Sendable {
+    private let queue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "com.bifrostproxy.pesty.thumbnail-decoder"
+        queue.qualityOfService = .utility
+        queue.maxConcurrentOperationCount = 2
+        return queue
+    }()
+
+    func thumbnail(at url: URL) async -> CGImage? {
+        let request = ClipThumbnailRequest()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                queue.addOperation {
+                    guard !request.isCancelled else {
+                        continuation.resume(returning: nil)
+                        return
+                    }
+                    let image = autoreleasepool {
+                        Self.decodeThumbnail(at: url)
+                    }
+                    continuation.resume(
+                        returning: request.isCancelled ? nil : image
+                    )
+                }
+            }
+        } onCancel: {
+            request.cancel()
+        }
+    }
+
+    private static func decodeThumbnail(at url: URL) -> CGImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+            return nil
+        }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: 512
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(
+            source,
+            0,
+            options as CFDictionary
+        )
     }
 }
