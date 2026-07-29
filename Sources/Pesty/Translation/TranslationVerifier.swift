@@ -192,12 +192,10 @@ enum TranslationVerifier {
         }
         let defaultTranslationHeight =
             AssistantPopoverLayout.preferredTranslationHeight(
-                sourceText: syntheticText,
                 translation: "Short translation"
             )
         let expandedTranslationHeight =
             AssistantPopoverLayout.preferredTranslationHeight(
-                sourceText: syntheticText,
                 translation: String(
                     repeating: "This translated paragraph should grow the popover height. ",
                     count: 18
@@ -205,7 +203,6 @@ enum TranslationVerifier {
             )
         let cappedTranslationHeight =
             AssistantPopoverLayout.preferredTranslationHeight(
-                sourceText: syntheticText,
                 translation: String(repeating: "Long translation ", count: 800)
             )
         let translationPopoverGrowsAndCapsHeight =

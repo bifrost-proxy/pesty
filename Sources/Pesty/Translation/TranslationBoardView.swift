@@ -16,7 +16,6 @@ struct TranslationBoardView: View {
         .frame(
             width: AssistantPopoverLayout.width,
             height: AssistantPopoverLayout.preferredTranslationHeight(
-                sourceText: center.sourceText,
                 translation: center.translatedText
             )
         )
@@ -26,7 +25,6 @@ struct TranslationBoardView: View {
             updatePopoverHeight()
             AutomatedUITestProbe.recordTranslationBoard()
         }
-        .onChange(of: center.sourceText) { updatePopoverHeight() }
         .onChange(of: center.translatedText) { updatePopoverHeight() }
     }
 
@@ -173,15 +171,6 @@ struct TranslationBoardView: View {
 
     private var translationResult: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(center.sourceText)
-                .font(.system(size: 12))
-                .foregroundStyle(palette.textSecondary.swiftUIColor)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(palette.fieldBackground.swiftUIColor, in: RoundedRectangle(cornerRadius: 9))
             HStack {
                 Text(targetTitle)
                     .font(.system(size: 13, weight: .semibold))
@@ -313,7 +302,6 @@ struct TranslationBoardView: View {
     private func updatePopoverHeight() {
         AssistantPopoverController.shared.updatePreferredHeight(
             AssistantPopoverLayout.preferredTranslationHeight(
-                sourceText: center.sourceText,
                 translation: center.translatedText
             ),
             for: .translation

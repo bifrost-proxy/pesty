@@ -23,30 +23,16 @@ enum AssistantPopoverLayout {
     }
 
     /// Translation starts tall enough for ordinary multi-line output, grows
-    /// with the rendered source and result, and scrolls only after reaching the
-    /// reading limit.
+    /// with the rendered result, and scrolls only after reaching the reading
+    /// limit. The source already exists on the anchored clipboard card and is
+    /// intentionally not repeated inside the popover.
     static func preferredTranslationHeight(
-        sourceText: String,
         translation: String
     ) -> CGFloat {
         guard !translation.isEmpty else { return translationDefaultHeight }
 
-        let sourceFont = NSFont.systemFont(ofSize: 12)
         let bodyFont = NSFont.systemFont(ofSize: 15)
         let textWidth = width - 28
-        let sourceLineHeight = lineHeight(for: sourceFont)
-        let sourceTextHeight = min(
-            sourceLineHeight * 2,
-            measuredHeight(
-                for: sourceText,
-                font: sourceFont,
-                width: textWidth - 20
-            )
-        )
-        let sourcePreviewHeight = max(
-            sourceLineHeight,
-            sourceTextHeight
-        ) + 14
         let translationHeight = max(
             lineHeight(for: bodyFont),
             measuredHeight(
@@ -55,9 +41,8 @@ enum AssistantPopoverLayout {
                 width: textWidth
             )
         )
-        let chromeHeight: CGFloat = 44 + 1 + 28 + 24 + 18 + 18
-        let naturalHeight =
-            chromeHeight + sourcePreviewHeight + translationHeight
+        let chromeHeight: CGFloat = 44 + 1 + 28 + 16 + 18 + 18
+        let naturalHeight = chromeHeight + translationHeight
         return min(
             translationMaximumHeight,
             max(translationDefaultHeight, ceil(naturalHeight))
