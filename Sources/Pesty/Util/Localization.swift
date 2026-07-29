@@ -364,6 +364,21 @@ enum L10n {
     }
     static var image: String { text("Image", "图片") }
     static var color: String { text("Color", "颜色") }
+    static var previewUnavailable: String {
+        text(
+            "A preview is not available for this clipboard item.",
+            "无法预览这条剪贴板内容。"
+        )
+    }
+    static var previewFileUnavailable: String {
+        text(
+            "The original file is no longer available.",
+            "原始文件已不存在或暂时无法访问。"
+        )
+    }
+    static var revealInFinder: String {
+        text("Show in Finder", "在 Finder 中显示")
+    }
     static func characterCount(_ count: Int) -> String {
         currentLanguage == .chinese ? "\(count) 个字符" : "\(count) characters"
     }

@@ -185,6 +185,42 @@ enum AutomatedUITestRunner {
         let longChineseQueryFits: Bool
     }
 
+    private struct PreviewResult: Codable {
+        let phase: String
+        let success: Bool
+        let textObservedIndex: Int?
+        let textObservedKind: String?
+        let textObservedCharacterCount: Int
+        let richTextRendered: Bool
+        let fileObservedIndex: Int?
+        let fileObservedKind: String?
+        let textPreviewWithinScreen: Bool
+        let richTextPreviewWithinScreen: Bool
+        let imagePreviewWithinScreen: Bool
+        let filePreviewWithinScreen: Bool
+        let previewAvoidedSelectedCards: Bool
+        let arrowTrackedSelection: Bool
+        let titleHeaderRemoved: Bool
+        let translucentBackground: Bool
+        let spaceOpenedPreview: Bool
+        let textWasComplete: Bool
+        let longTextNeededVerticalScrolling: Bool
+        let previewStayedWithinScreen: Bool
+        let rightArrowConsumed: Bool
+        let imageSelectionUpdatedPreview: Bool
+        let imageDecoded: Bool
+        let imageDecodeStayedBounded: Bool
+        let fileSelectionUpdatedPreview: Bool
+        let quickLookURLMatched: Bool
+        let escapeClosedPreview: Bool
+        let spaceReopenedPreview: Bool
+        let secondSpaceClosedPreview: Bool
+        let printableKeyClosedPreview: Bool
+        let printableKeyActivatedSearch: Bool
+        let contentIndexRebuildCount: Int
+        let maximumContentIndexRebuildCount: Int
+    }
+
     private struct QuickPasteResult: Codable {
         let phase: String
         let success: Bool
@@ -265,6 +301,10 @@ enum AutomatedUITestRunner {
             runSearchInputTest(controller: controller)
             return
         }
+        if phase == "preview" {
+            runPreviewTest(controller: controller, runID: runID)
+            return
+        }
         let expected = (1...4).map { "pesty-auto-\(runID)-\($0)" }
 
         AutomatedUITestProbe.reset()
@@ -342,9 +382,15 @@ enum AutomatedUITestRunner {
         controller.showBar()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            let barWindow = NSApp.windows.first(where: { $0 is BarPanel })
+            if let barWindow {
+                NSApp.activate(ignoringOtherApps: true)
+                barWindow.makeKeyAndOrderFront(nil)
+            }
             let focusEvent = makeKeyEvent(
                 keyCode: UInt16(kVK_ANSI_A),
-                characters: "a"
+                characters: "a",
+                windowNumber: barWindow?.windowNumber ?? 0
             )
             let firstEventConsumedForReplay = focusEvent.map {
                 controller.handleKey($0) == nil
@@ -352,9 +398,9 @@ enum AutomatedUITestRunner {
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                 let textFieldCount = descendantViews(
-                    of: NSApp.keyWindow?.contentView
+                    of: barWindow?.contentView
                 ).compactMap { $0 as? NSTextField }.count
-                let editor = NSApp.keyWindow?.firstResponder as? NSTextView
+                let editor = barWindow?.firstResponder as? NSTextView
                 let firstKeyboardEventReplayed =
                     firstEventConsumedForReplay && controller.store.searchText == "a"
                 controller.store.searchText = ""
@@ -366,7 +412,8 @@ enum AutomatedUITestRunner {
                 let markedTextActive = editor?.hasMarkedText() == true
                 let event = makeKeyEvent(
                     keyCode: UInt16(kVK_LeftArrow),
-                    characters: "\u{F702}"
+                    characters: "\u{F702}",
+                    windowNumber: barWindow?.windowNumber ?? 0
                 )
                 let returnedEvent = event.flatMap { controller.handleKey($0) }
                 let compositionEventPassedThrough =
@@ -400,6 +447,397 @@ enum AutomatedUITestRunner {
                 exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
             }
         }
+    }
+
+    private static func runPreviewTest(
+        controller: AppController,
+        runID: String
+    ) {
+        guard let testBase = ClipboardStore.automatedTestBase,
+              let imageData = makePreviewImageData(),
+              let imageFileName = controller.store.storeImageData(imageData)
+        else {
+            writePreview(failedPreviewResult())
+            exit(EXIT_FAILURE)
+        }
+
+        let longText = (0..<2_000)
+            .map { "pesty-preview-\(runID)-line-\($0)" }
+            .joined(separator: "\n")
+        let richText = "Pesty rich text preview \(runID)"
+        let richAttributed = NSAttributedString(
+            string: richText,
+            attributes: [
+                .font: NSFont.boldSystemFont(ofSize: 18),
+                .foregroundColor: NSColor.systemBlue,
+            ]
+        )
+        guard let richData = try? richAttributed.data(
+            from: NSRange(location: 0, length: richAttributed.length),
+            documentAttributes: [
+                .documentType: NSAttributedString.DocumentType.rtf,
+            ]
+        ) else {
+            writePreview(failedPreviewResult())
+            exit(EXIT_FAILURE)
+        }
+        let fileURL = testBase.appendingPathComponent(
+            "pesty-preview-\(runID).txt"
+        )
+        do {
+            try Data("Pesty Quick Look preview fixture".utf8).write(
+                to: fileURL,
+                options: .atomic
+            )
+        } catch {
+            writePreview(failedPreviewResult())
+            exit(EXIT_FAILURE)
+        }
+
+        let items = [
+            ClipItem(
+                type: .text,
+                text: longText,
+                sourceBundleID: "com.bifrostproxy.pesty.preview-test",
+                sourceAppName: "Pesty Preview Test",
+                createdAt: Date()
+            ),
+            ClipItem(
+                type: .richText,
+                text: richText,
+                rtfData: richData,
+                sourceBundleID: "com.bifrostproxy.pesty.preview-test",
+                sourceAppName: "Pesty Preview Test",
+                createdAt: Date(timeIntervalSinceNow: -1)
+            ),
+            ClipItem(
+                type: .image,
+                imageFileName: imageFileName,
+                imageHash: "pesty-preview-image-\(runID)",
+                sourceBundleID: "com.bifrostproxy.pesty.preview-test",
+                sourceAppName: "Pesty Preview Test",
+                createdAt: Date(timeIntervalSinceNow: -2)
+            ),
+            ClipItem(
+                type: .file,
+                text: fileURL.lastPathComponent,
+                fileURLs: [fileURL.absoluteString],
+                sourceBundleID: "com.bifrostproxy.pesty.preview-test",
+                sourceAppName: "Pesty Preview Test",
+                createdAt: Date(timeIntervalSinceNow: -3)
+            ),
+        ]
+
+        controller.monitor.stop()
+        AutomatedUITestProbe.reset()
+        VirtualizedClipStripMetrics.reset()
+        controller.store.replaceHistoryForAutomatedStripTest(items)
+        controller.showBar()
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 700_000_000)
+
+            let space = makeKeyEvent(
+                keyCode: UInt16(kVK_Space),
+                characters: " "
+            )
+            let spaceConsumed = space.map {
+                controller.handleKey($0) == nil
+            } ?? false
+            try? await Task.sleep(nanoseconds: 250_000_000)
+
+            let textSnapshot =
+                ClipPreviewWindowController.shared.automationSnapshot()
+            let spaceOpenedPreview =
+                spaceConsumed
+                && textSnapshot.isVisible
+                && textSnapshot.itemID == items[0].id
+                && textSnapshot.contentKind == .text
+            let textWasComplete =
+                textSnapshot.textCharacterCount == longText.count
+            let longTextNeededVerticalScrolling =
+                textSnapshot.textNeedsVerticalScrolling
+            let textPreviewWithinScreen =
+                previewSnapshotIsWithinScreen(textSnapshot)
+
+            let right = makeKeyEvent(
+                keyCode: UInt16(kVK_RightArrow),
+                characters: "\u{F703}"
+            )
+            let firstRightConsumed = right.map {
+                controller.handleKey($0) == nil
+            } ?? false
+            try? await Task.sleep(nanoseconds: 300_000_000)
+
+            let richTextSnapshot =
+                ClipPreviewWindowController.shared.automationSnapshot()
+            let richTextRendered =
+                richTextSnapshot.isVisible
+                && richTextSnapshot.itemID == items[1].id
+                && richTextSnapshot.contentKind == .text
+                && richTextSnapshot.textCharacterCount == richText.count
+            let richTextPreviewWithinScreen =
+                previewSnapshotIsWithinScreen(richTextSnapshot)
+
+            let secondRightConsumed = right.map {
+                controller.handleKey($0) == nil
+            } ?? false
+            try? await Task.sleep(nanoseconds: 700_000_000)
+
+            let imageSnapshot =
+                ClipPreviewWindowController.shared.automationSnapshot()
+            let imagePreviewWithinScreen =
+                previewSnapshotIsWithinScreen(imageSnapshot)
+            let imageSelectionUpdatedPreview =
+                imageSnapshot.isVisible
+                && imageSnapshot.itemID == items[2].id
+                && imageSnapshot.contentKind == .image
+            let imageDecoded =
+                imageSnapshot.imageSourcePixelSize != nil
+                && imageSnapshot.imageDecodedPixelSize != nil
+            let imageDecodeStayedBounded: Bool
+            if let source = imageSnapshot.imageSourcePixelSize,
+               let decoded = imageSnapshot.imageDecodedPixelSize {
+                imageDecodeStayedBounded =
+                    decoded.width <= source.width
+                    && decoded.height <= source.height
+                    && (decoded.width < source.width
+                        || decoded.height < source.height)
+                    && decoded.width <= 2_048
+                    && decoded.height <= 2_048
+            } else {
+                imageDecodeStayedBounded = false
+            }
+
+            let thirdRightConsumed = right.map {
+                controller.handleKey($0) == nil
+            } ?? false
+            try? await Task.sleep(nanoseconds: 500_000_000)
+
+            let fileSnapshot =
+                ClipPreviewWindowController.shared.automationSnapshot()
+            let filePreviewWithinScreen =
+                previewSnapshotIsWithinScreen(fileSnapshot)
+            let previewSnapshots = [
+                textSnapshot,
+                richTextSnapshot,
+                imageSnapshot,
+                fileSnapshot,
+            ]
+            let previewAvoidedSelectedCards =
+                previewSnapshots.allSatisfy(
+                    previewSnapshotAvoidsSelectedCard
+                )
+            let arrowTrackedSelection =
+                previewSnapshots.allSatisfy(
+                    previewSnapshotArrowPointsToSelectedCard
+                )
+            let titleHeaderRemoved =
+                previewSnapshots.allSatisfy { !$0.hasTitleHeader }
+            let translucentBackground =
+                previewSnapshots.allSatisfy(\.usesTranslucentBackground)
+            let previewStayedWithinScreen =
+                textPreviewWithinScreen
+                && richTextPreviewWithinScreen
+                && imagePreviewWithinScreen
+                && filePreviewWithinScreen
+            let fileSelectionUpdatedPreview =
+                fileSnapshot.isVisible
+                && fileSnapshot.itemID == items[3].id
+                && fileSnapshot.contentKind == .quickLook
+            let quickLookURLMatched =
+                fileSnapshot.quickLookURL?.standardizedFileURL
+                == fileURL.standardizedFileURL
+
+            let escape = makeKeyEvent(
+                keyCode: UInt16(kVK_Escape),
+                characters: "\u{1B}"
+            )
+            let escapeConsumed = escape.map {
+                controller.handleKey($0) == nil
+            } ?? false
+            let escapeClosedPreview =
+                escapeConsumed
+                && !ClipPreviewWindowController.shared.isVisible
+
+            _ = space.map { controller.handleKey($0) }
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            let spaceReopenedPreview =
+                ClipPreviewWindowController.shared.isVisible
+            _ = space.map { controller.handleKey($0) }
+            let secondSpaceClosedPreview =
+                !ClipPreviewWindowController.shared.isVisible
+
+            let contentIndexRebuildCount =
+                VirtualizedClipStripMetrics.contentIndexRebuildCount
+            _ = space.map { controller.handleKey($0) }
+            let printable = makeKeyEvent(
+                keyCode: UInt16(kVK_ANSI_A),
+                characters: "a"
+            )
+            let printableConsumed = printable.map {
+                controller.handleKey($0) == nil
+            } ?? false
+            let printableKeyClosedPreview =
+                printableConsumed
+                && !ClipPreviewWindowController.shared.isVisible
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            let printableKeyActivatedSearch =
+                controller.store.searchText == "a"
+                && controller.store.isSearchFieldActive
+
+            let maximumContentIndexRebuildCount = 1
+            let rightArrowConsumed =
+                firstRightConsumed
+                && secondRightConsumed
+                && thirdRightConsumed
+            let result = PreviewResult(
+                phase: "preview",
+                success:
+                    spaceOpenedPreview
+                    && textWasComplete
+                    && longTextNeededVerticalScrolling
+                    && richTextRendered
+                    && previewStayedWithinScreen
+                    && previewAvoidedSelectedCards
+                    && arrowTrackedSelection
+                    && titleHeaderRemoved
+                    && translucentBackground
+                    && rightArrowConsumed
+                    && imageSelectionUpdatedPreview
+                    && imageDecoded
+                    && imageDecodeStayedBounded
+                    && fileSelectionUpdatedPreview
+                    && quickLookURLMatched
+                    && escapeClosedPreview
+                    && spaceReopenedPreview
+                    && secondSpaceClosedPreview
+                    && printableKeyClosedPreview
+                    && printableKeyActivatedSearch
+                    && contentIndexRebuildCount
+                        <= maximumContentIndexRebuildCount,
+                textObservedIndex: textSnapshot.itemID.flatMap {
+                    id in items.firstIndex(where: { $0.id == id })
+                },
+                textObservedKind: textSnapshot.contentKind?.rawValue,
+                textObservedCharacterCount:
+                    textSnapshot.textCharacterCount,
+                richTextRendered: richTextRendered,
+                fileObservedIndex: fileSnapshot.itemID.flatMap {
+                    id in items.firstIndex(where: { $0.id == id })
+                },
+                fileObservedKind: fileSnapshot.contentKind?.rawValue,
+                textPreviewWithinScreen: textPreviewWithinScreen,
+                richTextPreviewWithinScreen:
+                    richTextPreviewWithinScreen,
+                imagePreviewWithinScreen: imagePreviewWithinScreen,
+                filePreviewWithinScreen: filePreviewWithinScreen,
+                previewAvoidedSelectedCards:
+                    previewAvoidedSelectedCards,
+                arrowTrackedSelection: arrowTrackedSelection,
+                titleHeaderRemoved: titleHeaderRemoved,
+                translucentBackground: translucentBackground,
+                spaceOpenedPreview: spaceOpenedPreview,
+                textWasComplete: textWasComplete,
+                longTextNeededVerticalScrolling:
+                    longTextNeededVerticalScrolling,
+                previewStayedWithinScreen: previewStayedWithinScreen,
+                rightArrowConsumed: rightArrowConsumed,
+                imageSelectionUpdatedPreview:
+                    imageSelectionUpdatedPreview,
+                imageDecoded: imageDecoded,
+                imageDecodeStayedBounded: imageDecodeStayedBounded,
+                fileSelectionUpdatedPreview:
+                    fileSelectionUpdatedPreview,
+                quickLookURLMatched: quickLookURLMatched,
+                escapeClosedPreview: escapeClosedPreview,
+                spaceReopenedPreview: spaceReopenedPreview,
+                secondSpaceClosedPreview: secondSpaceClosedPreview,
+                printableKeyClosedPreview: printableKeyClosedPreview,
+                printableKeyActivatedSearch: printableKeyActivatedSearch,
+                contentIndexRebuildCount: contentIndexRebuildCount,
+                maximumContentIndexRebuildCount:
+                    maximumContentIndexRebuildCount
+            )
+            controller.closePreview()
+            controller.store.saveNow()
+            writePreview(result)
+            exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+        }
+    }
+
+    private static func previewSnapshotIsWithinScreen(
+        _ snapshot: ClipPreviewAutomationSnapshot
+    ) -> Bool {
+        guard snapshot.isVisible,
+              !snapshot.windowFrame.isEmpty else {
+            return false
+        }
+        return NSScreen.screens.contains {
+            $0.visibleFrame.insetBy(dx: -1, dy: -1)
+                .contains(snapshot.windowFrame)
+        }
+    }
+
+    private static func previewSnapshotAvoidsSelectedCard(
+        _ snapshot: ClipPreviewAutomationSnapshot
+    ) -> Bool {
+        guard snapshot.isVisible,
+              let cardFrame = snapshot.cardFrameInScreen else {
+            return false
+        }
+        return snapshot.windowFrame.minY >= cardFrame.maxY
+    }
+
+    private static func previewSnapshotArrowPointsToSelectedCard(
+        _ snapshot: ClipPreviewAutomationSnapshot
+    ) -> Bool {
+        guard let cardFrame = snapshot.cardFrameInScreen,
+              let arrowTip = snapshot.arrowTipInScreen else {
+            return false
+        }
+        return arrowTip.x >= cardFrame.minX - 1
+            && arrowTip.x <= cardFrame.maxX + 1
+            && arrowTip.y >= cardFrame.maxY
+            && arrowTip.y <= cardFrame.maxY + 8
+    }
+
+    private static func failedPreviewResult() -> PreviewResult {
+        PreviewResult(
+            phase: "preview",
+            success: false,
+            textObservedIndex: nil,
+            textObservedKind: nil,
+            textObservedCharacterCount: 0,
+            richTextRendered: false,
+            fileObservedIndex: nil,
+            fileObservedKind: nil,
+            textPreviewWithinScreen: false,
+            richTextPreviewWithinScreen: false,
+            imagePreviewWithinScreen: false,
+            filePreviewWithinScreen: false,
+            previewAvoidedSelectedCards: false,
+            arrowTrackedSelection: false,
+            titleHeaderRemoved: false,
+            translucentBackground: false,
+            spaceOpenedPreview: false,
+            textWasComplete: false,
+            longTextNeededVerticalScrolling: false,
+            previewStayedWithinScreen: false,
+            rightArrowConsumed: false,
+            imageSelectionUpdatedPreview: false,
+            imageDecoded: false,
+            imageDecodeStayedBounded: false,
+            fileSelectionUpdatedPreview: false,
+            quickLookURLMatched: false,
+            escapeClosedPreview: false,
+            spaceReopenedPreview: false,
+            secondSpaceClosedPreview: false,
+            printableKeyClosedPreview: false,
+            printableKeyActivatedSearch: false,
+            contentIndexRebuildCount: -1,
+            maximumContentIndexRebuildCount: 1
+        )
     }
 
     private static func descendantViews(of root: NSView?) -> [NSView] {
@@ -935,14 +1373,15 @@ enum AutomatedUITestRunner {
     private static func makeKeyEvent(
         keyCode: UInt16,
         characters: String,
-        modifierFlags: NSEvent.ModifierFlags = []
+        modifierFlags: NSEvent.ModifierFlags = [],
+        windowNumber: Int = 0
     ) -> NSEvent? {
         NSEvent.keyEvent(
             with: .keyDown,
             location: .zero,
             modifierFlags: modifierFlags,
             timestamp: 0,
-            windowNumber: 0,
+            windowNumber: windowNumber,
             context: nil,
             characters: characters,
             charactersIgnoringModifiers: characters,
@@ -1199,6 +1638,25 @@ enum AutomatedUITestRunner {
                 bitsPerPixel: 0
             ), let bitmapData = image.bitmapData else { return nil }
             memset(bitmapData, 0x7f, image.bytesPerRow * image.pixelsHigh)
+            return image.representation(using: .png, properties: [:])
+        }
+    }
+
+    private static func makePreviewImageData() -> Data? {
+        autoreleasepool {
+            guard let image = NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: 2_048,
+                pixelsHigh: 2_048,
+                bitsPerSample: 8,
+                samplesPerPixel: 4,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: .deviceRGB,
+                bytesPerRow: 0,
+                bitsPerPixel: 0
+            ), let bitmapData = image.bitmapData else { return nil }
+            memset(bitmapData, 0x5f, image.bytesPerRow * image.pixelsHigh)
             return image.representation(using: .png, properties: [:])
         }
     }
@@ -1664,6 +2122,17 @@ enum AutomatedUITestRunner {
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(result) else { return }
         FileHandle.standardOutput.write(Data("AUTOMATED_SEARCH_INPUT_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writePreview(_ result: PreviewResult) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(
+            Data("AUTOMATED_PREVIEW_RESULT ".utf8)
+        )
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data("\n".utf8))
     }

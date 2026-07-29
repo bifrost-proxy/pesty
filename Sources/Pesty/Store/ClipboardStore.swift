@@ -349,7 +349,12 @@ final class ClipboardStore {
         let environment = ProcessInfo.processInfo.environment
         let phase = environment["PESTY_AUTOMATED_UI_TEST"]
         guard ClipboardStore.automatedTestBase != nil,
-              phase == "performance" || phase == "mouse-selection" else { return }
+              phase == "performance"
+                || phase == "mouse-selection"
+                || phase == "preview"
+        else {
+            return
+        }
         history = items
         pinboards = []
         source = .history
