@@ -50,6 +50,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         HotKeyCenter.shared.onTrigger = { [weak self] in self?.toggleBar() }
         HotKeyCenter.shared.start()
+        startKeyMonitor()
 
         updateStatusItemVisibility()
         languageObserver = NotificationCenter.default.addObserver(
@@ -172,6 +173,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         AccessibilitySettingsGuideController.shared.dismiss()
 #endif
         store.saveNow()
+        stopKeyMonitor()
     }
 
     private func setupStatusItem() {
@@ -414,13 +416,9 @@ final class AppController: NSObject, NSApplicationDelegate {
             barController = BarWindowController()
         }
         barController?.show()
-        if ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"] == nil {
-            startKeyMonitor()
-        }
     }
 
     func hideBar(completion: (() -> Void)? = nil) {
-        stopKeyMonitor()
         TranslationCenter.shared.dismiss()
         ExplanationCenter.shared.dismiss()
         ClipPreviewWindowController.shared.dismiss()
@@ -1007,6 +1005,13 @@ final class AppController: NSObject, NSApplicationDelegate {
         ) {
             toggleExplanationBoard()
             return nil
+        }
+
+        // Keep the monitor alive so the assistant shortcuts work from Pesty's
+        // Settings window, but never route normal panel navigation while the
+        // clipboard bar itself is hidden.
+        guard barController?.window?.isVisible == true else {
+            return event
         }
 
         if TranslationCenter.shared.isPresented {

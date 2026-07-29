@@ -123,6 +123,13 @@ enum TranslationProviderResolver {
                 : .unavailable(L10n.doubaoTranslationNeedsConfiguration)
         }
     }
+
+    static func shouldFallbackFromApple(
+        selected: TranslationService,
+        hasDoubaoConfiguration: Bool
+    ) -> Bool {
+        selected == .automatic && hasDoubaoConfiguration
+    }
 }
 
 enum TranslationShortcut {

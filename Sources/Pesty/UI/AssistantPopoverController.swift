@@ -187,10 +187,16 @@ final class AssistantPopoverController: NSObject, NSPopoverDelegate {
 
     private func showWhenAnchorIsReady() {
         guard let itemID else { return }
-        guard let anchorView = SelectedClipPopoverAnchor.shared.view(for: itemID) else {
+        let resolvedAnchor =
+            SelectedClipPopoverAnchor.shared.view(for: itemID)
+            ?? ClipStripGeometryBridge.shared.assistantPopoverAnchorView(
+                for: itemID
+            )
+        guard let anchorView = resolvedAnchor else {
             retryAfterLayout()
             return
         }
+        SelectedClipPopoverAnchor.shared.update(itemID: itemID, view: anchorView)
         anchorView.layoutSubtreeIfNeeded()
         if popover.isShown {
             popover.close()
@@ -204,7 +210,12 @@ final class AssistantPopoverController: NSObject, NSPopoverDelegate {
     }
 
     private func retryAfterLayout() {
-        guard remainingAnchorRetries > 0 else { return }
+        guard remainingAnchorRetries > 0 else {
+            NSLog(
+                "Pesty assistant popover could not resolve the selected card anchor"
+            )
+            return
+        }
         remainingAnchorRetries -= 1
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) { [weak self] in
             self?.showWhenAnchorIsReady()

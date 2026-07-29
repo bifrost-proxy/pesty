@@ -338,6 +338,17 @@ struct VirtualizedClipStrip: NSViewRepresentable {
             )
         }
 
+        func assistantPopoverAnchorView(for itemID: UUID) -> NSView? {
+            guard let collectionView,
+                  let index = indexByID[itemID] else {
+                return nil
+            }
+            collectionView.layoutSubtreeIfNeeded()
+            return collectionView.item(
+                at: IndexPath(item: index, section: 0)
+            )?.view
+        }
+
         private func ensureSelectedIsVisibleAfterLayout() {
             let expectedID = selectedID
             DispatchQueue.main.async { [weak self] in
@@ -593,6 +604,13 @@ final class ClipCollectionViewItem: NSCollectionViewItem {
             configuredItem.id,
             selected: selected
         )
+        if selected {
+            view.layoutSubtreeIfNeeded()
+            SelectedClipPopoverAnchor.shared.update(
+                itemID: configuredItem.id,
+                view: view
+            )
+        }
     }
 
     func performPrimaryClickForAutomatedTest(clickCount: Int) {

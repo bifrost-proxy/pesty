@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import SwiftUI
@@ -27,6 +28,7 @@ final class TranslationCenter {
     static let shared = TranslationCenter()
 
     private(set) var isPresented = false
+    private(set) var itemID: UUID?
     private(set) var sourceText = ""
     private(set) var translatedText = ""
     private(set) var detectedSourceLanguage: String?
@@ -63,6 +65,7 @@ final class TranslationCenter {
     }
 
     func present(for item: ClipItem?) {
+        itemID = item?.id
         guard let text = item?.text?.trimmingCharacters(in: .whitespacesAndNewlines),
               !text.isEmpty else {
             isPresented = true
@@ -83,6 +86,7 @@ final class TranslationCenter {
     func dismiss() {
         AssistantPopoverController.shared.dismiss(kind: .translation)
         isPresented = false
+        itemID = nil
         sourceText = ""
         translatedText = ""
         detectedSourceLanguage = nil
@@ -114,11 +118,16 @@ final class TranslationCenter {
         translateCurrentText()
     }
 
-    func showAutomatedPreview(source: String, translation: String) {
+    func showAutomatedPreview(
+        source: String,
+        translation: String,
+        itemID: UUID? = nil
+    ) {
         guard ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"] != nil else {
             return
         }
         isPresented = true
+        self.itemID = itemID
         sourceText = source
         translatedText = translation
         detectedSourceLanguage = "English"
@@ -126,6 +135,30 @@ final class TranslationCenter {
         status = .translated
         appleTranslationRequest = nil
         activeRequestID = nil
+    }
+
+    func showAutomatedProcessing(for item: ClipItem) {
+        guard ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"] != nil,
+              let text = item.text else {
+            return
+        }
+        isPresented = true
+        itemID = item.id
+        sourceText = text
+        translatedText = ""
+        detectedSourceLanguage = nil
+        providerName = "Automated preview"
+        failureDiagnostic = nil
+        status = .translating
+        appleTranslationRequest = nil
+        activeRequestID = nil
+    }
+
+    @discardableResult
+    func copyResult(to pasteboard: NSPasteboard = .general) -> Bool {
+        guard status == .translated, !translatedText.isEmpty else { return false }
+        pasteboard.clearContents()
+        return pasteboard.setString(translatedText, forType: .string)
     }
 
     private func restartIfPresented() {
@@ -261,6 +294,20 @@ extension TranslationCenter {
             translatedText = text
             status = .translated
         case .failure(let error):
+            if TranslationProviderResolver.shouldFallbackFromApple(
+                selected: Settings.shared.translationService,
+                hasDoubaoConfiguration:
+                    Settings.shared.doubaoTranslationConfigured
+            ),
+               let input = appleTranslationRequest,
+               input.id == inputID {
+                appleTranslationRequest = nil
+                providerName = L10n.doubaoTranslation
+                startDoubaoTranslation(input)
+                return
+            }
+            let nsError = error as NSError
+            failureDiagnostic = "\(nsError.domain):\(nsError.code)"
             status = .failed(
                 (error as? LocalizedError)?.errorDescription
                     ?? L10n.translationFailed

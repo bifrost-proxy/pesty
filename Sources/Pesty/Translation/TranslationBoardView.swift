@@ -189,9 +189,10 @@ struct TranslationBoardView: View {
             }
             HStack {
                 Spacer()
-                Button(L10n.copyTranslation) { copyTranslation() }
+                Button(L10n.copyTranslation) { center.copyResult() }
                     .buttonStyle(.borderless)
                     .font(.system(size: 12, weight: .medium))
+                    .accessibilityIdentifier("pesty-translation-copy")
             }
         }
         .padding(14)
@@ -298,9 +299,4 @@ struct TranslationBoardView: View {
 
     private var targetTitle: String { center.targetLanguage.displayName }
 
-    private func copyTranslation() {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(center.translatedText, forType: .string)
-    }
 }

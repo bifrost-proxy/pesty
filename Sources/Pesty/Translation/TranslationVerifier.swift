@@ -8,6 +8,7 @@ enum TranslationVerifier {
         let shortcutMatchesDefault: Bool
         let shortcutRejectsDifferentKey: Bool
         let automaticFallsBackToDoubao: Bool
+        let appleFailureFallsBackToDoubao: Bool
         let appleRequiresMacOS15: Bool
         let doubaoRequestUsesChatCompletion: Bool
         let doubaoRequestUsesBearer: Bool
@@ -42,6 +43,19 @@ enum TranslationVerifier {
         )
         guard automaticWithDoubao == .doubao else {
             throw Failure(description: "Automatic provider did not fall back to Doubao")
+        }
+        let appleFailureFallsBackToDoubao =
+            TranslationProviderResolver.shouldFallbackFromApple(
+                selected: .automatic,
+                hasDoubaoConfiguration: true
+            ) && !TranslationProviderResolver.shouldFallbackFromApple(
+                selected: .apple,
+                hasDoubaoConfiguration: true
+            )
+        guard appleFailureFallsBackToDoubao else {
+            throw Failure(
+                description: "Apple failure fallback policy is incorrect"
+            )
         }
         let appleUnavailable = TranslationProviderResolver.resolve(
             selected: .apple,
@@ -219,6 +233,7 @@ enum TranslationVerifier {
             shortcutMatchesDefault: defaultShortcutMatches,
             shortcutRejectsDifferentKey: shortcutRejectsDifferentKey,
             automaticFallsBackToDoubao: automaticWithDoubao == .doubao,
+            appleFailureFallsBackToDoubao: appleFailureFallsBackToDoubao,
             appleRequiresMacOS15: {
                 if case .unavailable = appleUnavailable { return true }
                 return false

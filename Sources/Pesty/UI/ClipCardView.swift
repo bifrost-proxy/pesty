@@ -43,6 +43,8 @@ struct ClipCardView: View {
     let displayTitle: String
 
     @State private var hovering = false
+    @Bindable private var translationCenter = TranslationCenter.shared
+    @Bindable private var explanationCenter = ExplanationCenter.shared
     private var store: ClipboardStore { ClipboardStore.shared }
     @Bindable private var settings = Settings.shared
     private var headerColor: Color { SourceColor.color(for: item.sourceBundleID) }
@@ -62,11 +64,19 @@ struct ClipCardView: View {
                     : palette.cardBorder.swiftUIColor,
                               lineWidth: selected ? 2.5 : 1)
         )
+        .overlay {
+            if let processingLabel {
+                AssistantProcessingOverlay(label: processingLabel, itemID: item.id)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    .allowsHitTesting(false)
+            }
+        }
         .shadow(color: .black.opacity(selected ? 0.35 : 0.18),
                 radius: selected ? 12 : 5, y: selected ? 5 : 2)
         .scaleEffect(hovering && !selected ? 1.015 : 1.0)
         .animation(.spring(response: 0.32, dampingFraction: 0.72), value: selected)
         .animation(.easeOut(duration: 0.14), value: hovering)
+        .animation(.easeOut(duration: 0.18), value: processingLabel)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
         .contextMenu { menu }
@@ -75,6 +85,18 @@ struct ClipCardView: View {
             hovering = false
             AutomatedUITestProbe.record(item)
         }
+    }
+
+    private var processingLabel: String? {
+        if translationCenter.itemID == item.id,
+           translationCenter.status == .translating {
+            return L10n.translating
+        }
+        if explanationCenter.itemID == item.id,
+           explanationCenter.status == .explaining {
+            return L10n.explaining
+        }
+        return nil
     }
 
     private var header: some View {
@@ -302,6 +324,69 @@ struct ClipCardView: View {
                 .keyboardShortcut(shortcut.keyEquivalent, modifiers: shortcut.modifiers)
         } else {
             Button(title, action: action)
+        }
+    }
+}
+
+private struct AssistantProcessingOverlay: View {
+    @Environment(\.colorScheme) private var colorScheme
+    let label: String
+    let itemID: UUID
+
+    @State private var isPulsing = false
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(
+                cornerRadius: Theme.cardCorner,
+                style: .continuous
+            )
+            .fill(Color.accentColor.opacity(isPulsing ? 0.10 : 0.04))
+            .overlay {
+                RoundedRectangle(
+                    cornerRadius: Theme.cardCorner,
+                    style: .continuous
+                )
+                .strokeBorder(
+                    Color.accentColor.opacity(isPulsing ? 0.95 : 0.45),
+                    lineWidth: isPulsing ? 3 : 2
+                )
+            }
+
+            HStack(spacing: 8) {
+                ProgressView()
+                    .controlSize(.small)
+                Text(label)
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .foregroundStyle(Color.accentColor)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                (colorScheme == .dark ? Color.black : Color.white)
+                    .opacity(0.90),
+                in: Capsule()
+            )
+            .shadow(color: .black.opacity(0.16), radius: 8, y: 3)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("pesty-card-assistant-processing")
+        .onAppear {
+            AutomatedUITestProbe.recordAssistantProcessing(
+                itemID: itemID,
+                visible: true
+            )
+            withAnimation(
+                .easeInOut(duration: 0.8).repeatForever(autoreverses: true)
+            ) {
+                isPulsing = true
+            }
+        }
+        .onDisappear {
+            AutomatedUITestProbe.recordAssistantProcessing(
+                itemID: itemID,
+                visible: false
+            )
         }
     }
 }

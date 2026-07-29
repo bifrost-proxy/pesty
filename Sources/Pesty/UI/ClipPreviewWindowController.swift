@@ -10,6 +10,7 @@ struct ClipPreviewContext {
 @MainActor
 protocol ClipStripGeometryProviding: AnyObject {
     func previewContext(for itemID: UUID) -> ClipPreviewContext?
+    func assistantPopoverAnchorView(for itemID: UUID) -> NSView?
 }
 
 @MainActor
@@ -29,6 +30,10 @@ final class ClipStripGeometryBridge {
 
     func context(for itemID: UUID) -> ClipPreviewContext? {
         provider?.previewContext(for: itemID)
+    }
+
+    func assistantPopoverAnchorView(for itemID: UUID) -> NSView? {
+        provider?.assistantPopoverAnchorView(for: itemID)
     }
 }
 
