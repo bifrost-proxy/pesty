@@ -249,6 +249,7 @@ enum AutomatedUITestRunner {
         let copyShortcutWorked: Bool
         let pasteShortcutWorked: Bool
         let cutShortcutWorked: Bool
+        let commandWClosedWindow: Bool
     }
 
     private struct ExplanationBoardResult: Codable {
@@ -811,18 +812,30 @@ enum AutomatedUITestRunner {
             restore(pasteboardItems, to: .general)
 
             captureKeyWindowScreenshotIfRequested()
+            let closeHandled = makeKeyEvent(
+                keyCode: UInt16(kVK_ANSI_W),
+                characters: "w",
+                modifierFlags: [.command],
+                windowNumber: settingsWindow?.windowNumber ?? 0
+            ).map {
+                controller.handleKey($0) == nil
+            } ?? false
+            let commandWClosedWindow = closeHandled
+                && settingsWindow?.isVisible == false
             let result = TranslationSettingsResult(
                 phase: "translation-settings",
                 success: settingsWindowPresented
                     && selectAllShortcutWorked
                     && copyShortcutWorked
                     && pasteShortcutWorked
-                    && cutShortcutWorked,
+                    && cutShortcutWorked
+                    && commandWClosedWindow,
                 settingsWindowPresented: settingsWindowPresented,
                 selectAllShortcutWorked: selectAllShortcutWorked,
                 copyShortcutWorked: copyShortcutWorked,
                 pasteShortcutWorked: pasteShortcutWorked,
-                cutShortcutWorked: cutShortcutWorked
+                cutShortcutWorked: cutShortcutWorked,
+                commandWClosedWindow: commandWClosedWindow
             )
             writeTranslationSettings(result)
             settingsWindow?.orderOut(nil)

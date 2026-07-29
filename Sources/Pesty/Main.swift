@@ -62,18 +62,18 @@ struct PestyMain {
         }
 
         let app = NSApplication.shared
-        StandardEditMenu.install(on: app)
+        StandardApplicationMenus.install(on: app)
         let delegate = AppController.shared
         app.delegate = delegate
         app.run()
     }
 }
 
-/// LSUIElement applications do not receive a standard Edit menu automatically.
-/// NSTextField relies on these key equivalents to route common editing actions
-/// through the current field editor.
+/// LSUIElement applications do not receive standard application menus
+/// automatically. Install the common window and editing commands so Settings
+/// behaves like a regular macOS window.
 @MainActor
-enum StandardEditMenu {
+enum StandardApplicationMenus {
     static func install(on application: NSApplication) {
         let mainMenu = NSMenu()
 
@@ -88,6 +88,18 @@ enum StandardEditMenu {
         )
         applicationItem.submenu = applicationMenu
         mainMenu.addItem(applicationItem)
+
+        let fileItem = NSMenuItem()
+        let fileMenu = NSMenu(title: L10n.text("File", "文件"))
+        fileMenu.addItem(
+            item(
+                title: L10n.text("Close Window", "关闭窗口"),
+                action: #selector(NSWindow.performClose(_:)),
+                keyEquivalent: "w"
+            )
+        )
+        fileItem.submenu = fileMenu
+        mainMenu.addItem(fileItem)
 
         let editItem = NSMenuItem()
         let editMenu = NSMenu(title: L10n.text("Edit", "编辑"))
@@ -137,6 +149,26 @@ enum StandardEditMenu {
         )
         editItem.submenu = editMenu
         mainMenu.addItem(editItem)
+
+        let windowItem = NSMenuItem()
+        let windowMenu = NSMenu(title: L10n.text("Window", "窗口"))
+        windowMenu.addItem(
+            item(
+                title: L10n.text("Minimize", "最小化"),
+                action: #selector(NSWindow.performMiniaturize(_:)),
+                keyEquivalent: "m"
+            )
+        )
+        windowMenu.addItem(
+            item(
+                title: L10n.text("Zoom", "缩放"),
+                action: #selector(NSWindow.performZoom(_:)),
+                keyEquivalent: ""
+            )
+        )
+        windowItem.submenu = windowMenu
+        mainMenu.addItem(windowItem)
+        application.windowsMenu = windowMenu
 
         application.mainMenu = mainMenu
     }

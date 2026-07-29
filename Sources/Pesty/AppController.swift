@@ -660,6 +660,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         win.styleMask = [
             .titled,
             .closable,
+            .miniaturizable,
             .resizable,
             .fullSizeContentView,
         ]
@@ -846,6 +847,8 @@ final class AppController: NSObject, NSApplicationDelegate {
               settingsWindow.isVisible,
               initialContentSize.width == SettingsWindowLayout.width,
               initialContentSize.height >= SettingsWindowLayout.minimumHeight,
+              settingsWindow.styleMask.contains(.closable),
+              settingsWindow.styleMask.contains(.miniaturizable),
               settingsWindow.styleMask.contains(.resizable),
               settingsWindow.contentMinSize == NSSize(
                   width: SettingsWindowLayout.width,
@@ -983,6 +986,16 @@ final class AppController: NSObject, NSApplicationDelegate {
         let textEditor = eventWindow?.firstResponder as? NSTextView
         let isComposingText = textEditor?.hasMarkedText() == true
 
+        if let settingsWindow,
+           eventWindow === settingsWindow,
+           handleSettingsWindowShortcut(
+               keyCode: code,
+               flags: flags,
+               window: settingsWindow
+           ) {
+            return nil
+        }
+
         if isComposingText {
             return event
         }
@@ -1108,6 +1121,27 @@ final class AppController: NSObject, NSApplicationDelegate {
             return nil
         }
         return event
+    }
+
+    private func handleSettingsWindowShortcut(
+        keyCode: Int,
+        flags: NSEvent.ModifierFlags,
+        window: NSWindow
+    ) -> Bool {
+        let relevant = flags.intersection([
+            .command, .control, .option, .shift,
+        ])
+        guard relevant == [.command] else { return false }
+
+        switch keyCode {
+        case kVK_ANSI_W:
+            window.performClose(nil)
+        case kVK_ANSI_M:
+            window.performMiniaturize(nil)
+        default:
+            return false
+        }
+        return true
     }
 
     private func handleStandardTextEditingShortcut(
