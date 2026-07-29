@@ -15,12 +15,17 @@
 
 Pesty 会在本机保存剪贴板历史。按下全局快捷键后，屏幕底部会显示剪贴板面板，可以搜索、选择并重新粘贴之前复制过的内容。
 
-数据默认仅保存在本机。应用不会上传剪贴板内容，也不会接入分析或遥测服务。用户可以选择通过自己的 iCloud Drive 在多台 Mac 之间同步历史记录、Pinboard 和历史记录上限。
+数据默认仅保存在本机，应用不接入分析或遥测服务。只有当用户主动调用翻译或解释，
+并选择自己配置的云端 AI 服务时，当前选中的文本才会直接发送给该服务。用户还可以
+选择通过自己的 iCloud Drive 在多台 Mac 之间同步历史记录、Pinboard 和历史记录上限。
 
 ## 主要功能
 
 - 支持文本、富文本、链接、图片、文件和颜色。
 - 支持搜索、键盘导航和 `⌘1` 至 `⌘9` 快速粘贴。
+- 支持 `⌘T` 快速翻译和 `⌘D` 精简解释，也可以从卡片右键菜单调用。
+- macOS 15 及以上支持 Apple Translation；豆包和兼容 AI 服务由用户自行配置，
+  API Key 安全保存在 macOS 钥匙串中。
 - 支持 Pinboard，可长期保存常用内容。
 - 根据来源应用显示图标和颜色。
 - 可忽略密码管理器标记为隐藏的剪贴板内容。
@@ -63,6 +68,8 @@ brew install --cask bifrost-proxy/pesty/pesty
 | 快捷键 | 功能 |
 | --- | --- |
 | `⌘⇧V` | 打开或关闭面板，可在设置中修改 |
+| `⌘T` | 翻译当前选中的文本，可在设置中修改 |
+| `⌘D` | 解释当前选中的文本，可在设置中修改 |
 | `←` `→` `↑` `↓` | 移动选择 |
 | `Space` | 预览或关闭预览当前内容 |
 | `Return` | 粘贴当前内容 |
@@ -80,6 +87,7 @@ git clone https://github.com/bifrost-proxy/pesty.git
 cd pesty
 swift build
 swift run Pesty --verify-localization
+swift run Pesty --verify-translation
 swift run Pesty --verify-appearance
 swift run Pesty --verify-updater
 swift run
