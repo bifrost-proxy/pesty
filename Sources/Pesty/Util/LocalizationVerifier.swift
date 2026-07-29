@@ -30,6 +30,17 @@ enum LocalizationVerifier {
                 (L10n.searchClipboard, "Search"),
                 (L10n.checkForUpdates, "Check for Updates…"),
                 (L10n.updateToVersion("1.2.3"), "Update to Pesty 1.2.3"),
+                (L10n.checkingForUpdates, "Checking for updates…"),
+                (
+                    L10n.downloadingUpdate("1.2.3", percentage: 42),
+                    "Downloading Pesty 1.2.3… 42%"
+                ),
+                (L10n.verifyingUpdate("1.2.3"), "Verifying Pesty 1.2.3…"),
+                (L10n.preparingUpdate("1.2.3"), "Preparing Pesty 1.2.3…"),
+                (
+                    L10n.installingUpdate("1.2.3"),
+                    "Installing and restarting Pesty 1.2.3…"
+                ),
                 (L10n.unlimited, "Unlimited"),
                 (
                     L10n.historyLimitDelayDescription,
@@ -92,6 +103,17 @@ enum LocalizationVerifier {
                 (L10n.searchClipboard, "搜索"),
                 (L10n.checkForUpdates, "检查更新…"),
                 (L10n.updateToVersion("1.2.3"), "更新到 Pesty 1.2.3"),
+                (L10n.checkingForUpdates, "正在检查更新…"),
+                (
+                    L10n.downloadingUpdate("1.2.3", percentage: 42),
+                    "正在下载 Pesty 1.2.3… 42%"
+                ),
+                (L10n.verifyingUpdate("1.2.3"), "正在校验 Pesty 1.2.3…"),
+                (L10n.preparingUpdate("1.2.3"), "正在准备 Pesty 1.2.3…"),
+                (
+                    L10n.installingUpdate("1.2.3"),
+                    "正在安装并重启 Pesty 1.2.3…"
+                ),
                 (L10n.unlimited, "无限"),
                 (
                     L10n.historyLimitDelayDescription,

@@ -23,9 +23,25 @@ enum ReleaseChannel: String, Equatable, Sendable {
 enum UpdateActivity: Equatable {
     case idle
     case checking
-    case downloading
+    case downloading(progress: Double?)
+    case verifying
+    case preparing
     case installing
     case failed(String)
+
+    var isBusy: Bool {
+        switch self {
+        case .checking, .downloading, .verifying, .preparing, .installing:
+            return true
+        case .idle, .failed:
+            return false
+        }
+    }
+
+    var downloadProgress: Double? {
+        guard case .downloading(let progress) = self else { return nil }
+        return progress.map { min(max($0, 0), 1) }
+    }
 }
 
 enum UpdateCheckOutcome: Equatable {
@@ -59,7 +75,51 @@ final class UpdateManager {
 
     var hasUpdate: Bool { availableRelease != nil }
     var isInstalling: Bool {
-        activity == .downloading || activity == .installing
+        switch activity {
+        case .downloading, .verifying, .preparing, .installing:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var isBusy: Bool {
+        activity.isBusy
+    }
+
+    var progressFraction: Double? {
+        activity.downloadProgress
+    }
+
+    var progressPercentage: Int? {
+        progressFraction.map { Int(($0 * 100).rounded()) }
+    }
+
+    var statusText: String {
+        let version = availableRelease?.version
+        switch activity {
+        case .idle:
+            if let version {
+                return L10n.updateToVersion(version)
+            }
+            return L10n.checkForUpdates
+        case .checking:
+            return L10n.checkingForUpdates
+        case .downloading:
+            guard let version else { return L10n.downloadingUpdate }
+            if let percentage = progressPercentage {
+                return L10n.downloadingUpdate(version, percentage: percentage)
+            }
+            return L10n.downloadingUpdate(version)
+        case .verifying:
+            return version.map(L10n.verifyingUpdate) ?? L10n.verifyingUpdate
+        case .preparing:
+            return version.map(L10n.preparingUpdate) ?? L10n.preparingUpdate
+        case .installing:
+            return version.map(L10n.installingUpdate) ?? L10n.installingUpdate
+        case .failed(let message):
+            return message
+        }
     }
 
     var showInMenuBar: Bool {
@@ -150,12 +210,20 @@ final class UpdateManager {
     func installAvailableUpdate() {
         guard let release = availableRelease, !isInstalling else { return }
         lastInstallationError = nil
-        activity = .downloading
+        activity = .downloading(progress: 0)
         notifyStateChanged()
 
         Task {
             do {
-                let plan = try await UpdateInstaller.prepare(release: release)
+                let relay = UpdateProgressRelay { [weak self] progress in
+                    self?.applyPreparationProgress(progress)
+                }
+                let plan = try await UpdateInstaller.prepare(
+                    release: release,
+                    progress: { @Sendable progress in
+                        relay.send(progress)
+                    }
+                )
                 activity = .installing
                 notifyStateChanged()
                 try plan.launch()
@@ -177,6 +245,34 @@ final class UpdateManager {
             channel: ReleaseChannel.forVersion(version) ?? .stable
         )
         activity = .idle
+        notifyStateChanged()
+    }
+
+    func injectActivityForVerification(_ activity: UpdateActivity) {
+        self.activity = activity
+        notifyStateChanged()
+    }
+
+    private func applyPreparationProgress(_ progress: UpdatePreparationProgress) {
+        switch progress {
+        case .downloading(let fraction):
+            guard case .downloading = activity else { return }
+            activity = .downloading(progress: fraction)
+        case .verifying:
+            switch activity {
+            case .downloading, .verifying:
+                activity = .verifying
+            default:
+                return
+            }
+        case .preparing:
+            switch activity {
+            case .downloading, .verifying, .preparing:
+                activity = .preparing
+            default:
+                return
+            }
+        }
         notifyStateChanged()
     }
 
@@ -215,6 +311,23 @@ final class UpdateManager {
         FileHandle.standardOutput.write(Data("AUTOMATED_UPDATE_CHECK_RESULT ".utf8))
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+}
+
+private final class UpdateProgressRelay: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "com.bifrostproxy.pesty.update-progress")
+    private let handler: @MainActor @Sendable (UpdatePreparationProgress) -> Void
+
+    init(handler: @escaping @MainActor @Sendable (UpdatePreparationProgress) -> Void) {
+        self.handler = handler
+    }
+
+    func send(_ progress: UpdatePreparationProgress) {
+        queue.async { [handler] in
+            Task { @MainActor in
+                handler(progress)
+            }
+        }
     }
 }
 

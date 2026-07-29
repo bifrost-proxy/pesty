@@ -217,6 +217,13 @@ enum L10n {
         text("MIT Licensed · Made with SwiftUI", "MIT 许可 · 使用 SwiftUI 制作")
     }
     static var updateAvailable: String { text("Update Available", "发现新版本") }
+    static var updateProgressTitle: String {
+        text("Pesty Update", "Pesty 更新")
+    }
+    static var updateProgressDescription: String {
+        text("You can keep using Pesty while this finishes. Pesty will restart automatically when installation begins.",
+             "更新完成前你仍可继续使用 Pesty。开始安装后，Pesty 会自动重启。")
+    }
     static func updateAvailableMessage(_ version: String) -> String {
         text("Pesty \(version) is ready to install.",
              "Pesty \(version) 已可安装。")
@@ -224,11 +231,37 @@ enum L10n {
     static func updateToVersion(_ version: String) -> String {
         text("Update to Pesty \(version)", "更新到 Pesty \(version)")
     }
+    static var checkingForUpdates: String {
+        text("Checking for updates…", "正在检查更新…")
+    }
+    static var downloadingUpdate: String {
+        text("Downloading update…", "正在下载更新…")
+    }
     static func downloadingUpdate(_ version: String) -> String {
         text("Downloading Pesty \(version)…", "正在下载 Pesty \(version)…")
     }
+    static func downloadingUpdate(_ version: String, percentage: Int) -> String {
+        text("Downloading Pesty \(version)… \(percentage)%",
+             "正在下载 Pesty \(version)… \(percentage)%")
+    }
+    static var verifyingUpdate: String {
+        text("Verifying update…", "正在校验更新…")
+    }
+    static func verifyingUpdate(_ version: String) -> String {
+        text("Verifying Pesty \(version)…", "正在校验 Pesty \(version)…")
+    }
+    static var preparingUpdate: String {
+        text("Preparing update…", "正在准备更新…")
+    }
+    static func preparingUpdate(_ version: String) -> String {
+        text("Preparing Pesty \(version)…", "正在准备 Pesty \(version)…")
+    }
+    static var installingUpdate: String {
+        text("Installing and restarting…", "正在安装并重启…")
+    }
     static func installingUpdate(_ version: String) -> String {
-        text("Installing Pesty \(version)…", "正在安装 Pesty \(version)…")
+        text("Installing and restarting Pesty \(version)…",
+             "正在安装并重启 Pesty \(version)…")
     }
     static var installAndRestart: String {
         text("Install and Restart", "安装并重启")

@@ -268,10 +268,10 @@ struct BarView: View {
 
     private var moreMenu: some View {
         Menu {
-            Button(L10n.checkForUpdates) {
+            Button(updater.isBusy ? updater.statusText : L10n.checkForUpdates) {
                 AppController.shared.checkForUpdatesManually()
             }
-            .disabled(updater.activity == .checking || updater.isInstalling)
+            .disabled(updater.isBusy)
             Divider()
             Button(L10n.settings) { AppController.shared.showSettings() }
             Button(L10n.clearHistory) {
@@ -294,36 +294,35 @@ struct BarView: View {
 
     private func updateButton(_ release: AppRelease) -> some View {
         Button {
-            updater.installAvailableUpdate()
+            AppController.shared.installAvailableUpdate()
         } label: {
-            HStack(spacing: 7) {
-                Image(systemName: updater.isInstalling
-                      ? "arrow.triangle.2.circlepath"
-                      : "arrow.down.circle.fill")
-                Text(updateButtonTitle(release))
-                    .lineLimit(1)
+            VStack(spacing: 3) {
+                HStack(spacing: 7) {
+                    Image(systemName: updater.isInstalling
+                          ? "arrow.triangle.2.circlepath"
+                          : "arrow.down.circle.fill")
+                        .symbolEffect(.pulse, isActive: updater.isInstalling)
+                    Text(updater.isBusy
+                         ? updater.statusText
+                         : L10n.updateToVersion(release.version))
+                        .lineLimit(1)
+                }
+                if updater.isInstalling {
+                    UpdateProgressIndicator()
+                        .tint(.white)
+                        .frame(height: 3)
+                }
             }
             .font(.system(size: 13, weight: .semibold))
             .foregroundStyle(.white)
             .padding(.horizontal, 12)
-            .frame(height: 30)
+            .frame(height: updater.isInstalling ? 38 : 30)
             .background(palette.selection.swiftUIColor, in: Capsule())
         }
         .buttonStyle(.plain)
         .disabled(updater.isInstalling)
         .help(L10n.updateAvailableMessage(release.version))
         .accessibilityIdentifier("pesty-update-button")
-    }
-
-    private func updateButtonTitle(_ release: AppRelease) -> String {
-        switch updater.activity {
-        case .downloading:
-            return L10n.downloadingUpdate(release.version)
-        case .installing:
-            return L10n.installingUpdate(release.version)
-        default:
-            return L10n.updateToVersion(release.version)
-        }
     }
 
     private var strip: some View {

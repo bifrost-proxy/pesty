@@ -12,6 +12,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var barController: BarWindowController?
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
+    private var updateProgressWindow: UpdateProgressWindowController?
     private let settingsWindowState = SettingsWindowState()
     private var keyMonitor: Any?
     private var languageObserver: NSObjectProtocol?
@@ -53,6 +54,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             Task { @MainActor [weak self] in
                 self?.rebuildStatusItemMenu()
                 self?.settingsWindow?.title = L10n.settingsWindowTitle
+                self?.updateProgressWindow?.window?.title = L10n.updateProgressTitle
             }
         }
         NotificationCenter.default.addObserver(
@@ -205,10 +207,16 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func rebuildStatusItemMenu() {
         guard let item = statusItem else { return }
         let menu = NSMenu()
-        if let release = UpdateManager.shared.availableRelease {
+        let updater = UpdateManager.shared
+        if updater.isBusy {
+            let progress = NSMenuItem()
+            progress.view = UpdateProgressMenuItemView(updater: updater)
+            menu.addItem(progress)
+            menu.addItem(.separator())
+        } else if let release = updater.availableRelease {
             let update = menu.addItem(
                 withTitle: updateActionTitle(for: release),
-                action: UpdateManager.shared.isInstalling ? nil : #selector(menuInstallUpdate),
+                action: #selector(menuInstallUpdate),
                 keyEquivalent: ""
             )
             update.target = self
@@ -223,13 +231,12 @@ final class AppController: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(withTitle: L10n.settings, action: #selector(menuSettings), keyEquivalent: ",").target = self
         let check = menu.addItem(
-            withTitle: L10n.checkForUpdates,
+            withTitle: updater.isBusy ? updater.statusText : L10n.checkForUpdates,
             action: #selector(menuCheckForUpdates),
             keyEquivalent: ""
         )
         check.target = self
-        check.isEnabled = UpdateManager.shared.activity != .checking
-            && !UpdateManager.shared.isInstalling
+        check.isEnabled = !updater.isBusy
         menu.addItem(withTitle: L10n.clearHistory, action: #selector(menuClear), keyEquivalent: "").target = self
         menu.addItem(.separator())
         let about = menu.addItem(withTitle: L10n.aboutPesty, action: #selector(menuAbout), keyEquivalent: "")
@@ -243,12 +250,19 @@ final class AppController: NSObject, NSApplicationDelegate {
     @objc private func menuClear() { requestClearHistoryConfirmation() }
     @objc private func menuQuit() { NSApp.terminate(nil) }
     @objc private func menuAbout() { showAbout() }
-    @objc private func menuInstallUpdate() { UpdateManager.shared.installAvailableUpdate() }
+    @objc private func menuInstallUpdate() { installAvailableUpdate() }
     @objc private func menuCheckForUpdates() { checkForUpdatesManually() }
 
     func checkForUpdatesManually() {
+        let updater = UpdateManager.shared
+        if updater.isBusy {
+            presentUpdateProgress()
+            return
+        }
+        presentUpdateProgress()
         Task {
-            let outcome = await UpdateManager.shared.checkForUpdates()
+            let outcome = await updater.checkForUpdates()
+            dismissUpdateProgress()
             switch outcome {
             case .updateAvailable(let release):
                 let alert = NSAlert()
@@ -258,7 +272,7 @@ final class AppController: NSObject, NSApplicationDelegate {
                 alert.addButton(withTitle: L10n.later)
                 NSApp.activate(ignoringOtherApps: true)
                 if alert.runModal() == .alertFirstButtonReturn {
-                    UpdateManager.shared.installAvailableUpdate()
+                    installAvailableUpdate()
                 }
             case .upToDate:
                 showUpdateAlert(
@@ -269,6 +283,16 @@ final class AppController: NSObject, NSApplicationDelegate {
                 showUpdateAlert(title: L10n.updateCheckFailed, message: message)
             }
         }
+    }
+
+    func installAvailableUpdate() {
+        guard UpdateManager.shared.availableRelease != nil else { return }
+        if UpdateManager.shared.isInstalling {
+            presentUpdateProgress()
+            return
+        }
+        presentUpdateProgress()
+        UpdateManager.shared.installAvailableUpdate()
     }
 
     func showAbout() {
@@ -634,6 +658,21 @@ final class AppController: NSObject, NSApplicationDelegate {
                 description: "visible menu icon did not expose the immediate update action"
             )
         }
+        UpdateManager.shared.injectActivityForVerification(
+            .downloading(progress: 0.42)
+        )
+        rebuildStatusItemMenu()
+        guard UpdateManager.shared.progressPercentage == 42,
+              statusItem?.menu?.items.contains(where: {
+                  $0.view?.accessibilityIdentifier()
+                      == "pesty-update-progress-menu-item"
+              }) == true else {
+            throw SettingsAccessVerificationFailure(
+                description: "menu bar update action did not expose download progress"
+            )
+        }
+        UpdateManager.shared.injectActivityForVerification(.idle)
+        rebuildStatusItemMenu()
 
         Settings.shared.showMenuBarIcon = false
         let shouldUseDefaultReopenBehavior = applicationShouldHandleReopen(
@@ -703,16 +742,24 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func configureStatusItemButton(_ button: NSStatusBarButton) {
-        let hasUpdate = UpdateManager.shared.showInMenuBar
+        let updater = UpdateManager.shared
+        let hasUpdate = updater.showInMenuBar
+        let isBusy = updater.isBusy
         button.image = NSImage(
-            systemSymbolName: hasUpdate ? "arrow.down.circle.fill" : "doc.on.clipboard",
-            accessibilityDescription: hasUpdate ? L10n.updateAvailable : "Pesty"
+            systemSymbolName: isBusy
+                ? "arrow.triangle.2.circlepath.circle.fill"
+                : (hasUpdate ? "arrow.down.circle.fill" : "doc.on.clipboard"),
+            accessibilityDescription: isBusy
+                ? updater.statusText
+                : (hasUpdate ? L10n.updateAvailable : "Pesty")
         )
-        button.image?.isTemplate = !hasUpdate
-        button.contentTintColor = hasUpdate ? .systemBlue : nil
-        button.toolTip = hasUpdate
-            ? L10n.updateAvailableMessage(UpdateManager.shared.availableRelease?.version ?? "")
-            : "Pesty"
+        button.image?.isTemplate = !hasUpdate && !isBusy
+        button.contentTintColor = hasUpdate || isBusy ? .systemBlue : nil
+        button.toolTip = isBusy
+            ? updater.statusText
+            : (hasUpdate
+                ? L10n.updateAvailableMessage(updater.availableRelease?.version ?? "")
+                : "Pesty")
     }
 
     private func updateStatusItemAppearance() {
@@ -721,21 +768,28 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func updateActionTitle(for release: AppRelease) -> String {
-        switch UpdateManager.shared.activity {
-        case .downloading:
-            return L10n.downloadingUpdate(release.version)
-        case .installing:
-            return L10n.installingUpdate(release.version)
-        default:
-            return L10n.updateToVersion(release.version)
-        }
+        UpdateManager.shared.isBusy
+            ? UpdateManager.shared.statusText
+            : L10n.updateToVersion(release.version)
     }
 
     private func presentInstallationErrorIfNeeded() {
         guard let message = UpdateManager.shared.lastInstallationError,
               message != presentedUpdateError else { return }
         presentedUpdateError = message
+        dismissUpdateProgress()
         showUpdateAlert(title: L10n.updateInstallFailed, message: message)
+    }
+
+    private func presentUpdateProgress() {
+        if updateProgressWindow == nil {
+            updateProgressWindow = UpdateProgressWindowController()
+        }
+        updateProgressWindow?.present()
+    }
+
+    private func dismissUpdateProgress() {
+        updateProgressWindow?.close()
     }
 
     private func showUpdateAlert(title: String, message: String) {
