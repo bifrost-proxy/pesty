@@ -236,6 +236,7 @@ enum AutomatedUITestRunner {
         let selectedSecondCard: Bool
         let processingIndicatorRenderedOnSelectedCard: Bool
         let processingIndicatorClearedAfterResult: Bool
+        let popoverExpandedForLongResult: Bool
         let resultCopied: Bool
         let translationShortcut: String
     }
@@ -601,6 +602,10 @@ enum AutomatedUITestRunner {
             ),
         ]
         let item = items[1]
+        let translationPreview = String(
+            repeating: "自适应高度会优先完整展示翻译结果，达到阅读上限后才滚动。",
+            count: 24
+        )
         controller.monitor.stop()
         controller.store.replaceHistoryForAutomatedKeyboardTest(items)
         Settings.shared.translationService = .doubao
@@ -643,10 +648,10 @@ enum AutomatedUITestRunner {
                         )
                     TranslationCenter.shared.showAutomatedPreview(
                         source: item.text ?? "",
-                        translation: "Pesty 翻译看板验证",
+                        translation: translationPreview,
                         itemID: item.id
                     )
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                         let resultPasteboard = NSPasteboard(
                             name: NSPasteboard.Name(
                                 "com.bifrostproxy.pesty.translation-board-test"
@@ -655,13 +660,13 @@ enum AutomatedUITestRunner {
                         let resultCopied = TranslationCenter.shared.copyResult(
                             to: resultPasteboard
                         ) && resultPasteboard.string(forType: .string)
-                            == "Pesty 翻译看板验证"
+                            == translationPreview
                         let boardRendered =
                             AutomatedUITestProbe.translationBoardRendered
                         let previewContentRendered =
                             TranslationCenter.shared.status == .translated
                             && TranslationCenter.shared.translatedText
-                                == "Pesty 翻译看板验证"
+                                == translationPreview
                             && AutomatedUITestProbe.translationPreviewRendered
                         let popoverPresented =
                             AssistantPopoverController.shared.isPresented
@@ -670,6 +675,10 @@ enum AutomatedUITestRunner {
                         let processingIndicatorCleared =
                             !AutomatedUITestProbe.assistantProcessingItemIDs
                                 .contains(item.id)
+                        let popoverExpandedForLongResult =
+                            (AssistantPopoverController.shared.screenFrame?.height
+                                ?? 0)
+                            > AssistantPopoverLayout.translationDefaultHeight
                         let result = TranslationBoardResult(
                             phase: "translation-board",
                             success: shortcutOpenedBoard
@@ -681,6 +690,7 @@ enum AutomatedUITestRunner {
                                 && previewContentRendered
                                 && popoverPresented
                                 && popoverAnchoredAboveCard
+                                && popoverExpandedForLongResult
                                 && resultCopied,
                             shortcutOpenedBoard: shortcutOpenedBoard,
                             shortcutClosedBoard: shortcutClosedBoard,
@@ -693,6 +703,8 @@ enum AutomatedUITestRunner {
                                 processingIndicatorRendered,
                             processingIndicatorClearedAfterResult:
                                 processingIndicatorCleared,
+                            popoverExpandedForLongResult:
+                                popoverExpandedForLongResult,
                             resultCopied: resultCopied,
                             translationShortcut:
                                 Settings.shared.translationHotkeyDisplay

@@ -13,10 +13,21 @@ struct TranslationBoardView: View {
             Divider().opacity(0.45)
             translationContent
         }
-        .frame(width: AssistantPopoverLayout.width, height: AssistantPopoverLayout.translationHeight)
+        .frame(
+            width: AssistantPopoverLayout.width,
+            height: AssistantPopoverLayout.preferredTranslationHeight(
+                sourceText: center.sourceText,
+                translation: center.translatedText
+            )
+        )
         .background(opaqueBoardSurface)
         .accessibilityIdentifier("pesty-translation-board")
-        .onAppear { AutomatedUITestProbe.recordTranslationBoard() }
+        .onAppear {
+            updatePopoverHeight()
+            AutomatedUITestProbe.recordTranslationBoard()
+        }
+        .onChange(of: center.sourceText) { updatePopoverHeight() }
+        .onChange(of: center.translatedText) { updatePopoverHeight() }
     }
 
     private var header: some View {
@@ -299,4 +310,13 @@ struct TranslationBoardView: View {
 
     private var targetTitle: String { center.targetLanguage.displayName }
 
+    private func updatePopoverHeight() {
+        AssistantPopoverController.shared.updatePreferredHeight(
+            AssistantPopoverLayout.preferredTranslationHeight(
+                sourceText: center.sourceText,
+                translation: center.translatedText
+            ),
+            for: .translation
+        )
+    }
 }

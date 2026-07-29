@@ -24,6 +24,7 @@ enum TranslationVerifier {
         let explanationDisablesDoubaoThinking: Bool
         let explanationRequestRequiresConciseOutput: Bool
         let explanationMarkdownRenderingSupported: Bool
+        let translationPopoverGrowsAndCapsHeight: Bool
         let explanationPopoverGrowsAndCapsHeight: Bool
         let openAIEndpointNormalizesToChatCompletions: Bool
     }
@@ -189,6 +190,35 @@ enum TranslationVerifier {
         guard explanationMarkdownRenderingSupported else {
             throw Failure(description: "Explanation Markdown parsing is incorrect")
         }
+        let defaultTranslationHeight =
+            AssistantPopoverLayout.preferredTranslationHeight(
+                sourceText: syntheticText,
+                translation: "Short translation"
+            )
+        let expandedTranslationHeight =
+            AssistantPopoverLayout.preferredTranslationHeight(
+                sourceText: syntheticText,
+                translation: String(
+                    repeating: "This translated paragraph should grow the popover height. ",
+                    count: 18
+                )
+            )
+        let cappedTranslationHeight =
+            AssistantPopoverLayout.preferredTranslationHeight(
+                sourceText: syntheticText,
+                translation: String(repeating: "Long translation ", count: 800)
+            )
+        let translationPopoverGrowsAndCapsHeight =
+            defaultTranslationHeight
+                == AssistantPopoverLayout.translationDefaultHeight
+            && expandedTranslationHeight > defaultTranslationHeight
+            && expandedTranslationHeight
+                <= AssistantPopoverLayout.translationMaximumHeight
+            && cappedTranslationHeight
+                == AssistantPopoverLayout.translationMaximumHeight
+        guard translationPopoverGrowsAndCapsHeight else {
+            throw Failure(description: "Translation popover height policy is incorrect")
+        }
         let defaultExplanationHeight = AssistantPopoverLayout.preferredExplanationHeight(
             sourceText: syntheticText,
             explanation: "简短说明"
@@ -255,6 +285,8 @@ enum TranslationVerifier {
             explanationDisablesDoubaoThinking: explanationBody.contains("disabled"),
             explanationRequestRequiresConciseOutput: explanationRequestRequiresConciseOutput,
             explanationMarkdownRenderingSupported: explanationMarkdownRenderingSupported,
+            translationPopoverGrowsAndCapsHeight:
+                translationPopoverGrowsAndCapsHeight,
             explanationPopoverGrowsAndCapsHeight: explanationPopoverGrowsAndCapsHeight,
             openAIEndpointNormalizesToChatCompletions: normalizedEndpoint?.absoluteString
                 == "https://example.invalid/v1/chat/completions"

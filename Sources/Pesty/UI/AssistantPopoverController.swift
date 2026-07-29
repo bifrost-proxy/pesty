@@ -8,14 +8,59 @@ enum AssistantPopoverKind: Equatable {
 
 enum AssistantPopoverLayout {
     static let width: CGFloat = 404
-    static let translationHeight: CGFloat = 238
+    static let translationDefaultHeight: CGFloat = 320
+    static let translationMaximumHeight: CGFloat = 520
     static let explanationDefaultHeight: CGFloat = 300
     static let explanationMaximumHeight: CGFloat = 460
 
     static func contentSize(for kind: AssistantPopoverKind) -> NSSize {
         NSSize(
             width: width,
-            height: kind == .translation ? translationHeight : explanationDefaultHeight
+            height: kind == .translation
+                ? translationDefaultHeight
+                : explanationDefaultHeight
+        )
+    }
+
+    /// Translation starts tall enough for ordinary multi-line output, grows
+    /// with the rendered source and result, and scrolls only after reaching the
+    /// reading limit.
+    static func preferredTranslationHeight(
+        sourceText: String,
+        translation: String
+    ) -> CGFloat {
+        guard !translation.isEmpty else { return translationDefaultHeight }
+
+        let sourceFont = NSFont.systemFont(ofSize: 12)
+        let bodyFont = NSFont.systemFont(ofSize: 15)
+        let textWidth = width - 28
+        let sourceLineHeight = lineHeight(for: sourceFont)
+        let sourceTextHeight = min(
+            sourceLineHeight * 2,
+            measuredHeight(
+                for: sourceText,
+                font: sourceFont,
+                width: textWidth - 20
+            )
+        )
+        let sourcePreviewHeight = max(
+            sourceLineHeight,
+            sourceTextHeight
+        ) + 14
+        let translationHeight = max(
+            lineHeight(for: bodyFont),
+            measuredHeight(
+                for: translation,
+                font: bodyFont,
+                width: textWidth
+            )
+        )
+        let chromeHeight: CGFloat = 44 + 1 + 28 + 24 + 18 + 18
+        let naturalHeight =
+            chromeHeight + sourcePreviewHeight + translationHeight
+        return min(
+            translationMaximumHeight,
+            max(translationDefaultHeight, ceil(naturalHeight))
         )
     }
 
