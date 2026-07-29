@@ -1007,6 +1007,15 @@ final class AppController: NSObject, NSApplicationDelegate {
             return nil
         }
 
+        if let textEditor,
+           handleStandardTextEditingShortcut(
+               keyCode: code,
+               flags: flags,
+               editor: textEditor
+           ) {
+            return nil
+        }
+
         // Keep the monitor alive so the assistant shortcuts work from Pesty's
         // Settings window, but never route normal panel navigation while the
         // clipboard bar itself is hidden.
@@ -1099,6 +1108,43 @@ final class AppController: NSObject, NSApplicationDelegate {
             return nil
         }
         return event
+    }
+
+    private func handleStandardTextEditingShortcut(
+        keyCode: Int,
+        flags: NSEvent.ModifierFlags,
+        editor: NSTextView
+    ) -> Bool {
+        let relevant = flags.intersection([
+            .command, .control, .option, .shift,
+        ])
+        let commandOnly = relevant == [.command]
+        switch keyCode {
+        case kVK_ANSI_A where commandOnly:
+            editor.selectAll(nil)
+        case kVK_ANSI_C where commandOnly:
+            let selectedRange = editor.selectedRange()
+            guard selectedRange.length > 0,
+                  NSMaxRange(selectedRange) <= editor.string.utf16.count else {
+                return true
+            }
+            let selectedText = (editor.string as NSString).substring(
+                with: selectedRange
+            )
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(selectedText, forType: .string)
+        case kVK_ANSI_V where commandOnly:
+            editor.paste(nil)
+        case kVK_ANSI_X where commandOnly:
+            editor.cut(nil)
+        case kVK_ANSI_Z where commandOnly:
+            editor.undoManager?.undo()
+        case kVK_ANSI_Z where relevant == [.command, .shift]:
+            editor.undoManager?.redo()
+        default:
+            return false
+        }
+        return true
     }
 }
 

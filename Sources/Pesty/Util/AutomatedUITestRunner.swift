@@ -244,6 +244,10 @@ enum AutomatedUITestRunner {
         let phase: String
         let success: Bool
         let settingsWindowPresented: Bool
+        let selectAllShortcutWorked: Bool
+        let copyShortcutWorked: Bool
+        let pasteShortcutWorked: Bool
+        let cutShortcutWorked: Bool
     }
 
     private struct ExplanationBoardResult: Codable {
@@ -721,15 +725,92 @@ enum AutomatedUITestRunner {
 
     private static func runTranslationSettingsTest(controller: AppController) {
         controller.monitor.stop()
+        let pasteboardItems = snapshot(.general)
         controller.showSettings(pane: .translation)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
             let settingsWindow = visibleContentWindow()
             let settingsWindowPresented = settingsWindow != nil
+            let field = descendantViews(of: settingsWindow?.contentView)
+                .compactMap { $0 as? NSTextField }
+                .first(where: \.isEditable)
+            let sourceText = "pesty-settings-edit-source"
+            let pasteText = "pesty-settings-edit-paste"
+            field?.stringValue = sourceText
+            settingsWindow?.makeKeyAndOrderFront(nil)
+            if let field {
+                settingsWindow?.makeFirstResponder(field)
+            }
+            field?.selectText(nil)
+            let editor = field?.currentEditor() as? NSTextView
+            editor?.setSelectedRange(
+                NSRange(location: sourceText.utf16.count, length: 0)
+            )
+
+            let selectAllHandled = makeKeyEvent(
+                keyCode: UInt16(kVK_ANSI_A),
+                characters: "a",
+                modifierFlags: [.command],
+                windowNumber: settingsWindow?.windowNumber ?? 0
+            ).map {
+                controller.handleKey($0) == nil
+            } ?? false
+            let selectAllShortcutWorked = selectAllHandled
+                && editor?.selectedRange()
+                    == NSRange(location: 0, length: sourceText.utf16.count)
+
+            let copyHandled = makeKeyEvent(
+                keyCode: UInt16(kVK_ANSI_C),
+                characters: "c",
+                modifierFlags: [.command],
+                windowNumber: settingsWindow?.windowNumber ?? 0
+            ).map {
+                controller.handleKey($0) == nil
+            } ?? false
+            let copyShortcutWorked = copyHandled
+                && NSPasteboard.general.string(forType: .string) == sourceText
+
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(pasteText, forType: .string)
+            let pasteHandled = makeKeyEvent(
+                keyCode: UInt16(kVK_ANSI_V),
+                characters: "v",
+                modifierFlags: [.command],
+                windowNumber: settingsWindow?.windowNumber ?? 0
+            ).map {
+                controller.handleKey($0) == nil
+            } ?? false
+            let pasteShortcutWorked = pasteHandled
+                && field?.stringValue == pasteText
+
+            editor?.setSelectedRange(
+                NSRange(location: 0, length: pasteText.utf16.count)
+            )
+            let cutHandled = makeKeyEvent(
+                keyCode: UInt16(kVK_ANSI_X),
+                characters: "x",
+                modifierFlags: [.command],
+                windowNumber: settingsWindow?.windowNumber ?? 0
+            ).map {
+                controller.handleKey($0) == nil
+            } ?? false
+            let cutShortcutWorked = cutHandled
+                && field?.stringValue.isEmpty == true
+                && NSPasteboard.general.string(forType: .string) == pasteText
+            restore(pasteboardItems, to: .general)
+
             captureKeyWindowScreenshotIfRequested()
             let result = TranslationSettingsResult(
                 phase: "translation-settings",
-                success: settingsWindowPresented,
-                settingsWindowPresented: settingsWindowPresented
+                success: settingsWindowPresented
+                    && selectAllShortcutWorked
+                    && copyShortcutWorked
+                    && pasteShortcutWorked
+                    && cutShortcutWorked,
+                settingsWindowPresented: settingsWindowPresented,
+                selectAllShortcutWorked: selectAllShortcutWorked,
+                copyShortcutWorked: copyShortcutWorked,
+                pasteShortcutWorked: pasteShortcutWorked,
+                cutShortcutWorked: cutShortcutWorked
             )
             writeTranslationSettings(result)
             settingsWindow?.orderOut(nil)
