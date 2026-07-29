@@ -50,6 +50,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         HotKeyCenter.shared.onTrigger = { [weak self] in self?.toggleBar() }
         HotKeyCenter.shared.start()
+        startKeyMonitor()
 
         updateStatusItemVisibility()
         languageObserver = NotificationCenter.default.addObserver(
@@ -172,6 +173,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         AccessibilitySettingsGuideController.shared.dismiss()
 #endif
         store.saveNow()
+        stopKeyMonitor()
     }
 
     private func setupStatusItem() {
@@ -414,13 +416,9 @@ final class AppController: NSObject, NSApplicationDelegate {
             barController = BarWindowController()
         }
         barController?.show()
-        if ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"] == nil {
-            startKeyMonitor()
-        }
     }
 
     func hideBar(completion: (() -> Void)? = nil) {
-        stopKeyMonitor()
         TranslationCenter.shared.dismiss()
         ExplanationCenter.shared.dismiss()
         ClipPreviewWindowController.shared.dismiss()
@@ -662,6 +660,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         win.styleMask = [
             .titled,
             .closable,
+            .miniaturizable,
             .resizable,
             .fullSizeContentView,
         ]
@@ -848,6 +847,8 @@ final class AppController: NSObject, NSApplicationDelegate {
               settingsWindow.isVisible,
               initialContentSize.width == SettingsWindowLayout.width,
               initialContentSize.height >= SettingsWindowLayout.minimumHeight,
+              settingsWindow.styleMask.contains(.closable),
+              settingsWindow.styleMask.contains(.miniaturizable),
               settingsWindow.styleMask.contains(.resizable),
               settingsWindow.contentMinSize == NSSize(
                   width: SettingsWindowLayout.width,
@@ -985,6 +986,16 @@ final class AppController: NSObject, NSApplicationDelegate {
         let textEditor = eventWindow?.firstResponder as? NSTextView
         let isComposingText = textEditor?.hasMarkedText() == true
 
+        if let settingsWindow,
+           eventWindow === settingsWindow,
+           handleSettingsWindowShortcut(
+               keyCode: code,
+               flags: flags,
+               window: settingsWindow
+           ) {
+            return nil
+        }
+
         if isComposingText {
             return event
         }
@@ -1007,6 +1018,22 @@ final class AppController: NSObject, NSApplicationDelegate {
         ) {
             toggleExplanationBoard()
             return nil
+        }
+
+        if let textEditor,
+           handleStandardTextEditingShortcut(
+               keyCode: code,
+               flags: flags,
+               editor: textEditor
+           ) {
+            return nil
+        }
+
+        // Keep the monitor alive so the assistant shortcuts work from Pesty's
+        // Settings window, but never route normal panel navigation while the
+        // clipboard bar itself is hidden.
+        guard barController?.window?.isVisible == true else {
+            return event
         }
 
         if TranslationCenter.shared.isPresented {
@@ -1094,6 +1121,64 @@ final class AppController: NSObject, NSApplicationDelegate {
             return nil
         }
         return event
+    }
+
+    private func handleSettingsWindowShortcut(
+        keyCode: Int,
+        flags: NSEvent.ModifierFlags,
+        window: NSWindow
+    ) -> Bool {
+        let relevant = flags.intersection([
+            .command, .control, .option, .shift,
+        ])
+        guard relevant == [.command] else { return false }
+
+        switch keyCode {
+        case kVK_ANSI_W:
+            window.performClose(nil)
+        case kVK_ANSI_M:
+            window.performMiniaturize(nil)
+        default:
+            return false
+        }
+        return true
+    }
+
+    private func handleStandardTextEditingShortcut(
+        keyCode: Int,
+        flags: NSEvent.ModifierFlags,
+        editor: NSTextView
+    ) -> Bool {
+        let relevant = flags.intersection([
+            .command, .control, .option, .shift,
+        ])
+        let commandOnly = relevant == [.command]
+        switch keyCode {
+        case kVK_ANSI_A where commandOnly:
+            editor.selectAll(nil)
+        case kVK_ANSI_C where commandOnly:
+            let selectedRange = editor.selectedRange()
+            guard selectedRange.length > 0,
+                  NSMaxRange(selectedRange) <= editor.string.utf16.count else {
+                return true
+            }
+            let selectedText = (editor.string as NSString).substring(
+                with: selectedRange
+            )
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(selectedText, forType: .string)
+        case kVK_ANSI_V where commandOnly:
+            editor.paste(nil)
+        case kVK_ANSI_X where commandOnly:
+            editor.cut(nil)
+        case kVK_ANSI_Z where commandOnly:
+            editor.undoManager?.undo()
+        case kVK_ANSI_Z where relevant == [.command, .shift]:
+            editor.undoManager?.redo()
+        default:
+            return false
+        }
+        return true
     }
 }
 

@@ -10,6 +10,7 @@ enum AutomatedUITestProbe {
     private(set) static var translationPreviewRendered = false
     private(set) static var explanationBoardRendered = false
     private(set) static var explanationPreviewRendered = false
+    private(set) static var assistantProcessingItemIDs = Set<UUID>()
     private(set) static var renderedItemIDs = Set<UUID>()
 
     static var isEnabled: Bool {
@@ -22,6 +23,7 @@ enum AutomatedUITestProbe {
         translationPreviewRendered = false
         explanationBoardRendered = false
         explanationPreviewRendered = false
+        assistantProcessingItemIDs.removeAll()
         renderedItemIDs.removeAll()
     }
 
@@ -52,6 +54,15 @@ enum AutomatedUITestProbe {
     static func recordExplanationPreview() {
         guard isEnabled else { return }
         explanationPreviewRendered = true
+    }
+
+    static func recordAssistantProcessing(itemID: UUID, visible: Bool) {
+        guard isEnabled else { return }
+        if visible {
+            assistantProcessingItemIDs.insert(itemID)
+        } else {
+            assistantProcessingItemIDs.remove(itemID)
+        }
     }
 }
 
@@ -222,6 +233,11 @@ enum AutomatedUITestRunner {
         let previewContentRendered: Bool
         let popoverPresented: Bool
         let popoverAnchoredAboveCard: Bool
+        let selectedSecondCard: Bool
+        let processingIndicatorRenderedOnSelectedCard: Bool
+        let processingIndicatorClearedAfterResult: Bool
+        let popoverExpandedForLongResult: Bool
+        let resultCopied: Bool
         let translationShortcut: String
     }
 
@@ -229,6 +245,11 @@ enum AutomatedUITestRunner {
         let phase: String
         let success: Bool
         let settingsWindowPresented: Bool
+        let selectAllShortcutWorked: Bool
+        let copyShortcutWorked: Bool
+        let pasteShortcutWorked: Bool
+        let cutShortcutWorked: Bool
+        let commandWClosedWindow: Bool
     }
 
     private struct ExplanationBoardResult: Codable {
@@ -240,6 +261,10 @@ enum AutomatedUITestRunner {
         let previewContentRendered: Bool
         let popoverPresented: Bool
         let popoverAnchoredAboveCard: Bool
+        let selectedSecondCard: Bool
+        let processingIndicatorRenderedOnSelectedCard: Bool
+        let processingIndicatorClearedAfterResult: Bool
+        let resultCopied: Bool
         let explanationShortcut: String
     }
 
@@ -565,13 +590,25 @@ enum AutomatedUITestRunner {
     }
 
     private static func runTranslationBoardTest(controller: AppController) {
-        let item = ClipItem(
-            type: .text,
-            text: "Pesty translation board verification",
-            createdAt: Date()
+        let items = [
+            ClipItem(
+                type: .text,
+                text: "Pesty translation board first card",
+                createdAt: Date()
+            ),
+            ClipItem(
+                type: .text,
+                text: "Pesty translation board selected card",
+                createdAt: Date().addingTimeInterval(-1)
+            ),
+        ]
+        let item = items[1]
+        let translationPreview = String(
+            repeating: "自适应高度会优先完整展示翻译结果，达到阅读上限后才滚动。",
+            count: 24
         )
         controller.monitor.stop()
-        controller.store.replaceHistoryForAutomatedKeyboardTest([item])
+        controller.store.replaceHistoryForAutomatedKeyboardTest(items)
         Settings.shared.translationService = .doubao
         AutomatedUITestProbe.reset()
         controller.showBar()
@@ -597,49 +634,103 @@ enum AutomatedUITestRunner {
                 controller.handleKey($0) == nil
             } ?? false) && !TranslationCenter.shared.isPresented
 
-            TranslationCenter.shared.showAutomatedPreview(
-                source: "Pesty translation board verification",
-                translation: "Pesty 翻译看板验证"
-            )
-            controller.presentAssistantPopoverForAutomatedTest(kind: .translation, item: item)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                let boardRendered = AutomatedUITestProbe.translationBoardRendered
-                let previewContentRendered = TranslationCenter.shared.status == .translated
-                    && TranslationCenter.shared.translatedText == "Pesty 翻译看板验证"
-                    && AutomatedUITestProbe.translationPreviewRendered
-                let popoverPresented = AssistantPopoverController.shared.isPresented
-                let popoverAnchoredAboveCard = isAssistantPopoverAnchoredAboveCard(item.id)
-                let result = TranslationBoardResult(
-                    phase: "translation-board",
-                    success: shortcutOpenedBoard
-                        && shortcutClosedBoard
-                        && boardRendered
-                        && previewContentRendered
-                        && popoverPresented
-                        && popoverAnchoredAboveCard,
-                    shortcutOpenedBoard: shortcutOpenedBoard,
-                    shortcutClosedBoard: shortcutClosedBoard,
-                    boardRendered: boardRendered,
-                    previewContentRendered: previewContentRendered,
-                    popoverPresented: popoverPresented,
-                    popoverAnchoredAboveCard: popoverAnchoredAboveCard,
-                    translationShortcut: Settings.shared.translationHotkeyDisplay
+            controller.store.selectedID = item.id
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                let selectedSecondCard = controller.store.selectedID == item.id
+                TranslationCenter.shared.showAutomatedProcessing(for: item)
+                controller.presentAssistantPopoverForAutomatedTest(
+                    kind: .translation,
+                    item: item
                 )
-                captureKeyWindowScreenshotIfRequested()
-                writeTranslationBoard(result)
-                let exitCode = result.success ? EXIT_SUCCESS : EXIT_FAILURE
-                let holdSeconds = TimeInterval(
-                    ProcessInfo.processInfo.environment[
-                        "PESTY_AUTOMATED_TEST_HOLD_SECONDS"
-                    ] ?? ""
-                ) ?? 0
-                guard holdSeconds > 0 else {
-                    controller.hideBar()
-                    exit(exitCode)
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + holdSeconds) {
-                    controller.hideBar()
-                    exit(exitCode)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    let processingIndicatorRendered =
+                        AutomatedUITestProbe.assistantProcessingItemIDs.contains(
+                            item.id
+                        )
+                    TranslationCenter.shared.showAutomatedPreview(
+                        source: item.text ?? "",
+                        translation: translationPreview,
+                        itemID: item.id
+                    )
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        let resultPasteboard = NSPasteboard(
+                            name: NSPasteboard.Name(
+                                "com.bifrostproxy.pesty.translation-board-test"
+                            )
+                        )
+                        let resultCopied = TranslationCenter.shared.copyResult(
+                            to: resultPasteboard
+                        ) && resultPasteboard.string(forType: .string)
+                            == translationPreview
+                        let boardRendered =
+                            AutomatedUITestProbe.translationBoardRendered
+                        let previewContentRendered =
+                            TranslationCenter.shared.status == .translated
+                            && TranslationCenter.shared.translatedText
+                                == translationPreview
+                            && AutomatedUITestProbe.translationPreviewRendered
+                        let popoverPresented =
+                            AssistantPopoverController.shared.isPresented
+                        let popoverAnchoredAboveCard =
+                            isAssistantPopoverAnchoredAboveCard(item.id)
+                        let processingIndicatorCleared =
+                            !AutomatedUITestProbe.assistantProcessingItemIDs
+                                .contains(item.id)
+                        let popoverExpandedForLongResult =
+                            (AssistantPopoverController.shared.screenFrame?.height
+                                ?? 0)
+                            > AssistantPopoverLayout.translationDefaultHeight
+                        let result = TranslationBoardResult(
+                            phase: "translation-board",
+                            success: shortcutOpenedBoard
+                                && shortcutClosedBoard
+                                && selectedSecondCard
+                                && processingIndicatorRendered
+                                && processingIndicatorCleared
+                                && boardRendered
+                                && previewContentRendered
+                                && popoverPresented
+                                && popoverAnchoredAboveCard
+                                && popoverExpandedForLongResult
+                                && resultCopied,
+                            shortcutOpenedBoard: shortcutOpenedBoard,
+                            shortcutClosedBoard: shortcutClosedBoard,
+                            boardRendered: boardRendered,
+                            previewContentRendered: previewContentRendered,
+                            popoverPresented: popoverPresented,
+                            popoverAnchoredAboveCard: popoverAnchoredAboveCard,
+                            selectedSecondCard: selectedSecondCard,
+                            processingIndicatorRenderedOnSelectedCard:
+                                processingIndicatorRendered,
+                            processingIndicatorClearedAfterResult:
+                                processingIndicatorCleared,
+                            popoverExpandedForLongResult:
+                                popoverExpandedForLongResult,
+                            resultCopied: resultCopied,
+                            translationShortcut:
+                                Settings.shared.translationHotkeyDisplay
+                        )
+                        captureKeyWindowScreenshotIfRequested()
+                        writeTranslationBoard(result)
+                        let exitCode = result.success
+                            ? EXIT_SUCCESS
+                            : EXIT_FAILURE
+                        let holdSeconds = TimeInterval(
+                            ProcessInfo.processInfo.environment[
+                                "PESTY_AUTOMATED_TEST_HOLD_SECONDS"
+                            ] ?? ""
+                        ) ?? 0
+                        guard holdSeconds > 0 else {
+                            controller.hideBar()
+                            exit(exitCode)
+                        }
+                        DispatchQueue.main.asyncAfter(
+                            deadline: .now() + holdSeconds
+                        ) {
+                            controller.hideBar()
+                            exit(exitCode)
+                        }
+                    }
                 }
             }
         }
@@ -647,15 +738,104 @@ enum AutomatedUITestRunner {
 
     private static func runTranslationSettingsTest(controller: AppController) {
         controller.monitor.stop()
+        let pasteboardItems = snapshot(.general)
         controller.showSettings(pane: .translation)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
             let settingsWindow = visibleContentWindow()
             let settingsWindowPresented = settingsWindow != nil
+            let field = descendantViews(of: settingsWindow?.contentView)
+                .compactMap { $0 as? NSTextField }
+                .first(where: \.isEditable)
+            let sourceText = "pesty-settings-edit-source"
+            let pasteText = "pesty-settings-edit-paste"
+            field?.stringValue = sourceText
+            settingsWindow?.makeKeyAndOrderFront(nil)
+            if let field {
+                settingsWindow?.makeFirstResponder(field)
+            }
+            field?.selectText(nil)
+            let editor = field?.currentEditor() as? NSTextView
+            editor?.setSelectedRange(
+                NSRange(location: sourceText.utf16.count, length: 0)
+            )
+
+            let selectAllHandled = makeKeyEvent(
+                keyCode: UInt16(kVK_ANSI_A),
+                characters: "a",
+                modifierFlags: [.command],
+                windowNumber: settingsWindow?.windowNumber ?? 0
+            ).map {
+                controller.handleKey($0) == nil
+            } ?? false
+            let selectAllShortcutWorked = selectAllHandled
+                && editor?.selectedRange()
+                    == NSRange(location: 0, length: sourceText.utf16.count)
+
+            let copyHandled = makeKeyEvent(
+                keyCode: UInt16(kVK_ANSI_C),
+                characters: "c",
+                modifierFlags: [.command],
+                windowNumber: settingsWindow?.windowNumber ?? 0
+            ).map {
+                controller.handleKey($0) == nil
+            } ?? false
+            let copyShortcutWorked = copyHandled
+                && NSPasteboard.general.string(forType: .string) == sourceText
+
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(pasteText, forType: .string)
+            let pasteHandled = makeKeyEvent(
+                keyCode: UInt16(kVK_ANSI_V),
+                characters: "v",
+                modifierFlags: [.command],
+                windowNumber: settingsWindow?.windowNumber ?? 0
+            ).map {
+                controller.handleKey($0) == nil
+            } ?? false
+            let pasteShortcutWorked = pasteHandled
+                && field?.stringValue == pasteText
+
+            editor?.setSelectedRange(
+                NSRange(location: 0, length: pasteText.utf16.count)
+            )
+            let cutHandled = makeKeyEvent(
+                keyCode: UInt16(kVK_ANSI_X),
+                characters: "x",
+                modifierFlags: [.command],
+                windowNumber: settingsWindow?.windowNumber ?? 0
+            ).map {
+                controller.handleKey($0) == nil
+            } ?? false
+            let cutShortcutWorked = cutHandled
+                && field?.stringValue.isEmpty == true
+                && NSPasteboard.general.string(forType: .string) == pasteText
+            restore(pasteboardItems, to: .general)
+
             captureKeyWindowScreenshotIfRequested()
+            let closeHandled = makeKeyEvent(
+                keyCode: UInt16(kVK_ANSI_W),
+                characters: "w",
+                modifierFlags: [.command],
+                windowNumber: settingsWindow?.windowNumber ?? 0
+            ).map {
+                controller.handleKey($0) == nil
+            } ?? false
+            let commandWClosedWindow = closeHandled
+                && settingsWindow?.isVisible == false
             let result = TranslationSettingsResult(
                 phase: "translation-settings",
-                success: settingsWindowPresented,
-                settingsWindowPresented: settingsWindowPresented
+                success: settingsWindowPresented
+                    && selectAllShortcutWorked
+                    && copyShortcutWorked
+                    && pasteShortcutWorked
+                    && cutShortcutWorked
+                    && commandWClosedWindow,
+                settingsWindowPresented: settingsWindowPresented,
+                selectAllShortcutWorked: selectAllShortcutWorked,
+                copyShortcutWorked: copyShortcutWorked,
+                pasteShortcutWorked: pasteShortcutWorked,
+                cutShortcutWorked: cutShortcutWorked,
+                commandWClosedWindow: commandWClosedWindow
             )
             writeTranslationSettings(result)
             settingsWindow?.orderOut(nil)
@@ -981,13 +1161,21 @@ enum AutomatedUITestRunner {
     }
 
     private static func runExplanationBoardTest(controller: AppController) {
-        let item = ClipItem(
-            type: .text,
-            text: "Pesty explanation board verification",
-            createdAt: Date()
-        )
+        let items = [
+            ClipItem(
+                type: .text,
+                text: "Pesty explanation board first card",
+                createdAt: Date()
+            ),
+            ClipItem(
+                type: .text,
+                text: "Pesty explanation board selected card",
+                createdAt: Date().addingTimeInterval(-1)
+            ),
+        ]
+        let item = items[1]
         controller.monitor.stop()
-        controller.store.replaceHistoryForAutomatedKeyboardTest([item])
+        controller.store.replaceHistoryForAutomatedKeyboardTest(items)
         AutomatedUITestProbe.reset()
         controller.showBar()
 
@@ -1010,55 +1198,102 @@ enum AutomatedUITestRunner {
                 controller.handleKey($0) == nil
             } ?? false) && !ExplanationCenter.shared.isPresented
 
-            let markdownPreview = """
-            **核心含义：** 解释结果现在使用 Markdown 排版。
-
-            - 支持 `行内代码` 与粗体
-            - 列表更紧凑，减少滚动
-            """
-            ExplanationCenter.shared.showAutomatedPreview(
-                source: "Pesty explanation board verification",
-                explanation: markdownPreview
-            )
-            controller.presentAssistantPopoverForAutomatedTest(kind: .explanation, item: item)
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                let boardRendered = AutomatedUITestProbe.explanationBoardRendered
-                let previewContentRendered = ExplanationCenter.shared.status == .explained
-                    && ExplanationCenter.shared.explanationText == markdownPreview
-                    && AutomatedUITestProbe.explanationPreviewRendered
-                let popoverPresented = AssistantPopoverController.shared.isPresented
-                let popoverAnchoredAboveCard = isAssistantPopoverAnchoredAboveCard(item.id)
-                let result = ExplanationBoardResult(
-                    phase: "explanation-board",
-                    success: shortcutOpenedBoard
-                        && shortcutClosedBoard
-                        && boardRendered
-                        && previewContentRendered
-                        && popoverPresented
-                        && popoverAnchoredAboveCard,
-                    shortcutOpenedBoard: shortcutOpenedBoard,
-                    shortcutClosedBoard: shortcutClosedBoard,
-                    boardRendered: boardRendered,
-                    previewContentRendered: previewContentRendered,
-                    popoverPresented: popoverPresented,
-                    popoverAnchoredAboveCard: popoverAnchoredAboveCard,
-                    explanationShortcut: Settings.shared.explanationHotkeyDisplay
+            controller.store.selectedID = item.id
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                let selectedSecondCard = controller.store.selectedID == item.id
+                ExplanationCenter.shared.showAutomatedProcessing(for: item)
+                controller.presentAssistantPopoverForAutomatedTest(
+                    kind: .explanation,
+                    item: item
                 )
-                captureKeyWindowScreenshotIfRequested()
-                writeExplanationBoard(result)
-                let exitCode = result.success ? EXIT_SUCCESS : EXIT_FAILURE
-                let holdSeconds = TimeInterval(
-                    ProcessInfo.processInfo.environment[
-                        "PESTY_AUTOMATED_TEST_HOLD_SECONDS"
-                    ] ?? ""
-                ) ?? 0
-                guard holdSeconds > 0 else {
-                    controller.hideBar()
-                    exit(exitCode)
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + holdSeconds) {
-                    controller.hideBar()
-                    exit(exitCode)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    let processingIndicatorRendered =
+                        AutomatedUITestProbe.assistantProcessingItemIDs.contains(
+                            item.id
+                        )
+                    let markdownPreview = """
+                    **核心含义：** 解释结果现在使用 Markdown 排版。
+
+                    - 支持 `行内代码` 与粗体
+                    - 列表更紧凑，减少滚动
+                    """
+                    ExplanationCenter.shared.showAutomatedPreview(
+                        source: item.text ?? "",
+                        explanation: markdownPreview,
+                        itemID: item.id
+                    )
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        let resultPasteboard = NSPasteboard(
+                            name: NSPasteboard.Name(
+                                "com.bifrostproxy.pesty.explanation-board-test"
+                            )
+                        )
+                        let resultCopied = ExplanationCenter.shared.copyResult(
+                            to: resultPasteboard
+                        ) && resultPasteboard.string(forType: .string)
+                            == markdownPreview
+                        let boardRendered =
+                            AutomatedUITestProbe.explanationBoardRendered
+                        let previewContentRendered =
+                            ExplanationCenter.shared.status == .explained
+                            && ExplanationCenter.shared.explanationText
+                                == markdownPreview
+                            && AutomatedUITestProbe.explanationPreviewRendered
+                        let popoverPresented =
+                            AssistantPopoverController.shared.isPresented
+                        let popoverAnchoredAboveCard =
+                            isAssistantPopoverAnchoredAboveCard(item.id)
+                        let processingIndicatorCleared =
+                            !AutomatedUITestProbe.assistantProcessingItemIDs
+                                .contains(item.id)
+                        let result = ExplanationBoardResult(
+                            phase: "explanation-board",
+                            success: shortcutOpenedBoard
+                                && shortcutClosedBoard
+                                && selectedSecondCard
+                                && processingIndicatorRendered
+                                && processingIndicatorCleared
+                                && boardRendered
+                                && previewContentRendered
+                                && popoverPresented
+                                && popoverAnchoredAboveCard
+                                && resultCopied,
+                            shortcutOpenedBoard: shortcutOpenedBoard,
+                            shortcutClosedBoard: shortcutClosedBoard,
+                            boardRendered: boardRendered,
+                            previewContentRendered: previewContentRendered,
+                            popoverPresented: popoverPresented,
+                            popoverAnchoredAboveCard: popoverAnchoredAboveCard,
+                            selectedSecondCard: selectedSecondCard,
+                            processingIndicatorRenderedOnSelectedCard:
+                                processingIndicatorRendered,
+                            processingIndicatorClearedAfterResult:
+                                processingIndicatorCleared,
+                            resultCopied: resultCopied,
+                            explanationShortcut:
+                                Settings.shared.explanationHotkeyDisplay
+                        )
+                        captureKeyWindowScreenshotIfRequested()
+                        writeExplanationBoard(result)
+                        let exitCode = result.success
+                            ? EXIT_SUCCESS
+                            : EXIT_FAILURE
+                        let holdSeconds = TimeInterval(
+                            ProcessInfo.processInfo.environment[
+                                "PESTY_AUTOMATED_TEST_HOLD_SECONDS"
+                            ] ?? ""
+                        ) ?? 0
+                        guard holdSeconds > 0 else {
+                            controller.hideBar()
+                            exit(exitCode)
+                        }
+                        DispatchQueue.main.asyncAfter(
+                            deadline: .now() + holdSeconds
+                        ) {
+                            controller.hideBar()
+                            exit(exitCode)
+                        }
+                    }
                 }
             }
         }

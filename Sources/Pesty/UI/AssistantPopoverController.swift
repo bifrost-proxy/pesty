@@ -8,14 +8,44 @@ enum AssistantPopoverKind: Equatable {
 
 enum AssistantPopoverLayout {
     static let width: CGFloat = 404
-    static let translationHeight: CGFloat = 238
+    static let translationDefaultHeight: CGFloat = 320
+    static let translationMaximumHeight: CGFloat = 520
     static let explanationDefaultHeight: CGFloat = 300
     static let explanationMaximumHeight: CGFloat = 460
 
     static func contentSize(for kind: AssistantPopoverKind) -> NSSize {
         NSSize(
             width: width,
-            height: kind == .translation ? translationHeight : explanationDefaultHeight
+            height: kind == .translation
+                ? translationDefaultHeight
+                : explanationDefaultHeight
+        )
+    }
+
+    /// Translation starts tall enough for ordinary multi-line output, grows
+    /// with the rendered result, and scrolls only after reaching the reading
+    /// limit. The source already exists on the anchored clipboard card and is
+    /// intentionally not repeated inside the popover.
+    static func preferredTranslationHeight(
+        translation: String
+    ) -> CGFloat {
+        guard !translation.isEmpty else { return translationDefaultHeight }
+
+        let bodyFont = NSFont.systemFont(ofSize: 15)
+        let textWidth = width - 28
+        let translationHeight = max(
+            lineHeight(for: bodyFont),
+            measuredHeight(
+                for: translation,
+                font: bodyFont,
+                width: textWidth
+            )
+        )
+        let chromeHeight: CGFloat = 44 + 1 + 28 + 16 + 18 + 18
+        let naturalHeight = chromeHeight + translationHeight
+        return min(
+            translationMaximumHeight,
+            max(translationDefaultHeight, ceil(naturalHeight))
         )
     }
 
@@ -187,10 +217,16 @@ final class AssistantPopoverController: NSObject, NSPopoverDelegate {
 
     private func showWhenAnchorIsReady() {
         guard let itemID else { return }
-        guard let anchorView = SelectedClipPopoverAnchor.shared.view(for: itemID) else {
+        let resolvedAnchor =
+            SelectedClipPopoverAnchor.shared.view(for: itemID)
+            ?? ClipStripGeometryBridge.shared.assistantPopoverAnchorView(
+                for: itemID
+            )
+        guard let anchorView = resolvedAnchor else {
             retryAfterLayout()
             return
         }
+        SelectedClipPopoverAnchor.shared.update(itemID: itemID, view: anchorView)
         anchorView.layoutSubtreeIfNeeded()
         if popover.isShown {
             popover.close()
@@ -204,7 +240,12 @@ final class AssistantPopoverController: NSObject, NSPopoverDelegate {
     }
 
     private func retryAfterLayout() {
-        guard remainingAnchorRetries > 0 else { return }
+        guard remainingAnchorRetries > 0 else {
+            NSLog(
+                "Pesty assistant popover could not resolve the selected card anchor"
+            )
+            return
+        }
         remainingAnchorRetries -= 1
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) { [weak self] in
             self?.showWhenAnchorIsReady()

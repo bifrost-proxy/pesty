@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 
@@ -15,6 +16,7 @@ final class ExplanationCenter {
     static let shared = ExplanationCenter()
 
     private(set) var isPresented = false
+    private(set) var itemID: UUID?
     private(set) var sourceText = ""
     private(set) var explanationText = ""
     private(set) var providerName = ""
@@ -35,6 +37,7 @@ final class ExplanationCenter {
     }
 
     func present(for item: ClipItem?) {
+        itemID = item?.id
         guard let text = item?.text?.trimmingCharacters(in: .whitespacesAndNewlines),
               !text.isEmpty else {
             isPresented = true
@@ -56,6 +59,7 @@ final class ExplanationCenter {
     func dismiss() {
         AssistantPopoverController.shared.dismiss(kind: .explanation)
         isPresented = false
+        itemID = nil
         sourceText = ""
         explanationText = ""
         providerName = ""
@@ -69,17 +73,44 @@ final class ExplanationCenter {
         explainCurrentText()
     }
 
-    func showAutomatedPreview(source: String, explanation: String) {
+    func showAutomatedPreview(
+        source: String,
+        explanation: String,
+        itemID: UUID? = nil
+    ) {
         guard ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"] != nil else {
             return
         }
         isPresented = true
+        self.itemID = itemID
         sourceText = source
         explanationText = explanation
         providerName = "Automated preview"
         failureDiagnostic = nil
         activeRequestID = nil
         status = .explained
+    }
+
+    func showAutomatedProcessing(for item: ClipItem) {
+        guard ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"] != nil,
+              let text = item.text else {
+            return
+        }
+        isPresented = true
+        itemID = item.id
+        sourceText = text
+        explanationText = ""
+        providerName = "Automated preview"
+        failureDiagnostic = nil
+        status = .explaining
+        activeRequestID = nil
+    }
+
+    @discardableResult
+    func copyResult(to pasteboard: NSPasteboard = .general) -> Bool {
+        guard status == .explained, !explanationText.isEmpty else { return false }
+        pasteboard.clearContents()
+        return pasteboard.setString(explanationText, forType: .string)
     }
 
     private func explainCurrentText() {

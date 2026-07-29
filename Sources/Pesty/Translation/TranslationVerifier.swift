@@ -8,6 +8,7 @@ enum TranslationVerifier {
         let shortcutMatchesDefault: Bool
         let shortcutRejectsDifferentKey: Bool
         let automaticFallsBackToDoubao: Bool
+        let appleFailureFallsBackToDoubao: Bool
         let appleRequiresMacOS15: Bool
         let doubaoRequestUsesChatCompletion: Bool
         let doubaoRequestUsesBearer: Bool
@@ -23,6 +24,7 @@ enum TranslationVerifier {
         let explanationDisablesDoubaoThinking: Bool
         let explanationRequestRequiresConciseOutput: Bool
         let explanationMarkdownRenderingSupported: Bool
+        let translationPopoverGrowsAndCapsHeight: Bool
         let explanationPopoverGrowsAndCapsHeight: Bool
         let openAIEndpointNormalizesToChatCompletions: Bool
     }
@@ -42,6 +44,19 @@ enum TranslationVerifier {
         )
         guard automaticWithDoubao == .doubao else {
             throw Failure(description: "Automatic provider did not fall back to Doubao")
+        }
+        let appleFailureFallsBackToDoubao =
+            TranslationProviderResolver.shouldFallbackFromApple(
+                selected: .automatic,
+                hasDoubaoConfiguration: true
+            ) && !TranslationProviderResolver.shouldFallbackFromApple(
+                selected: .apple,
+                hasDoubaoConfiguration: true
+            )
+        guard appleFailureFallsBackToDoubao else {
+            throw Failure(
+                description: "Apple failure fallback policy is incorrect"
+            )
         }
         let appleUnavailable = TranslationProviderResolver.resolve(
             selected: .apple,
@@ -175,6 +190,32 @@ enum TranslationVerifier {
         guard explanationMarkdownRenderingSupported else {
             throw Failure(description: "Explanation Markdown parsing is incorrect")
         }
+        let defaultTranslationHeight =
+            AssistantPopoverLayout.preferredTranslationHeight(
+                translation: "Short translation"
+            )
+        let expandedTranslationHeight =
+            AssistantPopoverLayout.preferredTranslationHeight(
+                translation: String(
+                    repeating: "This translated paragraph should grow the popover height. ",
+                    count: 18
+                )
+            )
+        let cappedTranslationHeight =
+            AssistantPopoverLayout.preferredTranslationHeight(
+                translation: String(repeating: "Long translation ", count: 800)
+            )
+        let translationPopoverGrowsAndCapsHeight =
+            defaultTranslationHeight
+                == AssistantPopoverLayout.translationDefaultHeight
+            && expandedTranslationHeight > defaultTranslationHeight
+            && expandedTranslationHeight
+                <= AssistantPopoverLayout.translationMaximumHeight
+            && cappedTranslationHeight
+                == AssistantPopoverLayout.translationMaximumHeight
+        guard translationPopoverGrowsAndCapsHeight else {
+            throw Failure(description: "Translation popover height policy is incorrect")
+        }
         let defaultExplanationHeight = AssistantPopoverLayout.preferredExplanationHeight(
             sourceText: syntheticText,
             explanation: "简短说明"
@@ -219,6 +260,7 @@ enum TranslationVerifier {
             shortcutMatchesDefault: defaultShortcutMatches,
             shortcutRejectsDifferentKey: shortcutRejectsDifferentKey,
             automaticFallsBackToDoubao: automaticWithDoubao == .doubao,
+            appleFailureFallsBackToDoubao: appleFailureFallsBackToDoubao,
             appleRequiresMacOS15: {
                 if case .unavailable = appleUnavailable { return true }
                 return false
@@ -240,6 +282,8 @@ enum TranslationVerifier {
             explanationDisablesDoubaoThinking: explanationBody.contains("disabled"),
             explanationRequestRequiresConciseOutput: explanationRequestRequiresConciseOutput,
             explanationMarkdownRenderingSupported: explanationMarkdownRenderingSupported,
+            translationPopoverGrowsAndCapsHeight:
+                translationPopoverGrowsAndCapsHeight,
             explanationPopoverGrowsAndCapsHeight: explanationPopoverGrowsAndCapsHeight,
             openAIEndpointNormalizesToChatCompletions: normalizedEndpoint?.absoluteString
                 == "https://example.invalid/v1/chat/completions"

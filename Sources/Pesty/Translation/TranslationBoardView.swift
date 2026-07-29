@@ -13,10 +13,19 @@ struct TranslationBoardView: View {
             Divider().opacity(0.45)
             translationContent
         }
-        .frame(width: AssistantPopoverLayout.width, height: AssistantPopoverLayout.translationHeight)
+        .frame(
+            width: AssistantPopoverLayout.width,
+            height: AssistantPopoverLayout.preferredTranslationHeight(
+                translation: center.translatedText
+            )
+        )
         .background(opaqueBoardSurface)
         .accessibilityIdentifier("pesty-translation-board")
-        .onAppear { AutomatedUITestProbe.recordTranslationBoard() }
+        .onAppear {
+            updatePopoverHeight()
+            AutomatedUITestProbe.recordTranslationBoard()
+        }
+        .onChange(of: center.translatedText) { updatePopoverHeight() }
     }
 
     private var header: some View {
@@ -162,15 +171,6 @@ struct TranslationBoardView: View {
 
     private var translationResult: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(center.sourceText)
-                .font(.system(size: 12))
-                .foregroundStyle(palette.textSecondary.swiftUIColor)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(palette.fieldBackground.swiftUIColor, in: RoundedRectangle(cornerRadius: 9))
             HStack {
                 Text(targetTitle)
                     .font(.system(size: 13, weight: .semibold))
@@ -189,9 +189,10 @@ struct TranslationBoardView: View {
             }
             HStack {
                 Spacer()
-                Button(L10n.copyTranslation) { copyTranslation() }
+                Button(L10n.copyTranslation) { center.copyResult() }
                     .buttonStyle(.borderless)
                     .font(.system(size: 12, weight: .medium))
+                    .accessibilityIdentifier("pesty-translation-copy")
             }
         }
         .padding(14)
@@ -298,9 +299,12 @@ struct TranslationBoardView: View {
 
     private var targetTitle: String { center.targetLanguage.displayName }
 
-    private func copyTranslation() {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(center.translatedText, forType: .string)
+    private func updatePopoverHeight() {
+        AssistantPopoverController.shared.updatePreferredHeight(
+            AssistantPopoverLayout.preferredTranslationHeight(
+                translation: center.translatedText
+            ),
+            for: .translation
+        )
     }
 }

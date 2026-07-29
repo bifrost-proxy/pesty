@@ -112,9 +112,10 @@ struct ExplanationBoardView: View {
             }
             HStack {
                 Spacer()
-                Button(L10n.copyExplanation) { copyExplanation() }
+                Button(L10n.copyExplanation) { center.copyResult() }
                     .buttonStyle(.borderless)
                     .font(.system(size: 11, weight: .medium))
+                    .accessibilityIdentifier("pesty-explanation-copy")
             }
         }
         .padding(10)
@@ -172,12 +173,6 @@ struct ExplanationBoardView: View {
             blue: palette.cardBody.blue,
             opacity: 1
         )
-    }
-
-    private func copyExplanation() {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(center.explanationText, forType: .string)
     }
 
     private func updatePopoverHeight() {
