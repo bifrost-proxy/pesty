@@ -137,15 +137,6 @@ enum L10n {
     static var openAccessibilitySettingsAgain: String {
         text("Open System Settings Again", "再次打开系统设置")
     }
-    static func accessibilityGuideExactPrompt(
-        language: AppLanguage
-    ) -> String {
-        text(
-            "Find Pesty.app, then turn on the switch on the right.",
-            "找到 Pesty.app，然后打开右侧开关完成授权。",
-            language: language
-        )
-    }
     static func accessibilityGuideListPrompt(
         language: AppLanguage
     ) -> String {
