@@ -5,6 +5,7 @@
 一款原生、轻量、开源的 macOS 剪贴板历史工具。
 
 [![最新版本](https://img.shields.io/github/v/release/bifrost-proxy/pesty?label=release&style=flat-square)](https://github.com/bifrost-proxy/pesty/releases/latest)
+[![累计下载](https://img.shields.io/github/downloads/bifrost-proxy/pesty/total?style=flat-square)](https://github.com/bifrost-proxy/pesty/releases)
 [![许可证](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
 ![系统要求](https://img.shields.io/badge/macOS-14%2B-black?style=flat-square&logo=apple)
 ![处理器](https://img.shields.io/badge/Apple%20Silicon%20%2B%20Intel-universal-orange?style=flat-square)
