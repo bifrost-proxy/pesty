@@ -391,6 +391,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     func showBar() {
+        ClipPreviewWindowController.shared.dismiss()
         let front = NSWorkspace.shared.frontmostApplication
         if front?.bundleIdentifier != Bundle.main.bundleIdentifier {
             previousApp = front
@@ -416,11 +417,30 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     func hideBar(completion: (() -> Void)? = nil) {
         stopKeyMonitor()
+        ClipPreviewWindowController.shared.dismiss()
         guard let barController else {
             completion?()
             return
         }
         barController.hide(completion: completion)
+    }
+
+    func toggleSelectedPreview() {
+        guard let itemID = store.selectedID,
+              let parentWindow = barController?.window,
+              let context = ClipStripGeometryBridge.shared.context(
+                for: itemID
+              ) else {
+            return
+        }
+        ClipPreviewWindowController.shared.toggle(
+            context: context,
+            parentWindow: parentWindow
+        )
+    }
+
+    func closePreview() {
+        ClipPreviewWindowController.shared.dismiss()
     }
 
     func pasteSelected() {
@@ -809,17 +829,36 @@ final class AppController: NSObject, NSApplicationDelegate {
         let flags = event.modifierFlags
         let cmd = flags.contains(.command)
         let ctrl = flags.contains(.control)
-        let textEditor = NSApp.keyWindow?.firstResponder as? NSTextView
+        let option = flags.contains(.option)
+        let shift = flags.contains(.shift)
+        let eventWindow = event.window ?? NSApp.keyWindow
+        let previewWindowIsKey = ClipPreviewWindowController.shared.owns(
+            eventWindow
+        )
+        let textEditor = eventWindow?.firstResponder as? NSTextView
         let isComposingText = textEditor?.hasMarkedText() == true
 
         if isComposingText {
             return event
         }
-        if textEditor?.isFieldEditor == true {
+        if textEditor?.isFieldEditor == true, !previewWindowIsKey {
             return event
         }
 
+        if code == kVK_Escape,
+           ClipPreviewWindowController.shared.isVisible {
+            closePreview()
+            return nil
+        }
+
+        if code == kVK_Space,
+           !cmd, !ctrl, !option, !shift {
+            toggleSelectedPreview()
+            return nil
+        }
+
         if cmd, code == kVK_ANSI_F {
+            closePreview()
             SearchInputBridge.shared.requestActivation()
             return nil
         }
@@ -861,11 +900,12 @@ final class AppController: NSObject, NSApplicationDelegate {
             break
         }
 
-        if textEditor != nil {
+        if textEditor != nil, !previewWindowIsKey {
             return event
         }
 
         if !cmd && !ctrl {
+            closePreview()
             SearchInputBridge.shared.requestActivation(replaying: event)
             return nil
         }

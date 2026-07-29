@@ -179,7 +179,11 @@ struct VirtualizedClipStrip: NSViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, NSCollectionViewDataSource {
+    final class Coordinator:
+        NSObject,
+        NSCollectionViewDataSource,
+        ClipStripGeometryProviding
+    {
         private weak var collectionView: NSCollectionView?
         private var items: [ClipItem] = []
         private var itemIDs: [UUID] = []
@@ -193,6 +197,7 @@ struct VirtualizedClipStrip: NSViewRepresentable {
 
         func attach(collectionView: NSCollectionView) {
             self.collectionView = collectionView
+            ClipStripGeometryBridge.shared.connect(self)
             presentationObserver = NotificationCenter.default.addObserver(
                 forName: .pestyBarDidFinishPresentation,
                 object: nil,
@@ -205,6 +210,7 @@ struct VirtualizedClipStrip: NSViewRepresentable {
         }
 
         func detach() {
+            ClipStripGeometryBridge.shared.disconnect(self)
             if let presentationObserver {
                 NotificationCenter.default.removeObserver(presentationObserver)
             }
@@ -308,6 +314,30 @@ struct VirtualizedClipStrip: NSViewRepresentable {
             return cell
         }
 
+        func previewContext(for itemID: UUID) -> ClipPreviewContext? {
+            guard let collectionView,
+                  let window = collectionView.window,
+                  let index = indexByID[itemID],
+                  items.indices.contains(index) else {
+                return nil
+            }
+            collectionView.layoutSubtreeIfNeeded()
+            guard let attributes = collectionView.collectionViewLayout?
+                .layoutAttributesForItem(
+                    at: IndexPath(item: index, section: 0)
+                ) else {
+                return nil
+            }
+            let frameInWindow = collectionView.convert(
+                attributes.frame,
+                to: nil
+            )
+            return ClipPreviewContext(
+                item: items[index],
+                cardFrameInScreen: window.convertToScreen(frameInWindow)
+            )
+        }
+
         private func ensureSelectedIsVisibleAfterLayout() {
             let expectedID = selectedID
             DispatchQueue.main.async { [weak self] in
@@ -316,6 +346,11 @@ struct VirtualizedClipStrip: NSViewRepresentable {
                       let expectedID,
                       let index = self.indexByID[expectedID],
                       let collectionView = self.collectionView else { return }
+                defer {
+                    ClipPreviewWindowController.shared.selectionDidChange(
+                        to: expectedID
+                    )
+                }
                 collectionView.layoutSubtreeIfNeeded()
                 if self.updateItemSizeIfPossible() {
                     collectionView.reloadData()
