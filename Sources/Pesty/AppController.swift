@@ -600,23 +600,14 @@ final class AppController: NSObject, NSApplicationDelegate {
             )
         }
 
-        let exactGuide =
+        let listGuide =
             AccessibilitySettingsGuideLayout.presentation(
                 in: AccessibilitySettingsGuideLayout.referenceWindowSize
             )
-        let fallbackGuide =
-            AccessibilitySettingsGuideLayout.presentation(
-                in: AccessibilitySettingsGuideLayout.referenceWindowSize,
-                listWasScrolled: true
-            )
-        guard exactGuide.mode == .exactPestyRow,
-              abs(exactGuide.highlightFrame.minX - 223.05) < 0.5,
-              abs(exactGuide.highlightFrame.minY - 369) < 0.5,
-              abs(exactGuide.highlightFrame.maxX - 711) < 0.5,
-              exactGuide.highlightFrame.height == 40,
-              fallbackGuide.mode == .applicationList,
-              fallbackGuide.highlightFrame.width >= 260,
-              fallbackGuide.highlightFrame.height >= 260 else {
+        guard abs(listGuide.highlightFrame.minX - 223.05) < 0.5,
+              listGuide.highlightFrame.minY == 52,
+              abs(listGuide.highlightFrame.maxX - 711) < 0.5,
+              listGuide.highlightFrame.height == 406 else {
             throw SettingsAccessVerificationFailure(
                 description: "Accessibility Settings guide layout is invalid"
             )

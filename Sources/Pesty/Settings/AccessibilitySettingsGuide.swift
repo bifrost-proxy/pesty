@@ -3,61 +3,17 @@ import AppKit
 import SwiftUI
 
 struct AccessibilitySettingsGuidePresentation: Equatable {
-    enum Mode: Equatable {
-        case exactPestyRow
-        case applicationList
-    }
-
-    let mode: Mode
     let highlightFrame: CGRect
 }
 
 enum AccessibilitySettingsGuideLayout {
     static let referenceWindowSize = CGSize(width: 723, height: 470)
 
-    private static let contentTop: CGFloat = 89
-    private static let contentBottomInset: CGFloat = 21
-    private static let rowHeight: CGFloat = 40
-    private static let expectedPestyRowIndex = 7
-
     static func presentation(
-        in windowSize: CGSize,
-        listWasScrolled: Bool = false
+        in windowSize: CGSize
     ) -> AccessibilitySettingsGuidePresentation {
-        let listFrame = applicationListFrame(in: windowSize)
-        let pestyRow = CGRect(
-            x: listFrame.minX,
-            y: contentTop
-                + CGFloat(expectedPestyRowIndex) * rowHeight,
-            width: listFrame.width,
-            height: rowHeight
-        )
-        let visibleRowsFrame = CGRect(
-            x: listFrame.minX,
-            y: contentTop,
-            width: listFrame.width,
-            height: max(
-                0,
-                windowSize.height - contentTop - contentBottomInset
-            )
-        )
-        let matchesVerifiedWidth =
-            abs(windowSize.width - referenceWindowSize.width) <= 40
-        let canShowEstimatedRow =
-            !listWasScrolled
-            && matchesVerifiedWidth
-            && visibleRowsFrame.contains(pestyRow)
-
-        if canShowEstimatedRow {
-            return AccessibilitySettingsGuidePresentation(
-                mode: .exactPestyRow,
-                highlightFrame: pestyRow
-            )
-        }
-
         return AccessibilitySettingsGuidePresentation(
-            mode: .applicationList,
-            highlightFrame: listFrame
+            highlightFrame: applicationListFrame(in: windowSize)
         )
     }
 
@@ -72,12 +28,6 @@ enum AccessibilitySettingsGuideLayout {
     }
 }
 
-@Observable
-@MainActor
-private final class AccessibilitySettingsGuideState {
-    var listWasScrolled = false
-}
-
 @MainActor
 final class AccessibilitySettingsGuideController: NSObject {
     static let shared = AccessibilitySettingsGuideController()
@@ -89,10 +39,8 @@ final class AccessibilitySettingsGuideController: NSObject {
 
     private var panel: NSPanel?
     private var timer: Timer?
-    private var globalEventMonitor: Any?
     private var expiresAt = Date.distantPast
     private var forcePresentation = false
-    private let guideState = AccessibilitySettingsGuideState()
 
     private(set) var isPresenting = false
 
@@ -104,7 +52,6 @@ final class AccessibilitySettingsGuideController: NSObject {
 
         forcePresentation = force
         expiresAt = Date().addingTimeInterval(180)
-        guideState.listWasScrolled = false
         ensurePanel()
         startTracking()
         refresh()
@@ -113,10 +60,6 @@ final class AccessibilitySettingsGuideController: NSObject {
     func dismiss() {
         timer?.invalidate()
         timer = nil
-        if let globalEventMonitor {
-            NSEvent.removeMonitor(globalEventMonitor)
-            self.globalEventMonitor = nil
-        }
         panel?.orderOut(nil)
         isPresenting = false
         forcePresentation = false
@@ -125,9 +68,7 @@ final class AccessibilitySettingsGuideController: NSObject {
     private func ensurePanel() {
         if let panel {
             panel.contentView = NSHostingView(
-                rootView: AccessibilitySettingsGuideOverlay(
-                    state: guideState
-                )
+                rootView: AccessibilitySettingsGuideOverlay()
             )
             return
         }
@@ -152,9 +93,7 @@ final class AccessibilitySettingsGuideController: NSObject {
             .ignoresCycle,
         ]
         panel.contentView = NSHostingView(
-            rootView: AccessibilitySettingsGuideOverlay(
-                state: guideState
-            )
+            rootView: AccessibilitySettingsGuideOverlay()
         )
         self.panel = panel
     }
@@ -170,45 +109,6 @@ final class AccessibilitySettingsGuideController: NSObject {
         )
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
-
-        globalEventMonitor = NSEvent.addGlobalMonitorForEvents(
-            matching: [.leftMouseDragged, .scrollWheel]
-        ) { [weak self] event in
-            let eventType = event.type
-            let mouseLocation = NSEvent.mouseLocation
-            Task { @MainActor [weak self] in
-                self?.handleGlobalEvent(
-                    type: eventType,
-                    mouseLocation: mouseLocation
-                )
-            }
-        }
-    }
-
-    private func handleGlobalEvent(
-        type: NSEvent.EventType,
-        mouseLocation: CGPoint
-    ) {
-        guard isPresenting else { return }
-
-        if type == .scrollWheel,
-           let panel,
-           applicationListScreenFrame(for: panel).contains(mouseLocation) {
-            guideState.listWasScrolled = true
-        }
-
-        refresh()
-    }
-
-    private func applicationListScreenFrame(for panel: NSPanel) -> CGRect {
-        let localFrame = AccessibilitySettingsGuideLayout
-            .applicationListFrame(in: panel.frame.size)
-        return CGRect(
-            x: panel.frame.minX + localFrame.minX,
-            y: panel.frame.maxY - localFrame.maxY,
-            width: localFrame.width,
-            height: localFrame.height
-        )
     }
 
     @objc private func refresh() {
@@ -304,23 +204,17 @@ final class AccessibilitySettingsGuideController: NSObject {
 
 private struct AccessibilitySettingsGuideOverlay: View {
     @Bindable private var settings = Settings.shared
-    @Bindable var state: AccessibilitySettingsGuideState
 
     var body: some View {
         GeometryReader { proxy in
             let presentation =
                 AccessibilitySettingsGuideLayout.presentation(
-                    in: proxy.size,
-                    listWasScrolled: state.listWasScrolled
+                    in: proxy.size
                 )
             let highlight = presentation.highlightFrame
-            let prompt = presentation.mode == .exactPestyRow
-                ? L10n.accessibilityGuideExactPrompt(
-                    language: settings.language
-                )
-                : L10n.accessibilityGuideListPrompt(
-                    language: settings.language
-                )
+            let prompt = L10n.accessibilityGuideListPrompt(
+                language: settings.language
+            )
 
             ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
