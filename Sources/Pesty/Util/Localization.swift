@@ -28,6 +28,14 @@ enum L10n {
         currentLanguage == .chinese ? chinese : english
     }
 
+    static func text(
+        _ english: String,
+        _ chinese: String,
+        language: AppLanguage
+    ) -> String {
+        language == .chinese ? chinese : english
+    }
+
     static var general: String { text("General", "通用") }
     static var about: String { text("About", "关于") }
     static var activation: String { text("Activation", "快捷操作") }
@@ -129,16 +137,13 @@ enum L10n {
     static var openAccessibilitySettingsAgain: String {
         text("Open System Settings Again", "再次打开系统设置")
     }
-    static var accessibilityGuideExactTitle: String {
-        text("Turn on Pesty here", "在这里打开 Pesty")
-    }
-    static var accessibilityGuideListTitle: String {
-        text("Find Pesty in this list", "在列表中找到 Pesty")
-    }
-    static var accessibilityGuideMessage: String {
+    static func accessibilityGuideListPrompt(
+        language: AppLanguage
+    ) -> String {
         text(
-            "Turn on the switch on the right to finish.",
-            "打开右侧开关即可完成授权。"
+            "Find Pesty.app in this list, then turn on the switch on the right.",
+            "在列表中找到 Pesty.app，然后打开右侧开关完成授权。",
+            language: language
         )
     }
     static var accessibilityReadyToRestart: String {
@@ -351,6 +356,13 @@ enum L10n {
         text("MIT Licensed · Made with SwiftUI", "MIT 许可 · 使用 SwiftUI 制作")
     }
     static var updateAvailable: String { text("Update Available", "发现新版本") }
+    static var updateProgressTitle: String {
+        text("Pesty Update", "Pesty 更新")
+    }
+    static var updateProgressDescription: String {
+        text("You can keep using Pesty while this finishes. Pesty will restart automatically when installation begins.",
+             "更新完成前你仍可继续使用 Pesty。开始安装后，Pesty 会自动重启。")
+    }
     static func updateAvailableMessage(_ version: String) -> String {
         text("Pesty \(version) is ready to install.",
              "Pesty \(version) 已可安装。")
@@ -358,11 +370,37 @@ enum L10n {
     static func updateToVersion(_ version: String) -> String {
         text("Update to Pesty \(version)", "更新到 Pesty \(version)")
     }
+    static var checkingForUpdates: String {
+        text("Checking for updates…", "正在检查更新…")
+    }
+    static var downloadingUpdate: String {
+        text("Downloading update…", "正在下载更新…")
+    }
     static func downloadingUpdate(_ version: String) -> String {
         text("Downloading Pesty \(version)…", "正在下载 Pesty \(version)…")
     }
+    static func downloadingUpdate(_ version: String, percentage: Int) -> String {
+        text("Downloading Pesty \(version)… \(percentage)%",
+             "正在下载 Pesty \(version)… \(percentage)%")
+    }
+    static var verifyingUpdate: String {
+        text("Verifying update…", "正在校验更新…")
+    }
+    static func verifyingUpdate(_ version: String) -> String {
+        text("Verifying Pesty \(version)…", "正在校验 Pesty \(version)…")
+    }
+    static var preparingUpdate: String {
+        text("Preparing update…", "正在准备更新…")
+    }
+    static func preparingUpdate(_ version: String) -> String {
+        text("Preparing Pesty \(version)…", "正在准备 Pesty \(version)…")
+    }
+    static var installingUpdate: String {
+        text("Installing and restarting…", "正在安装并重启…")
+    }
     static func installingUpdate(_ version: String) -> String {
-        text("Installing Pesty \(version)…", "正在安装 Pesty \(version)…")
+        text("Installing and restarting Pesty \(version)…",
+             "正在安装并重启 Pesty \(version)…")
     }
     static var installAndRestart: String {
         text("Install and Restart", "安装并重启")
@@ -474,6 +512,21 @@ enum L10n {
     }
     static var image: String { text("Image", "图片") }
     static var color: String { text("Color", "颜色") }
+    static var previewUnavailable: String {
+        text(
+            "A preview is not available for this clipboard item.",
+            "无法预览这条剪贴板内容。"
+        )
+    }
+    static var previewFileUnavailable: String {
+        text(
+            "The original file is no longer available.",
+            "原始文件已不存在或暂时无法访问。"
+        )
+    }
+    static var revealInFinder: String {
+        text("Show in Finder", "在 Finder 中显示")
+    }
     static func characterCount(_ count: Int) -> String {
         currentLanguage == .chinese ? "\(count) 个字符" : "\(count) characters"
     }

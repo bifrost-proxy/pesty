@@ -30,6 +30,17 @@ enum LocalizationVerifier {
                 (L10n.searchClipboard, "Search"),
                 (L10n.checkForUpdates, "Check for Updates…"),
                 (L10n.updateToVersion("1.2.3"), "Update to Pesty 1.2.3"),
+                (L10n.checkingForUpdates, "Checking for updates…"),
+                (
+                    L10n.downloadingUpdate("1.2.3", percentage: 42),
+                    "Downloading Pesty 1.2.3… 42%"
+                ),
+                (L10n.verifyingUpdate("1.2.3"), "Verifying Pesty 1.2.3…"),
+                (L10n.preparingUpdate("1.2.3"), "Preparing Pesty 1.2.3…"),
+                (
+                    L10n.installingUpdate("1.2.3"),
+                    "Installing and restarting Pesty 1.2.3…"
+                ),
                 (L10n.unlimited, "Unlimited"),
                 (
                     L10n.historyLimitDelayDescription,
@@ -46,16 +57,8 @@ enum LocalizationVerifier {
                     "Open Accessibility Settings"
                 ),
                 (
-                    L10n.accessibilityGuideExactTitle,
-                    "Turn on Pesty here"
-                ),
-                (
-                    L10n.accessibilityGuideListTitle,
-                    "Find Pesty in this list"
-                ),
-                (
-                    L10n.accessibilityGuideMessage,
-                    "Turn on the switch on the right to finish."
+                    L10n.accessibilityGuideListPrompt(language: .english),
+                    "Find Pesty.app in this list, then turn on the switch on the right."
                 ),
                 (
                     L10n.accessibilityReadyToRestart,
@@ -118,6 +121,17 @@ enum LocalizationVerifier {
                 (L10n.searchClipboard, "搜索"),
                 (L10n.checkForUpdates, "检查更新…"),
                 (L10n.updateToVersion("1.2.3"), "更新到 Pesty 1.2.3"),
+                (L10n.checkingForUpdates, "正在检查更新…"),
+                (
+                    L10n.downloadingUpdate("1.2.3", percentage: 42),
+                    "正在下载 Pesty 1.2.3… 42%"
+                ),
+                (L10n.verifyingUpdate("1.2.3"), "正在校验 Pesty 1.2.3…"),
+                (L10n.preparingUpdate("1.2.3"), "正在准备 Pesty 1.2.3…"),
+                (
+                    L10n.installingUpdate("1.2.3"),
+                    "正在安装并重启 Pesty 1.2.3…"
+                ),
                 (L10n.unlimited, "无限"),
                 (
                     L10n.historyLimitDelayDescription,
@@ -134,16 +148,8 @@ enum LocalizationVerifier {
                     "打开辅助功能设置"
                 ),
                 (
-                    L10n.accessibilityGuideExactTitle,
-                    "在这里打开 Pesty"
-                ),
-                (
-                    L10n.accessibilityGuideListTitle,
-                    "在列表中找到 Pesty"
-                ),
-                (
-                    L10n.accessibilityGuideMessage,
-                    "打开右侧开关即可完成授权。"
+                    L10n.accessibilityGuideListPrompt(language: .chinese),
+                    "在列表中找到 Pesty.app，然后打开右侧开关完成授权。"
                 ),
                 (
                     L10n.accessibilityReadyToRestart,

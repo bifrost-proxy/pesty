@@ -113,11 +113,17 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowDidResignKey(_ notification: Notification) {
-        guard !isPresenting, !AppController.shared.suppressAutoHide else { return }
+        guard !isPresenting,
+              !AppController.shared.suppressAutoHide,
+              !ClipPreviewWindowController.shared.owns(NSApp.keyWindow)
+        else {
+            return
+        }
         DispatchQueue.main.async { [weak self] in
             guard let self,
                   self.window?.isKeyWindow != true,
-                  !self.isMouseInsidePanel else { return }
+                  !ClipPreviewWindowController.shared.owns(NSApp.keyWindow),
+                  !self.isMouseInsidePestyWindows else { return }
             AppController.shared.hideBar()
         }
     }
@@ -136,7 +142,8 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
                 return event
             }
             if event.windowNumber != panelWindowNumber,
-               !self.isMouseInsidePanel {
+               !ClipPreviewWindowController.shared.owns(event.window),
+               !self.isMouseInsidePestyWindows {
                 DispatchQueue.main.async { [weak self] in
                     self?.hideForOutsideInteraction()
                 }
@@ -146,7 +153,7 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
 
         globalOutsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self, !self.isMouseInsidePanel else { return }
+                guard let self, !self.isMouseInsidePestyWindows else { return }
                 self.hideForOutsideInteraction()
             }
         }
@@ -166,15 +173,20 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
     private func hideForOutsideInteraction() {
         guard !isPresenting,
               window?.isVisible == true,
-              !isMouseInsidePanel,
+              !isMouseInsidePestyWindows,
               !AppController.shared.suppressAutoHide else { return }
         AppController.shared.hideBar()
     }
 
-    private var isMouseInsidePanel: Bool {
-        guard let panel = window, panel.isVisible else { return false }
-        return panel.frame.contains(NSEvent.mouseLocation)
-            || AssistantPopoverController.shared.screenFrame?.contains(NSEvent.mouseLocation) == true
+    private var isMouseInsidePestyWindows: Bool {
+        let isInsideBar = window?.isVisible == true
+            && window?.frame.contains(NSEvent.mouseLocation) == true
+        let isInsideAssistant =
+            AssistantPopoverController.shared.screenFrame?
+                .contains(NSEvent.mouseLocation) == true
+        return isInsideBar
+            || isInsideAssistant
+            || ClipPreviewWindowController.shared.isMouseInside
     }
 
     private func finishHiding() {

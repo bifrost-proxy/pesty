@@ -13,6 +13,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var barController: BarWindowController?
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
+    private var updateProgressWindow: UpdateProgressWindowController?
     private let settingsWindowState = SettingsWindowState()
     private var keyMonitor: Any?
     private var languageObserver: NSObjectProtocol?
@@ -57,6 +58,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             Task { @MainActor [weak self] in
                 self?.rebuildStatusItemMenu()
                 self?.settingsWindow?.title = L10n.settingsWindowTitle
+                self?.updateProgressWindow?.window?.title = L10n.updateProgressTitle
             }
         }
         NotificationCenter.default.addObserver(
@@ -209,10 +211,16 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func rebuildStatusItemMenu() {
         guard let item = statusItem else { return }
         let menu = NSMenu()
-        if let release = UpdateManager.shared.availableRelease {
+        let updater = UpdateManager.shared
+        if updater.isBusy {
+            let progress = NSMenuItem()
+            progress.view = UpdateProgressMenuItemView(updater: updater)
+            menu.addItem(progress)
+            menu.addItem(.separator())
+        } else if let release = updater.availableRelease {
             let update = menu.addItem(
                 withTitle: updateActionTitle(for: release),
-                action: UpdateManager.shared.isInstalling ? nil : #selector(menuInstallUpdate),
+                action: #selector(menuInstallUpdate),
                 keyEquivalent: ""
             )
             update.target = self
@@ -227,13 +235,12 @@ final class AppController: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(withTitle: L10n.settings, action: #selector(menuSettings), keyEquivalent: ",").target = self
         let check = menu.addItem(
-            withTitle: L10n.checkForUpdates,
+            withTitle: updater.isBusy ? updater.statusText : L10n.checkForUpdates,
             action: #selector(menuCheckForUpdates),
             keyEquivalent: ""
         )
         check.target = self
-        check.isEnabled = UpdateManager.shared.activity != .checking
-            && !UpdateManager.shared.isInstalling
+        check.isEnabled = !updater.isBusy
         menu.addItem(withTitle: L10n.clearHistory, action: #selector(menuClear), keyEquivalent: "").target = self
         menu.addItem(.separator())
         let about = menu.addItem(withTitle: L10n.aboutPesty, action: #selector(menuAbout), keyEquivalent: "")
@@ -247,12 +254,19 @@ final class AppController: NSObject, NSApplicationDelegate {
     @objc private func menuClear() { requestClearHistoryConfirmation() }
     @objc private func menuQuit() { NSApp.terminate(nil) }
     @objc private func menuAbout() { showAbout() }
-    @objc private func menuInstallUpdate() { UpdateManager.shared.installAvailableUpdate() }
+    @objc private func menuInstallUpdate() { installAvailableUpdate() }
     @objc private func menuCheckForUpdates() { checkForUpdatesManually() }
 
     func checkForUpdatesManually() {
+        let updater = UpdateManager.shared
+        if updater.isBusy {
+            presentUpdateProgress()
+            return
+        }
+        presentUpdateProgress()
         Task {
-            let outcome = await UpdateManager.shared.checkForUpdates()
+            let outcome = await updater.checkForUpdates()
+            dismissUpdateProgress()
             switch outcome {
             case .updateAvailable(let release):
                 let alert = NSAlert()
@@ -262,7 +276,7 @@ final class AppController: NSObject, NSApplicationDelegate {
                 alert.addButton(withTitle: L10n.later)
                 NSApp.activate(ignoringOtherApps: true)
                 if alert.runModal() == .alertFirstButtonReturn {
-                    UpdateManager.shared.installAvailableUpdate()
+                    installAvailableUpdate()
                 }
             case .upToDate:
                 showUpdateAlert(
@@ -273,6 +287,16 @@ final class AppController: NSObject, NSApplicationDelegate {
                 showUpdateAlert(title: L10n.updateCheckFailed, message: message)
             }
         }
+    }
+
+    func installAvailableUpdate() {
+        guard UpdateManager.shared.availableRelease != nil else { return }
+        if UpdateManager.shared.isInstalling {
+            presentUpdateProgress()
+            return
+        }
+        presentUpdateProgress()
+        UpdateManager.shared.installAvailableUpdate()
     }
 
     func showAbout() {
@@ -371,6 +395,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     func showBar() {
+        ClipPreviewWindowController.shared.dismiss()
         let front = NSWorkspace.shared.frontmostApplication
         if front?.bundleIdentifier != Bundle.main.bundleIdentifier {
             previousApp = front
@@ -398,11 +423,32 @@ final class AppController: NSObject, NSApplicationDelegate {
         stopKeyMonitor()
         TranslationCenter.shared.dismiss()
         ExplanationCenter.shared.dismiss()
+        ClipPreviewWindowController.shared.dismiss()
         guard let barController else {
             completion?()
             return
         }
         barController.hide(completion: completion)
+    }
+
+    func toggleSelectedPreview() {
+        guard let itemID = store.selectedID,
+              let parentWindow = barController?.window,
+              let context = ClipStripGeometryBridge.shared.context(
+                for: itemID
+              ) else {
+            return
+        }
+        TranslationCenter.shared.dismiss()
+        ExplanationCenter.shared.dismiss()
+        ClipPreviewWindowController.shared.toggle(
+            context: context,
+            parentWindow: parentWindow
+        )
+    }
+
+    func closePreview() {
+        ClipPreviewWindowController.shared.dismiss()
     }
 
     func pasteSelected() {
@@ -508,6 +554,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     func toggleTranslationBoard() {
         ExplanationCenter.shared.dismiss()
+        ClipPreviewWindowController.shared.dismiss()
         if barController?.window?.isVisible == true {
             let item = store.selectedItem
             TranslationCenter.shared.toggle(for: item)
@@ -525,6 +572,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     func showTranslationBoard(for item: ClipItem) {
         ExplanationCenter.shared.dismiss()
+        ClipPreviewWindowController.shared.dismiss()
         if barController?.window?.isVisible == true {
             TranslationCenter.shared.present(for: item)
             presentAssistantPopoverIfNeeded(kind: .translation, item: item)
@@ -539,6 +587,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     func showExplanationBoard(for item: ClipItem) {
         TranslationCenter.shared.dismiss()
+        ClipPreviewWindowController.shared.dismiss()
         if barController?.window?.isVisible == true {
             ExplanationCenter.shared.present(for: item)
             presentAssistantPopoverIfNeeded(kind: .explanation, item: item)
@@ -553,6 +602,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     func toggleExplanationBoard() {
         TranslationCenter.shared.dismiss()
+        ClipPreviewWindowController.shared.dismiss()
         if barController?.window?.isVisible == true {
             let item = store.selectedItem
             ExplanationCenter.shared.toggle(for: item)
@@ -717,21 +767,14 @@ final class AppController: NSObject, NSApplicationDelegate {
             )
         }
 
-        let exactGuide =
+        let listGuide =
             AccessibilitySettingsGuideLayout.presentation(
                 in: AccessibilitySettingsGuideLayout.referenceWindowSize
             )
-        let fallbackGuide =
-            AccessibilitySettingsGuideLayout.presentation(
-                in: CGSize(width: 980, height: 620)
-            )
-        guard exactGuide.mode == .exactPestyRow,
-              abs(exactGuide.highlightFrame.minX - 237.87) < 0.5,
-              abs(exactGuide.highlightFrame.minY - 406.8) < 0.5,
-              exactGuide.highlightFrame.height == 46,
-              fallbackGuide.mode == .applicationList,
-              fallbackGuide.highlightFrame.width >= 260,
-              fallbackGuide.highlightFrame.height >= 260 else {
+        guard abs(listGuide.highlightFrame.minX - 223.05) < 0.5,
+              listGuide.highlightFrame.minY == 52,
+              abs(listGuide.highlightFrame.maxX - 711) < 0.5,
+              listGuide.highlightFrame.height == 406 else {
             throw SettingsAccessVerificationFailure(
                 description: "Accessibility Settings guide layout is invalid"
             )
@@ -773,6 +816,21 @@ final class AppController: NSObject, NSApplicationDelegate {
                 description: "visible menu icon did not expose the immediate update action"
             )
         }
+        UpdateManager.shared.injectActivityForVerification(
+            .downloading(progress: 0.42)
+        )
+        rebuildStatusItemMenu()
+        guard UpdateManager.shared.progressPercentage == 42,
+              statusItem?.menu?.items.contains(where: {
+                  $0.view?.accessibilityIdentifier()
+                      == "pesty-update-progress-menu-item"
+              }) == true else {
+            throw SettingsAccessVerificationFailure(
+                description: "menu bar update action did not expose download progress"
+            )
+        }
+        UpdateManager.shared.injectActivityForVerification(.idle)
+        rebuildStatusItemMenu()
 
         Settings.shared.showMenuBarIcon = false
         let shouldUseDefaultReopenBehavior = applicationShouldHandleReopen(
@@ -842,16 +900,24 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func configureStatusItemButton(_ button: NSStatusBarButton) {
-        let hasUpdate = UpdateManager.shared.showInMenuBar
+        let updater = UpdateManager.shared
+        let hasUpdate = updater.showInMenuBar
+        let isBusy = updater.isBusy
         button.image = NSImage(
-            systemSymbolName: hasUpdate ? "arrow.down.circle.fill" : "doc.on.clipboard",
-            accessibilityDescription: hasUpdate ? L10n.updateAvailable : "Pesty"
+            systemSymbolName: isBusy
+                ? "arrow.triangle.2.circlepath.circle.fill"
+                : (hasUpdate ? "arrow.down.circle.fill" : "doc.on.clipboard"),
+            accessibilityDescription: isBusy
+                ? updater.statusText
+                : (hasUpdate ? L10n.updateAvailable : "Pesty")
         )
-        button.image?.isTemplate = !hasUpdate
-        button.contentTintColor = hasUpdate ? .systemBlue : nil
-        button.toolTip = hasUpdate
-            ? L10n.updateAvailableMessage(UpdateManager.shared.availableRelease?.version ?? "")
-            : "Pesty"
+        button.image?.isTemplate = !hasUpdate && !isBusy
+        button.contentTintColor = hasUpdate || isBusy ? .systemBlue : nil
+        button.toolTip = isBusy
+            ? updater.statusText
+            : (hasUpdate
+                ? L10n.updateAvailableMessage(updater.availableRelease?.version ?? "")
+                : "Pesty")
     }
 
     private func updateStatusItemAppearance() {
@@ -860,21 +926,28 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func updateActionTitle(for release: AppRelease) -> String {
-        switch UpdateManager.shared.activity {
-        case .downloading:
-            return L10n.downloadingUpdate(release.version)
-        case .installing:
-            return L10n.installingUpdate(release.version)
-        default:
-            return L10n.updateToVersion(release.version)
-        }
+        UpdateManager.shared.isBusy
+            ? UpdateManager.shared.statusText
+            : L10n.updateToVersion(release.version)
     }
 
     private func presentInstallationErrorIfNeeded() {
         guard let message = UpdateManager.shared.lastInstallationError,
               message != presentedUpdateError else { return }
         presentedUpdateError = message
+        dismissUpdateProgress()
         showUpdateAlert(title: L10n.updateInstallFailed, message: message)
+    }
+
+    private func presentUpdateProgress() {
+        if updateProgressWindow == nil {
+            updateProgressWindow = UpdateProgressWindowController()
+        }
+        updateProgressWindow?.present()
+    }
+
+    private func dismissUpdateProgress() {
+        updateProgressWindow?.close()
     }
 
     private func showUpdateAlert(title: String, message: String) {
@@ -903,7 +976,13 @@ final class AppController: NSObject, NSApplicationDelegate {
         let flags = event.modifierFlags
         let cmd = flags.contains(.command)
         let ctrl = flags.contains(.control)
-        let textEditor = NSApp.keyWindow?.firstResponder as? NSTextView
+        let option = flags.contains(.option)
+        let shift = flags.contains(.shift)
+        let eventWindow = event.window ?? NSApp.keyWindow
+        let previewWindowIsKey = ClipPreviewWindowController.shared.owns(
+            eventWindow
+        )
+        let textEditor = eventWindow?.firstResponder as? NSTextView
         let isComposingText = textEditor?.hasMarkedText() == true
 
         if isComposingText {
@@ -946,11 +1025,24 @@ final class AppController: NSObject, NSApplicationDelegate {
             return event
         }
 
-        if textEditor?.isFieldEditor == true {
+        if textEditor?.isFieldEditor == true, !previewWindowIsKey {
             return event
         }
 
+        if code == kVK_Escape,
+           ClipPreviewWindowController.shared.isVisible {
+            closePreview()
+            return nil
+        }
+
+        if code == kVK_Space,
+           !cmd, !ctrl, !option, !shift {
+            toggleSelectedPreview()
+            return nil
+        }
+
         if cmd, code == kVK_ANSI_F {
+            closePreview()
             SearchInputBridge.shared.requestActivation()
             return nil
         }
@@ -992,11 +1084,12 @@ final class AppController: NSObject, NSApplicationDelegate {
             break
         }
 
-        if textEditor != nil {
+        if textEditor != nil, !previewWindowIsKey {
             return event
         }
 
         if !cmd && !ctrl {
+            closePreview()
             SearchInputBridge.shared.requestActivation(replaying: event)
             return nil
         }

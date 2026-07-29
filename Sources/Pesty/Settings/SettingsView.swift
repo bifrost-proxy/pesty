@@ -709,13 +709,22 @@ private struct AboutView: View {
                 .foregroundStyle(.secondary)
                 .padding(.horizontal)
 
-            Button(L10n.checkForUpdates) {
+            Button(updater.isBusy ? updater.statusText : L10n.checkForUpdates) {
                 AppController.shared.checkForUpdatesManually()
             }
             .settingsPrimaryButton()
-            .disabled(
-                updater.activity == .checking || updater.isInstalling
-            )
+            .disabled(updater.isBusy)
+
+            if updater.isBusy {
+                VStack(spacing: 6) {
+                    UpdateProgressIndicator()
+                    Text(updater.statusText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(width: 280)
+                .accessibilityIdentifier("pesty-settings-update-progress")
+            }
 
             HStack(spacing: 18) {
                 Link(

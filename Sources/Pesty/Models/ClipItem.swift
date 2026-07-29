@@ -48,10 +48,15 @@ struct ClipItem: Identifiable, Codable, Equatable {
         if let t = customTitle, !t.isEmpty { return t }
         switch type {
         case .link:
-            if let t = text, let url = URL(string: t.trimmingCharacters(in: .whitespacesAndNewlines)) {
-                return url.host ?? t
+            if let text {
+                let bounded = String(text.prefix(2_048))
+                let candidate = bounded.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let url = URL(string: candidate) {
+                    return url.host ?? String(candidate.prefix(60))
+                }
+                return String(candidate.prefix(60))
             }
-            return text ?? L10n.text("Link", "链接")
+            return L10n.text("Link", "链接")
         case .image:
             return L10n.image
         case .file:
@@ -59,7 +64,10 @@ struct ClipItem: Identifiable, Codable, Equatable {
         case .color:
             return colorHex ?? L10n.color
         default:
-            let firstLine = (text ?? "").split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+            let bounded = String((text ?? "").prefix(256))
+            let firstLine = bounded.firstIndex(where: \.isNewline).map {
+                String(bounded[..<$0])
+            } ?? bounded
             return firstLine.isEmpty ? type.label : String(firstLine.prefix(60))
         }
     }

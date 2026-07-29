@@ -10,6 +10,7 @@ enum AutomatedUITestProbe {
     private(set) static var translationPreviewRendered = false
     private(set) static var explanationBoardRendered = false
     private(set) static var explanationPreviewRendered = false
+    private(set) static var renderedItemIDs = Set<UUID>()
 
     static var isEnabled: Bool {
         ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"] != nil
@@ -21,10 +22,15 @@ enum AutomatedUITestProbe {
         translationPreviewRendered = false
         explanationBoardRendered = false
         explanationPreviewRendered = false
+        renderedItemIDs.removeAll()
     }
 
     static func record(_ item: ClipItem) {
-        guard isEnabled, let text = item.text else { return }
+        guard isEnabled else { return }
+        renderedItemIDs.insert(item.id)
+        guard ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"]
+                != "performance",
+              let text = item.text else { return }
         renderedTexts.insert(text)
     }
 
@@ -64,6 +70,13 @@ enum AutomatedUITestRunner {
         let searchLength: Int
     }
 
+    private struct CleanupResult: Codable {
+        let phase: String
+        let success: Bool
+        let historyCount: Int
+        let removedCount: Int
+    }
+
     private struct PerformanceResult: Codable {
         let phase: String
         let success: Bool
@@ -78,6 +91,13 @@ enum AutomatedUITestRunner {
         let createdCellCount: Int
         let maximumVisibleCellCount: Int
         let maximumAllowedCells: Int
+        let hostingRootCreationCount: Int
+        let maximumHostingRootCreationCount: Int
+        let cellConfigurationCount: Int
+        let configuredItemCount: Int
+        let rapidScrollStepCount: Int
+        let previewBounded: Bool
+        let imageItemCount: Int
         let finalSelectedIndex: Int?
         let source: String
         let searchLength: Int
@@ -97,6 +117,10 @@ enum AutomatedUITestRunner {
         let maximumRenderLatencyMilliseconds: Double
         let textEditorFocusedBeforeClick: Bool
         let textEditorReleasedByClick: Bool
+        let selectionPreservedEventSurface: Bool
+        let doubleClickSelectedItem: Bool
+        let doubleClickRequestedQuickPaste: Bool
+        let doubleClickQuickPasteRequestCount: Int
         let rightArrowConsumedAfterClick: Bool
         let rightArrowMovedSelectionAfterClick: Bool
         let contentIndexRebuildCount: Int
@@ -162,6 +186,18 @@ enum AutomatedUITestRunner {
         let initialCount: Int
         let countAfterCancellation: Int
         let countAfterConfirmation: Int
+        let pinboardCountAfterConfirmation: Int
+    }
+
+    private struct DeletionSyncResult: Codable {
+        let phase: String
+        let success: Bool
+        let historyCount: Int
+        let deletedItemAbsent: Bool
+        let deletedPinboardItemAbsent: Bool
+        let tombstoneCount: Int
+        let staleSnapshotRejected: Bool
+        let recopyAllowed: Bool
     }
 
     private struct SearchInputResult: Codable {
@@ -240,6 +276,42 @@ enum AutomatedUITestRunner {
         let failureReason: String?
     }
 
+    private struct PreviewResult: Codable {
+        let phase: String
+        let success: Bool
+        let textObservedIndex: Int?
+        let textObservedKind: String?
+        let textObservedCharacterCount: Int
+        let richTextRendered: Bool
+        let fileObservedIndex: Int?
+        let fileObservedKind: String?
+        let textPreviewWithinScreen: Bool
+        let richTextPreviewWithinScreen: Bool
+        let imagePreviewWithinScreen: Bool
+        let filePreviewWithinScreen: Bool
+        let previewAvoidedSelectedCards: Bool
+        let arrowTrackedSelection: Bool
+        let titleHeaderRemoved: Bool
+        let translucentBackground: Bool
+        let spaceOpenedPreview: Bool
+        let textWasComplete: Bool
+        let longTextNeededVerticalScrolling: Bool
+        let previewStayedWithinScreen: Bool
+        let rightArrowConsumed: Bool
+        let imageSelectionUpdatedPreview: Bool
+        let imageDecoded: Bool
+        let imageDecodeStayedBounded: Bool
+        let fileSelectionUpdatedPreview: Bool
+        let quickLookURLMatched: Bool
+        let escapeClosedPreview: Bool
+        let spaceReopenedPreview: Bool
+        let secondSpaceClosedPreview: Bool
+        let printableKeyClosedPreview: Bool
+        let printableKeyActivatedSearch: Bool
+        let contentIndexRebuildCount: Int
+        let maximumContentIndexRebuildCount: Int
+    }
+
     private struct QuickPasteResult: Codable {
         let phase: String
         let success: Bool
@@ -294,6 +366,28 @@ enum AutomatedUITestRunner {
             runClearConfirmationTest(controller: controller, runID: runID)
             return
         }
+        if phase == "deletion-sync-seed" {
+            seedDeletionSyncTest(controller: controller, runID: runID)
+            return
+        }
+        if phase == "deletion-sync-restart-1" {
+            verifyDeletionSyncRestart(
+                controller: controller,
+                runID: runID,
+                phase: phase,
+                allowRecopy: false
+            )
+            return
+        }
+        if phase == "deletion-sync-restart-2" {
+            verifyDeletionSyncRestart(
+                controller: controller,
+                runID: runID,
+                phase: phase,
+                allowRecopy: true
+            )
+            return
+        }
         if phase == "search-input" {
             runSearchInputTest(controller: controller)
             return
@@ -320,6 +414,10 @@ enum AutomatedUITestRunner {
         }
         if phase == "doubao-prompt-diagnosis" {
             runDoubaoPromptDiagnostic(controller: controller)
+            return
+        }
+        if phase == "preview" {
+            runPreviewTest(controller: controller, runID: runID)
             return
         }
         let expected = (1...4).map { "pesty-auto-\(runID)-\($0)" }
@@ -399,9 +497,15 @@ enum AutomatedUITestRunner {
         controller.showBar()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            let barWindow = NSApp.windows.first(where: { $0 is BarPanel })
+            if let barWindow {
+                NSApp.activate(ignoringOtherApps: true)
+                barWindow.makeKeyAndOrderFront(nil)
+            }
             let focusEvent = makeKeyEvent(
                 keyCode: UInt16(kVK_ANSI_A),
-                characters: "a"
+                characters: "a",
+                windowNumber: barWindow?.windowNumber ?? 0
             )
             let firstEventConsumedForReplay = focusEvent.map {
                 controller.handleKey($0) == nil
@@ -409,9 +513,9 @@ enum AutomatedUITestRunner {
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 let textFieldCount = descendantViews(
-                    of: NSApp.keyWindow?.contentView
+                    of: barWindow?.contentView
                 ).compactMap { $0 as? NSTextField }.count
-                let editor = NSApp.keyWindow?.firstResponder as? NSTextView
+                let editor = barWindow?.firstResponder as? NSTextView
                 let firstKeyboardEventReplayed =
                     firstEventConsumedForReplay && controller.store.searchText == "a"
                 controller.store.searchText = ""
@@ -423,7 +527,8 @@ enum AutomatedUITestRunner {
                 let markedTextActive = editor?.hasMarkedText() == true
                 let event = makeKeyEvent(
                     keyCode: UInt16(kVK_LeftArrow),
-                    characters: "\u{F702}"
+                    characters: "\u{F702}",
+                    windowNumber: barWindow?.windowNumber ?? 0
                 )
                 let returnedEvent = event.flatMap { controller.handleKey($0) }
                 let compositionEventPassedThrough =
@@ -554,6 +659,323 @@ enum AutomatedUITestRunner {
             )
             writeTranslationSettings(result)
             settingsWindow?.orderOut(nil)
+            exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+        }
+    }
+
+    private static func runPreviewTest(
+        controller: AppController,
+        runID: String
+    ) {
+        guard let testBase = ClipboardStore.automatedTestBase,
+              let imageData = makePreviewImageData(),
+              let imageFileName = controller.store.storeImageData(imageData)
+        else {
+            writePreview(failedPreviewResult())
+            exit(EXIT_FAILURE)
+        }
+
+        let longText = (0..<2_000)
+            .map { "pesty-preview-\(runID)-line-\($0)" }
+            .joined(separator: "\n")
+        let richText = "Pesty rich text preview \(runID)"
+        let richAttributed = NSAttributedString(
+            string: richText,
+            attributes: [
+                .font: NSFont.boldSystemFont(ofSize: 18),
+                .foregroundColor: NSColor.systemBlue,
+            ]
+        )
+        guard let richData = try? richAttributed.data(
+            from: NSRange(location: 0, length: richAttributed.length),
+            documentAttributes: [
+                .documentType: NSAttributedString.DocumentType.rtf,
+            ]
+        ) else {
+            writePreview(failedPreviewResult())
+            exit(EXIT_FAILURE)
+        }
+        let fileURL = testBase.appendingPathComponent(
+            "pesty-preview-\(runID).txt"
+        )
+        do {
+            try Data("Pesty Quick Look preview fixture".utf8).write(
+                to: fileURL,
+                options: .atomic
+            )
+        } catch {
+            writePreview(failedPreviewResult())
+            exit(EXIT_FAILURE)
+        }
+
+        let items = [
+            ClipItem(
+                type: .text,
+                text: longText,
+                sourceBundleID: "com.bifrostproxy.pesty.preview-test",
+                sourceAppName: "Pesty Preview Test",
+                createdAt: Date()
+            ),
+            ClipItem(
+                type: .richText,
+                text: richText,
+                rtfData: richData,
+                sourceBundleID: "com.bifrostproxy.pesty.preview-test",
+                sourceAppName: "Pesty Preview Test",
+                createdAt: Date(timeIntervalSinceNow: -1)
+            ),
+            ClipItem(
+                type: .image,
+                imageFileName: imageFileName,
+                imageHash: "pesty-preview-image-\(runID)",
+                sourceBundleID: "com.bifrostproxy.pesty.preview-test",
+                sourceAppName: "Pesty Preview Test",
+                createdAt: Date(timeIntervalSinceNow: -2)
+            ),
+            ClipItem(
+                type: .file,
+                text: fileURL.lastPathComponent,
+                fileURLs: [fileURL.absoluteString],
+                sourceBundleID: "com.bifrostproxy.pesty.preview-test",
+                sourceAppName: "Pesty Preview Test",
+                createdAt: Date(timeIntervalSinceNow: -3)
+            ),
+        ]
+
+        controller.monitor.stop()
+        AutomatedUITestProbe.reset()
+        VirtualizedClipStripMetrics.reset()
+        controller.store.replaceHistoryForAutomatedStripTest(items)
+        controller.showBar()
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 700_000_000)
+
+            let space = makeKeyEvent(
+                keyCode: UInt16(kVK_Space),
+                characters: " "
+            )
+            let spaceConsumed = space.map {
+                controller.handleKey($0) == nil
+            } ?? false
+            try? await Task.sleep(nanoseconds: 250_000_000)
+
+            let textSnapshot =
+                ClipPreviewWindowController.shared.automationSnapshot()
+            let spaceOpenedPreview =
+                spaceConsumed
+                && textSnapshot.isVisible
+                && textSnapshot.itemID == items[0].id
+                && textSnapshot.contentKind == .text
+            let textWasComplete =
+                textSnapshot.textCharacterCount == longText.count
+            let longTextNeededVerticalScrolling =
+                textSnapshot.textNeedsVerticalScrolling
+            let textPreviewWithinScreen =
+                previewSnapshotIsWithinScreen(textSnapshot)
+
+            let right = makeKeyEvent(
+                keyCode: UInt16(kVK_RightArrow),
+                characters: "\u{F703}"
+            )
+            let firstRightConsumed = right.map {
+                controller.handleKey($0) == nil
+            } ?? false
+            try? await Task.sleep(nanoseconds: 300_000_000)
+
+            let richTextSnapshot =
+                ClipPreviewWindowController.shared.automationSnapshot()
+            let richTextRendered =
+                richTextSnapshot.isVisible
+                && richTextSnapshot.itemID == items[1].id
+                && richTextSnapshot.contentKind == .text
+                && richTextSnapshot.textCharacterCount == richText.count
+            let richTextPreviewWithinScreen =
+                previewSnapshotIsWithinScreen(richTextSnapshot)
+
+            let secondRightConsumed = right.map {
+                controller.handleKey($0) == nil
+            } ?? false
+            try? await Task.sleep(nanoseconds: 700_000_000)
+
+            let imageSnapshot =
+                ClipPreviewWindowController.shared.automationSnapshot()
+            let imagePreviewWithinScreen =
+                previewSnapshotIsWithinScreen(imageSnapshot)
+            let imageSelectionUpdatedPreview =
+                imageSnapshot.isVisible
+                && imageSnapshot.itemID == items[2].id
+                && imageSnapshot.contentKind == .image
+            let imageDecoded =
+                imageSnapshot.imageSourcePixelSize != nil
+                && imageSnapshot.imageDecodedPixelSize != nil
+            let imageDecodeStayedBounded: Bool
+            if let source = imageSnapshot.imageSourcePixelSize,
+               let decoded = imageSnapshot.imageDecodedPixelSize {
+                imageDecodeStayedBounded =
+                    decoded.width <= source.width
+                    && decoded.height <= source.height
+                    && (decoded.width < source.width
+                        || decoded.height < source.height)
+                    && decoded.width <= 2_048
+                    && decoded.height <= 2_048
+            } else {
+                imageDecodeStayedBounded = false
+            }
+
+            let thirdRightConsumed = right.map {
+                controller.handleKey($0) == nil
+            } ?? false
+            try? await Task.sleep(nanoseconds: 500_000_000)
+
+            let fileSnapshot =
+                ClipPreviewWindowController.shared.automationSnapshot()
+            let filePreviewWithinScreen =
+                previewSnapshotIsWithinScreen(fileSnapshot)
+            let previewSnapshots = [
+                textSnapshot,
+                richTextSnapshot,
+                imageSnapshot,
+                fileSnapshot,
+            ]
+            let previewAvoidedSelectedCards =
+                previewSnapshots.allSatisfy(
+                    previewSnapshotAvoidsSelectedCard
+                )
+            let arrowTrackedSelection =
+                previewSnapshots.allSatisfy(
+                    previewSnapshotArrowPointsToSelectedCard
+                )
+            let titleHeaderRemoved =
+                previewSnapshots.allSatisfy { !$0.hasTitleHeader }
+            let translucentBackground =
+                previewSnapshots.allSatisfy(\.usesTranslucentBackground)
+            let previewStayedWithinScreen =
+                textPreviewWithinScreen
+                && richTextPreviewWithinScreen
+                && imagePreviewWithinScreen
+                && filePreviewWithinScreen
+            let fileSelectionUpdatedPreview =
+                fileSnapshot.isVisible
+                && fileSnapshot.itemID == items[3].id
+                && fileSnapshot.contentKind == .quickLook
+            let quickLookURLMatched =
+                fileSnapshot.quickLookURL?.standardizedFileURL
+                == fileURL.standardizedFileURL
+
+            let escape = makeKeyEvent(
+                keyCode: UInt16(kVK_Escape),
+                characters: "\u{1B}"
+            )
+            let escapeConsumed = escape.map {
+                controller.handleKey($0) == nil
+            } ?? false
+            let escapeClosedPreview =
+                escapeConsumed
+                && !ClipPreviewWindowController.shared.isVisible
+
+            _ = space.map { controller.handleKey($0) }
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            let spaceReopenedPreview =
+                ClipPreviewWindowController.shared.isVisible
+            _ = space.map { controller.handleKey($0) }
+            let secondSpaceClosedPreview =
+                !ClipPreviewWindowController.shared.isVisible
+
+            let contentIndexRebuildCount =
+                VirtualizedClipStripMetrics.contentIndexRebuildCount
+            _ = space.map { controller.handleKey($0) }
+            let printable = makeKeyEvent(
+                keyCode: UInt16(kVK_ANSI_A),
+                characters: "a"
+            )
+            let printableConsumed = printable.map {
+                controller.handleKey($0) == nil
+            } ?? false
+            let printableKeyClosedPreview =
+                printableConsumed
+                && !ClipPreviewWindowController.shared.isVisible
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            let printableKeyActivatedSearch =
+                controller.store.searchText == "a"
+                && controller.store.isSearchFieldActive
+
+            let maximumContentIndexRebuildCount = 1
+            let rightArrowConsumed =
+                firstRightConsumed
+                && secondRightConsumed
+                && thirdRightConsumed
+            let result = PreviewResult(
+                phase: "preview",
+                success:
+                    spaceOpenedPreview
+                    && textWasComplete
+                    && longTextNeededVerticalScrolling
+                    && richTextRendered
+                    && previewStayedWithinScreen
+                    && previewAvoidedSelectedCards
+                    && arrowTrackedSelection
+                    && titleHeaderRemoved
+                    && translucentBackground
+                    && rightArrowConsumed
+                    && imageSelectionUpdatedPreview
+                    && imageDecoded
+                    && imageDecodeStayedBounded
+                    && fileSelectionUpdatedPreview
+                    && quickLookURLMatched
+                    && escapeClosedPreview
+                    && spaceReopenedPreview
+                    && secondSpaceClosedPreview
+                    && printableKeyClosedPreview
+                    && printableKeyActivatedSearch
+                    && contentIndexRebuildCount
+                        <= maximumContentIndexRebuildCount,
+                textObservedIndex: textSnapshot.itemID.flatMap {
+                    id in items.firstIndex(where: { $0.id == id })
+                },
+                textObservedKind: textSnapshot.contentKind?.rawValue,
+                textObservedCharacterCount:
+                    textSnapshot.textCharacterCount,
+                richTextRendered: richTextRendered,
+                fileObservedIndex: fileSnapshot.itemID.flatMap {
+                    id in items.firstIndex(where: { $0.id == id })
+                },
+                fileObservedKind: fileSnapshot.contentKind?.rawValue,
+                textPreviewWithinScreen: textPreviewWithinScreen,
+                richTextPreviewWithinScreen:
+                    richTextPreviewWithinScreen,
+                imagePreviewWithinScreen: imagePreviewWithinScreen,
+                filePreviewWithinScreen: filePreviewWithinScreen,
+                previewAvoidedSelectedCards:
+                    previewAvoidedSelectedCards,
+                arrowTrackedSelection: arrowTrackedSelection,
+                titleHeaderRemoved: titleHeaderRemoved,
+                translucentBackground: translucentBackground,
+                spaceOpenedPreview: spaceOpenedPreview,
+                textWasComplete: textWasComplete,
+                longTextNeededVerticalScrolling:
+                    longTextNeededVerticalScrolling,
+                previewStayedWithinScreen: previewStayedWithinScreen,
+                rightArrowConsumed: rightArrowConsumed,
+                imageSelectionUpdatedPreview:
+                    imageSelectionUpdatedPreview,
+                imageDecoded: imageDecoded,
+                imageDecodeStayedBounded: imageDecodeStayedBounded,
+                fileSelectionUpdatedPreview:
+                    fileSelectionUpdatedPreview,
+                quickLookURLMatched: quickLookURLMatched,
+                escapeClosedPreview: escapeClosedPreview,
+                spaceReopenedPreview: spaceReopenedPreview,
+                secondSpaceClosedPreview: secondSpaceClosedPreview,
+                printableKeyClosedPreview: printableKeyClosedPreview,
+                printableKeyActivatedSearch: printableKeyActivatedSearch,
+                contentIndexRebuildCount: contentIndexRebuildCount,
+                maximumContentIndexRebuildCount:
+                    maximumContentIndexRebuildCount
+            )
+            controller.closePreview()
+            controller.store.saveNow()
+            writePreview(result)
             exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
         }
     }
@@ -882,6 +1304,80 @@ enum AutomatedUITestRunner {
         }
     }
 
+    private static func previewSnapshotIsWithinScreen(
+        _ snapshot: ClipPreviewAutomationSnapshot
+    ) -> Bool {
+        guard snapshot.isVisible,
+              !snapshot.windowFrame.isEmpty else {
+            return false
+        }
+        return NSScreen.screens.contains {
+            $0.visibleFrame.insetBy(dx: -1, dy: -1)
+                .contains(snapshot.windowFrame)
+        }
+    }
+
+    private static func previewSnapshotAvoidsSelectedCard(
+        _ snapshot: ClipPreviewAutomationSnapshot
+    ) -> Bool {
+        guard snapshot.isVisible,
+              let cardFrame = snapshot.cardFrameInScreen else {
+            return false
+        }
+        return snapshot.windowFrame.minY >= cardFrame.maxY
+    }
+
+    private static func previewSnapshotArrowPointsToSelectedCard(
+        _ snapshot: ClipPreviewAutomationSnapshot
+    ) -> Bool {
+        guard let cardFrame = snapshot.cardFrameInScreen,
+              let arrowTip = snapshot.arrowTipInScreen else {
+            return false
+        }
+        return arrowTip.x >= cardFrame.minX - 1
+            && arrowTip.x <= cardFrame.maxX + 1
+            && arrowTip.y >= cardFrame.maxY
+            && arrowTip.y <= cardFrame.maxY + 8
+    }
+
+    private static func failedPreviewResult() -> PreviewResult {
+        PreviewResult(
+            phase: "preview",
+            success: false,
+            textObservedIndex: nil,
+            textObservedKind: nil,
+            textObservedCharacterCount: 0,
+            richTextRendered: false,
+            fileObservedIndex: nil,
+            fileObservedKind: nil,
+            textPreviewWithinScreen: false,
+            richTextPreviewWithinScreen: false,
+            imagePreviewWithinScreen: false,
+            filePreviewWithinScreen: false,
+            previewAvoidedSelectedCards: false,
+            arrowTrackedSelection: false,
+            titleHeaderRemoved: false,
+            translucentBackground: false,
+            spaceOpenedPreview: false,
+            textWasComplete: false,
+            longTextNeededVerticalScrolling: false,
+            previewStayedWithinScreen: false,
+            rightArrowConsumed: false,
+            imageSelectionUpdatedPreview: false,
+            imageDecoded: false,
+            imageDecodeStayedBounded: false,
+            fileSelectionUpdatedPreview: false,
+            quickLookURLMatched: false,
+            escapeClosedPreview: false,
+            spaceReopenedPreview: false,
+            secondSpaceClosedPreview: false,
+            printableKeyClosedPreview: false,
+            printableKeyActivatedSearch: false,
+            contentIndexRebuildCount: -1,
+            maximumContentIndexRebuildCount: 1
+        )
+    }
+
     private static func descendantViews(of root: NSView?) -> [NSView] {
         guard let root else { return [] }
         return [root] + root.subviews.flatMap { descendantViews(of: $0) }
@@ -939,22 +1435,217 @@ enum AutomatedUITestRunner {
         }
         controller.monitor.stop()
         controller.store.replaceHistoryForAutomatedClearConfirmationTest(items)
+        let pinboard = controller.store.addPinboard(
+            name: "Automated Clear Confirmation"
+        )
+        controller.store.saveToPinboard(items[0], boardID: pinboard.id)
 
         controller.resolveClearHistoryConfirmation(confirmed: false)
         let countAfterCancellation = controller.store.history.count
         controller.resolveClearHistoryConfirmation(confirmed: true)
         let countAfterConfirmation = controller.store.history.count
+        let pinboardCountAfterConfirmation =
+            controller.store.pinboards.first(where: { $0.id == pinboard.id })?
+                .items.count ?? 0
         let result = ClearConfirmationResult(
             phase: "clear-confirmation",
             success: countAfterCancellation == items.count
-                && countAfterConfirmation == 0,
+                && countAfterConfirmation == 0
+                && pinboardCountAfterConfirmation == 1,
             initialCount: items.count,
             countAfterCancellation: countAfterCancellation,
-            countAfterConfirmation: countAfterConfirmation
+            countAfterConfirmation: countAfterConfirmation,
+            pinboardCountAfterConfirmation: pinboardCountAfterConfirmation
         )
         controller.store.saveNow()
         writeClearConfirmation(result)
         exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+    }
+
+    private static func seedDeletionSyncTest(
+        controller: AppController,
+        runID: String
+    ) {
+        let items = deletionSyncItems(runID: runID)
+        let deletedText = deletionSyncDeletedText(runID: runID)
+        guard let deletedItem = items.first(where: { $0.text == deletedText }),
+              let staleURL = deletionSyncStaleSnapshotURL else {
+            writeDeletionSyncFailure(phase: "deletion-sync-seed")
+            exit(EXIT_FAILURE)
+        }
+
+        controller.monitor.stop()
+        controller.store.replaceHistoryForAutomatedDeletionSyncTest(items)
+        let staleSnapshot = ClipboardStoreSnapshot(
+            history: items,
+            pinboards: [
+                Pinboard(
+                    name: "Automated Deletion Sync",
+                    items: [deletedItem]
+                ),
+            ],
+            configuration: nil
+        )
+        do {
+            let data = try JSONEncoder().encode(staleSnapshot)
+            try data.write(to: staleURL, options: .atomic)
+        } catch {
+            writeDeletionSyncFailure(phase: "deletion-sync-seed")
+            exit(EXIT_FAILURE)
+        }
+
+        controller.store.mergeSnapshotForAutomatedDeletionSyncTest(
+            staleSnapshot
+        )
+        controller.store.delete(deletedItem)
+        controller.store.mergeSnapshotForAutomatedDeletionSyncTest(
+            staleSnapshot
+        )
+        finishDeletionSyncPhase(
+            controller: controller,
+            phase: "deletion-sync-seed",
+            deletedText: deletedText,
+            expectedHistoryCount: items.count - 1,
+            staleSnapshotRejected: true,
+            recopyAllowed: false
+        )
+    }
+
+    private static func verifyDeletionSyncRestart(
+        controller: AppController,
+        runID: String,
+        phase: String,
+        allowRecopy: Bool
+    ) {
+        let deletedText = deletionSyncDeletedText(runID: runID)
+        guard let staleSnapshot = readDeletionSyncStaleSnapshot() else {
+            writeDeletionSyncFailure(phase: phase)
+            exit(EXIT_FAILURE)
+        }
+
+        controller.monitor.stop()
+        let absentAfterLoad = !controller.store.history.contains {
+            $0.text == deletedText
+        }
+        controller.store.mergeSnapshotForAutomatedDeletionSyncTest(
+            staleSnapshot
+        )
+        let absentAfterStaleMerge = !controller.store.history.contains {
+            $0.text == deletedText
+        }
+        var recopyAllowed = false
+        var expectedHistoryCount = staleSnapshot.history.count - 1
+        if allowRecopy {
+            controller.store.addCaptured(ClipItem(
+                type: .text,
+                text: deletedText,
+                createdAt: Date(timeIntervalSince1970: 1)
+            ))
+            controller.store.mergeSnapshotForAutomatedDeletionSyncTest(
+                staleSnapshot
+            )
+            recopyAllowed = controller.store.history.filter {
+                $0.text == deletedText
+            }.count == 1
+            expectedHistoryCount = staleSnapshot.history.count
+        }
+        finishDeletionSyncPhase(
+            controller: controller,
+            phase: phase,
+            deletedText: deletedText,
+            expectedHistoryCount: expectedHistoryCount,
+            staleSnapshotRejected: absentAfterLoad && absentAfterStaleMerge,
+            recopyAllowed: recopyAllowed
+        )
+    }
+
+    private static func finishDeletionSyncPhase(
+        controller: AppController,
+        phase: String,
+        deletedText: String,
+        expectedHistoryCount: Int,
+        staleSnapshotRejected: Bool,
+        recopyAllowed: Bool
+    ) {
+        controller.store.saveNow()
+        let snapshot = readDeletionSyncActiveSnapshot()
+        let deletedItemAbsent = !controller.store.history.contains {
+            $0.text == deletedText
+        }
+        let deletedPinboardItemAbsent = !controller.store.pinboards.contains {
+            $0.items.contains { $0.text == deletedText }
+        }
+        let tombstoneCount = snapshot?.deletions?.count ?? 0
+        let expectsRecopy = phase == "deletion-sync-restart-2"
+        let success = controller.store.history.count == expectedHistoryCount
+            && staleSnapshotRejected
+            && tombstoneCount == 1
+            && deletedPinboardItemAbsent
+            && (expectsRecopy ? recopyAllowed : deletedItemAbsent)
+        writeDeletionSync(DeletionSyncResult(
+            phase: phase,
+            success: success,
+            historyCount: controller.store.history.count,
+            deletedItemAbsent: deletedItemAbsent,
+            deletedPinboardItemAbsent: deletedPinboardItemAbsent,
+            tombstoneCount: tombstoneCount,
+            staleSnapshotRejected: staleSnapshotRejected,
+            recopyAllowed: recopyAllowed
+        ))
+        exit(success ? EXIT_SUCCESS : EXIT_FAILURE)
+    }
+
+    private static func deletionSyncItems(runID: String) -> [ClipItem] {
+        (0..<4).map { index in
+            ClipItem(
+                type: .text,
+                text: "pesty-deletion-sync-\(runID)-\(index)",
+                createdAt: Date(timeIntervalSinceNow: -Double(index + 10))
+            )
+        }
+    }
+
+    private static func deletionSyncDeletedText(runID: String) -> String {
+        "pesty-deletion-sync-\(runID)-1"
+    }
+
+    private static var deletionSyncStaleSnapshotURL: URL? {
+        ClipboardStore.automatedTestBase?
+            .appendingPathComponent("deletion-sync-stale.json")
+    }
+
+    private static func readDeletionSyncStaleSnapshot()
+        -> ClipboardStoreSnapshot? {
+        guard let url = deletionSyncStaleSnapshotURL,
+              let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(
+            ClipboardStoreSnapshot.self,
+            from: data
+        )
+    }
+
+    private static func readDeletionSyncActiveSnapshot()
+        -> ClipboardStoreSnapshot? {
+        guard let url = ClipboardStore.automatedTestBase?
+            .appendingPathComponent("store.json"),
+              let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(
+            ClipboardStoreSnapshot.self,
+            from: data
+        )
+    }
+
+    private static func writeDeletionSyncFailure(phase: String) {
+        writeDeletionSync(DeletionSyncResult(
+            phase: phase,
+            success: false,
+            historyCount: -1,
+            deletedItemAbsent: false,
+            deletedPinboardItemAbsent: false,
+            tombstoneCount: -1,
+            staleSnapshotRejected: false,
+            recopyAllowed: false
+        ))
     }
 
     private static func seedRetentionRestartTest(
@@ -1259,14 +1950,15 @@ enum AutomatedUITestRunner {
     private static func makeKeyEvent(
         keyCode: UInt16,
         characters: String,
-        modifierFlags: NSEvent.ModifierFlags = []
+        modifierFlags: NSEvent.ModifierFlags = [],
+        windowNumber: Int = 0
     ) -> NSEvent? {
         NSEvent.keyEvent(
             with: .keyDown,
             location: .zero,
             modifierFlags: modifierFlags,
             timestamp: 0,
-            windowNumber: 0,
+            windowNumber: windowNumber,
             context: nil,
             characters: characters,
             charactersIgnoringModifiers: characters,
@@ -1278,10 +1970,35 @@ enum AutomatedUITestRunner {
     private static func runPerformanceTest(controller: AppController, runID: String) {
         let itemCount = 1_000
         let checkpointIndices = [0, 249, 499, 749, 999]
+        let includeImages = ProcessInfo.processInfo.environment[
+            "PESTY_PERFORMANCE_INCLUDE_IMAGES"
+        ] == "1"
+        controller.monitor.stop()
+        let syntheticImageData = includeImages ? makePerformanceImageData() : nil
         let items = (0..<itemCount).map { index in
-            ClipItem(
+            if includeImages,
+               index % 64 == 32,
+               let syntheticImageData,
+               let imageFileName = controller.store.storeImageData(
+                    syntheticImageData
+               ) {
+                return ClipItem(
+                    type: .image,
+                    imageFileName: imageFileName,
+                    imageHash: "pesty-performance-image-\(index)",
+                    sourceBundleID: "com.bifrostproxy.pesty.performance-test",
+                    sourceAppName: "Pesty Performance Test",
+                    createdAt: Date(timeIntervalSinceNow: -Double(index))
+                )
+            }
+            let prefix =
+                "pesty-performance-\(runID)-\(String(format: "%04d", index))"
+            let text = index % 250 == 0
+                ? prefix + String(repeating: "-long-preview", count: 13_000)
+                : prefix
+            return ClipItem(
                 type: .text,
-                text: "pesty-performance-\(runID)-\(String(format: "%04d", index))",
+                text: text,
                 sourceBundleID: "com.bifrostproxy.pesty.performance-test",
                 sourceAppName: "Pesty Performance Test",
                 createdAt: Date(timeIntervalSinceNow: -Double(index))
@@ -1290,10 +2007,12 @@ enum AutomatedUITestRunner {
         let expectedIDs = items.map(\.id)
         let expectedTexts = items.compactMap(\.text)
         let checkpointIDs = checkpointIndices.map { items[$0].id }
-        let checkpointTexts = checkpointIndices.compactMap { items[$0].text }
         let startedAt = Date()
+        let previewBounded = items.allSatisfy {
+            ClipCardPreview.text($0.text).count
+                <= ClipCardPreview.maximumCharacterCount + 1
+        }
 
-        controller.monitor.stop()
         AutomatedUITestProbe.reset()
         VirtualizedClipStripMetrics.reset()
         controller.store.replaceHistoryForAutomatedStripTest(items)
@@ -1304,64 +2023,218 @@ enum AutomatedUITestRunner {
             checkpointIDs: checkpointIDs,
             controller: controller
         ) {
-            let history = controller.store.history
-            let visible = controller.store.visibleItems
-            let rendered = AutomatedUITestProbe.renderedTexts
-            let configured = VirtualizedClipStripMetrics.configuredItemIDs
-            let source: String
-            switch controller.store.source {
-            case .history:
-                source = "history"
-            case .pinboard:
-                source = "pinboard"
+            guard let collectionView = firstCollectionView() else {
+                finishPerformanceTest(
+                    controller: controller,
+                    items: items,
+                    expectedIDs: expectedIDs,
+                    expectedTexts: expectedTexts,
+                    checkpointIDs: checkpointIDs,
+                    checkpointIndices: checkpointIndices,
+                    startedAt: startedAt,
+                    previewBounded: previewBounded,
+                    rapidScrollStepCount: -1
+                )
+                return
             }
-            let maximumAllowedCells = 40
-            let maximumDurationMilliseconds = 6_000
-            let durationMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
-            let finalSelectedIndex = controller.store.selectedID.flatMap {
-                expectedIDs.firstIndex(of: $0)
+            performRapidScrollStress(in: collectionView) { stepCount in
+                finishPerformanceTest(
+                    controller: controller,
+                    items: items,
+                    expectedIDs: expectedIDs,
+                    expectedTexts: expectedTexts,
+                    checkpointIDs: checkpointIDs,
+                    checkpointIndices: checkpointIndices,
+                    startedAt: startedAt,
+                    previewBounded: previewBounded,
+                    rapidScrollStepCount: stepCount
+                )
             }
-            let persistedInOrder = history.map(\.id) == expectedIDs
-                && history.compactMap(\.text) == expectedTexts
-            let visibleInOrder = visible.map(\.id) == expectedIDs
-                && visible.compactMap(\.text) == expectedTexts
-            let renderedCheckpoints = checkpointTexts.filter(rendered.contains).count
-            let configuredCheckpoints = checkpointIDs.filter(configured.contains).count
-            let result = PerformanceResult(
-                phase: "performance",
-                success: history.count == itemCount
-                    && visible.count == itemCount
-                    && persistedInOrder
-                    && visibleInOrder
-                    && renderedCheckpoints == checkpointIndices.count
-                    && configuredCheckpoints == checkpointIndices.count
-                    && VirtualizedClipStripMetrics.createdCellCount <= maximumAllowedCells
-                    && VirtualizedClipStripMetrics.maximumVisibleCellCount <= maximumAllowedCells
-                    && finalSelectedIndex == checkpointIndices.last
-                    && source == "history"
-                    && controller.store.searchText.isEmpty
-                    && durationMilliseconds <= maximumDurationMilliseconds,
-                historyCount: history.count,
-                visibleCount: visible.count,
-                expectedCount: itemCount,
-                persistedInOrder: persistedInOrder,
-                visibleInOrder: visibleInOrder,
-                checkpointCount: checkpointIndices.count,
-                renderedCheckpoints: renderedCheckpoints,
-                configuredCheckpoints: configuredCheckpoints,
-                createdCellCount: VirtualizedClipStripMetrics.createdCellCount,
-                maximumVisibleCellCount: VirtualizedClipStripMetrics.maximumVisibleCellCount,
-                maximumAllowedCells: maximumAllowedCells,
-                finalSelectedIndex: finalSelectedIndex,
-                source: source,
-                searchLength: controller.store.searchText.count,
-                durationMilliseconds: durationMilliseconds,
-                maximumDurationMilliseconds: maximumDurationMilliseconds
-            )
+        }
+    }
 
-            controller.store.saveNow()
-            writePerformance(result)
-            exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+    private static func finishPerformanceTest(
+        controller: AppController,
+        items: [ClipItem],
+        expectedIDs: [UUID],
+        expectedTexts: [String],
+        checkpointIDs: [UUID],
+        checkpointIndices: [Int],
+        startedAt: Date,
+        previewBounded: Bool,
+        rapidScrollStepCount: Int
+    ) {
+        let history = controller.store.history
+        let visible = controller.store.visibleItems
+        let rendered = AutomatedUITestProbe.renderedItemIDs
+        let configured = VirtualizedClipStripMetrics.configuredItemIDs
+        let source: String
+        switch controller.store.source {
+        case .history:
+            source = "history"
+        case .pinboard:
+            source = "pinboard"
+        }
+        let maximumAllowedCells = 40
+        let maximumHostingRootCreationCount = 40
+        let maximumDurationMilliseconds = 6_000
+        let durationMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
+        let finalSelectedIndex = controller.store.selectedID.flatMap {
+            expectedIDs.firstIndex(of: $0)
+        }
+        let persistedInOrder = history.map(\.id) == expectedIDs
+            && history.compactMap(\.text) == expectedTexts
+        let visibleInOrder = visible.map(\.id) == expectedIDs
+            && visible.compactMap(\.text) == expectedTexts
+        let renderedCheckpoints = checkpointIDs.filter(rendered.contains).count
+        let configuredCheckpoints = checkpointIDs.filter(configured.contains).count
+        let result = PerformanceResult(
+            phase: "performance",
+            success: history.count == items.count
+                && visible.count == items.count
+                && persistedInOrder
+                && visibleInOrder
+                && renderedCheckpoints == checkpointIndices.count
+                && configuredCheckpoints == checkpointIndices.count
+                && configured.count == items.count
+                && rapidScrollStepCount > 0
+                && previewBounded
+                && VirtualizedClipStripMetrics.createdCellCount
+                    <= maximumAllowedCells
+                && VirtualizedClipStripMetrics.maximumVisibleCellCount
+                    <= maximumAllowedCells
+                && VirtualizedClipStripMetrics.hostingRootCreationCount
+                    <= maximumHostingRootCreationCount
+                && finalSelectedIndex == checkpointIndices.last
+                && source == "history"
+                && controller.store.searchText.isEmpty
+                && durationMilliseconds <= maximumDurationMilliseconds,
+            historyCount: history.count,
+            visibleCount: visible.count,
+            expectedCount: items.count,
+            persistedInOrder: persistedInOrder,
+            visibleInOrder: visibleInOrder,
+            checkpointCount: checkpointIndices.count,
+            renderedCheckpoints: renderedCheckpoints,
+            configuredCheckpoints: configuredCheckpoints,
+            createdCellCount: VirtualizedClipStripMetrics.createdCellCount,
+            maximumVisibleCellCount:
+                VirtualizedClipStripMetrics.maximumVisibleCellCount,
+            maximumAllowedCells: maximumAllowedCells,
+            hostingRootCreationCount:
+                VirtualizedClipStripMetrics.hostingRootCreationCount,
+            maximumHostingRootCreationCount: maximumHostingRootCreationCount,
+            cellConfigurationCount:
+                VirtualizedClipStripMetrics.cellConfigurationCount,
+            configuredItemCount: configured.count,
+            rapidScrollStepCount: rapidScrollStepCount,
+            previewBounded: previewBounded,
+            imageItemCount: items.filter { $0.type == .image }.count,
+            finalSelectedIndex: finalSelectedIndex,
+            source: source,
+            searchLength: controller.store.searchText.count,
+            durationMilliseconds: durationMilliseconds,
+            maximumDurationMilliseconds: maximumDurationMilliseconds
+        )
+
+        controller.store.saveNow()
+        writePerformance(result)
+        exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+    }
+
+    private static func performRapidScrollStress(
+        in collectionView: NSCollectionView,
+        attempt: Int = 0,
+        completion: @escaping @MainActor (Int) -> Void
+    ) {
+        collectionView.layoutSubtreeIfNeeded()
+        guard let scrollView = collectionView.enclosingScrollView else {
+            completion(-1)
+            return
+        }
+        let viewportWidth = scrollView.contentView.bounds.width
+        let contentWidth = collectionView.collectionViewLayout?
+            .collectionViewContentSize.width ?? collectionView.bounds.width
+        let maximumX = max(0, contentWidth - viewportWidth)
+        guard maximumX > 0 else {
+            if attempt < 10 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    performRapidScrollStress(
+                        in: collectionView,
+                        attempt: attempt + 1,
+                        completion: completion
+                    )
+                }
+                return
+            }
+            completion(-1)
+            return
+        }
+
+        let increment = max(Theme.cardWidth, viewportWidth * 0.95)
+        var forward: [CGFloat] = []
+        var position: CGFloat = 0
+        while position < maximumX {
+            forward.append(position)
+            position += increment
+        }
+        forward.append(maximumX)
+        let positions = Array(forward.reversed()) + forward
+
+        func visit(_ index: Int) {
+            guard index < positions.count else {
+                DispatchQueue.main.async {
+                    completion(positions.count)
+                }
+                return
+            }
+            var origin = scrollView.contentView.bounds.origin
+            origin.x = positions[index]
+            scrollView.contentView.scroll(to: origin)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            collectionView.layoutSubtreeIfNeeded()
+            DispatchQueue.main.async {
+                visit(index + 1)
+            }
+        }
+        visit(0)
+    }
+
+    private static func makePerformanceImageData() -> Data? {
+        autoreleasepool {
+            guard let image = NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: 1_024,
+                pixelsHigh: 1_024,
+                bitsPerSample: 8,
+                samplesPerPixel: 4,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: .deviceRGB,
+                bytesPerRow: 0,
+                bitsPerPixel: 0
+            ), let bitmapData = image.bitmapData else { return nil }
+            memset(bitmapData, 0x7f, image.bytesPerRow * image.pixelsHigh)
+            return image.representation(using: .png, properties: [:])
+        }
+    }
+
+    private static func makePreviewImageData() -> Data? {
+        autoreleasepool {
+            guard let image = NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: 2_048,
+                pixelsHigh: 2_048,
+                bitsPerSample: 8,
+                samplesPerPixel: 4,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: .deviceRGB,
+                bytesPerRow: 0,
+                bitsPerPixel: 0
+            ), let bitmapData = image.bitmapData else { return nil }
+            memset(bitmapData, 0x5f, image.bytesPerRow * image.pixelsHigh)
+            return image.representation(using: .png, properties: [:])
         }
     }
 
@@ -1403,6 +2276,10 @@ enum AutomatedUITestRunner {
                     maximumRenderLatencyMilliseconds: 100,
                     textEditorFocusedBeforeClick: false,
                     textEditorReleasedByClick: false,
+                    selectionPreservedEventSurface: false,
+                    doubleClickSelectedItem: false,
+                    doubleClickRequestedQuickPaste: false,
+                    doubleClickQuickPasteRequestCount: 0,
                     rightArrowConsumedAfterClick: false,
                     rightArrowMovedSelectionAfterClick: false,
                     contentIndexRebuildCount: -1,
@@ -1432,6 +2309,10 @@ enum AutomatedUITestRunner {
                     maximumRenderLatencyMilliseconds: 100,
                     textEditorFocusedBeforeClick: false,
                     textEditorReleasedByClick: false,
+                    selectionPreservedEventSurface: false,
+                    doubleClickSelectedItem: false,
+                    doubleClickRequestedQuickPaste: false,
+                    doubleClickQuickPasteRequestCount: 0,
                     rightArrowConsumedAfterClick: false,
                     rightArrowMovedSelectionAfterClick: false,
                     contentIndexRebuildCount: -1,
@@ -1452,6 +2333,8 @@ enum AutomatedUITestRunner {
             _ = collectionView.window?.makeFirstResponder(focusProbe)
             let textEditorFocusedBeforeClick =
                 collectionView.window?.firstResponder as? NSTextView != nil
+            let eventSurfaceIdentity =
+                visibleCell.eventSurfaceIdentityForAutomatedTest
             let startedAt = CFAbsoluteTimeGetCurrent()
             visibleCell.performPrimaryClickForAutomatedTest(clickCount: 1)
             let selectionLatencyMilliseconds =
@@ -1461,6 +2344,23 @@ enum AutomatedUITestRunner {
             let textEditorReleasedByClick =
                 collectionView.window?.firstResponder as? NSTextView == nil
                 && !controller.store.isSearchFieldActive
+            let selectedCellAfterClick = collectionView.item(
+                at: visibleTargetPath
+            ) as? ClipCollectionViewItem
+            let selectionPreservedEventSurface =
+                selectedCellAfterClick === visibleCell
+                && eventSurfaceIdentity != nil
+                && selectedCellAfterClick?
+                    .eventSurfaceIdentityForAutomatedTest
+                    == eventSurfaceIdentity
+            visibleCell.performPrimaryClickForAutomatedTest(clickCount: 2)
+            let doubleClickSelectedItem =
+                controller.store.selectedID == items[visibleTargetIndex].id
+            let doubleClickRequestedQuickPaste =
+                VirtualizedClipStripMetrics.lastQuickPasteItemID
+                    == items[visibleTargetIndex].id
+            let doubleClickQuickPasteRequestCount =
+                VirtualizedClipStripMetrics.quickPasteRequestCount
             focusProbe.removeFromSuperview()
             let maximumSelectionLatencyMilliseconds = 100.0
             let maximumRenderLatencyMilliseconds = 100.0
@@ -1514,6 +2414,10 @@ enum AutomatedUITestRunner {
                             <= maximumRenderLatencyMilliseconds
                         && textEditorFocusedBeforeClick
                         && textEditorReleasedByClick
+                        && selectionPreservedEventSurface
+                        && doubleClickSelectedItem
+                        && doubleClickRequestedQuickPaste
+                        && doubleClickQuickPasteRequestCount == 1
                         && rightArrowConsumedAfterClick
                         && rightArrowMovedSelectionAfterClick
                         && contentIndexRebuildCount
@@ -1541,6 +2445,14 @@ enum AutomatedUITestRunner {
                             textEditorFocusedBeforeClick,
                         textEditorReleasedByClick:
                             textEditorReleasedByClick,
+                        selectionPreservedEventSurface:
+                            selectionPreservedEventSurface,
+                        doubleClickSelectedItem:
+                            doubleClickSelectedItem,
+                        doubleClickRequestedQuickPaste:
+                            doubleClickRequestedQuickPaste,
+                        doubleClickQuickPasteRequestCount:
+                            doubleClickQuickPasteRequestCount,
                         rightArrowConsumedAfterClick:
                             rightArrowConsumedAfterClick,
                         rightArrowMovedSelectionAfterClick:
@@ -1590,13 +2502,13 @@ enum AutomatedUITestRunner {
         completion: @escaping @MainActor () -> Void
     ) {
         guard position < checkpointIDs.count else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                 completion()
             }
             return
         }
         controller.store.selectedID = checkpointIDs[position]
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
             visitCheckpoint(
                 at: position + 1,
                 checkpointIDs: checkpointIDs,
@@ -1666,7 +2578,21 @@ enum AutomatedUITestRunner {
 
             controller.store.saveNow()
             if ProcessInfo.processInfo.environment["PESTY_AUTOMATED_TEST_CLEANUP"] == "1" {
+                let historyCountBeforeCleanup = controller.store.history.count
                 controller.store.removeAutomatedTestItems(withTexts: Set(expected))
+                let cleanupResult = CleanupResult(
+                    phase: "cleanup",
+                    success: expected.allSatisfy {
+                        expectedText in
+                        !controller.store.history.contains {
+                            $0.text == expectedText
+                        }
+                    },
+                    historyCount: controller.store.history.count,
+                    removedCount: historyCountBeforeCleanup
+                        - controller.store.history.count
+                )
+                writeCleanup(cleanupResult)
             }
             if let originalItems {
                 restore(originalItems, to: .general)
@@ -1712,6 +2638,17 @@ enum AutomatedUITestRunner {
         FileHandle.standardOutput.write(Data("\n".utf8))
     }
 
+    private static func writeCleanup(_ result: CleanupResult) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(
+            Data("AUTOMATED_UI_TEST_CLEANUP_RESULT ".utf8)
+        )
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
     private static func writeRetentionDelay(_ result: RetentionDelayResult) {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
@@ -1744,6 +2681,15 @@ enum AutomatedUITestRunner {
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(result) else { return }
         FileHandle.standardOutput.write(Data("AUTOMATED_CLEAR_CONFIRMATION_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeDeletionSync(_ result: DeletionSyncResult) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(Data("AUTOMATED_DELETION_SYNC_RESULT ".utf8))
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data("\n".utf8))
     }
@@ -1807,6 +2753,17 @@ enum AutomatedUITestRunner {
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(result) else { return }
         FileHandle.standardOutput.write(Data("AUTOMATED_DOUBAO_PROMPT_DIAGNOSTIC_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writePreview(_ result: PreviewResult) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(
+            Data("AUTOMATED_PREVIEW_RESULT ".utf8)
+        )
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data("\n".utf8))
     }

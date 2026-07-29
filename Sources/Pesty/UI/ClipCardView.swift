@@ -38,6 +38,9 @@ struct ClipCardView: View {
     let item: ClipItem
     let index: Int
     let selected: Bool
+    let previewText: String
+    let characterCount: Int
+    let displayTitle: String
 
     @State private var hovering = false
     private var store: ClipboardStore { ClipboardStore.shared }
@@ -68,7 +71,10 @@ struct ClipCardView: View {
         .onHover { hovering = $0 }
         .contextMenu { menu }
         .id(settings.language)
-        .onAppear { AutomatedUITestProbe.record(item) }
+        .onChange(of: item.id, initial: true) {
+            hovering = false
+            AutomatedUITestProbe.record(item)
+        }
     }
 
     private var header: some View {
@@ -155,7 +161,7 @@ struct ClipCardView: View {
             VStack(spacing: 9) {
                 Image(systemName: "doc.fill").font(.system(size: 32))
                     .foregroundStyle(headerColor)
-                Text(item.displayTitle).font(.system(size: 12))
+                Text(displayTitle).font(.system(size: 12))
                     .foregroundStyle(palette.textSecondary.swiftUIColor).lineLimit(2)
                     .multilineTextAlignment(.center)
             }
@@ -163,7 +169,7 @@ struct ClipCardView: View {
         case .link:
             VStack(alignment: .leading, spacing: 10) {
                 Label {
-                    Text(item.displayTitle)
+                    Text(displayTitle)
                         .lineLimit(1)
                 } icon: {
                     Image(systemName: "link")
@@ -171,7 +177,7 @@ struct ClipCardView: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(headerColor)
 
-                Text(item.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+                Text(previewText)
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundStyle(palette.textPrimary.swiftUIColor.opacity(0.9))
                     .multilineTextAlignment(.leading)
@@ -180,7 +186,7 @@ struct ClipCardView: View {
             .padding(.vertical, 3)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         default:
-            Text(item.text ?? "")
+            Text(previewText)
                 .font(.system(size: 12.5))
                 .foregroundStyle(palette.textPrimary.swiftUIColor.opacity(0.9))
                 .lineLimit(10)
@@ -197,7 +203,7 @@ struct ClipCardView: View {
     private var footer: some View {
         VStack(alignment: .leading, spacing: 3) {
             if item.type == .link {
-                Text(item.displayTitle)
+                Text(displayTitle)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(palette.textPrimary.swiftUIColor).lineLimit(1)
             }
@@ -224,9 +230,9 @@ struct ClipCardView: View {
     private var metaLeft: String {
         switch item.type {
         case .text, .richText:
-            return L10n.characterCount(item.charCount)
+            return L10n.characterCount(characterCount)
         case .link:
-            return L10n.characterCount(item.charCount)
+            return L10n.characterCount(characterCount)
         case .file:
             return L10n.fileCount(item.fileURLs.count)
         case .image:
@@ -297,5 +303,21 @@ struct ClipCardView: View {
         } else {
             Button(title, action: action)
         }
+    }
+}
+
+enum ClipCardPreview {
+    static let maximumCharacterCount = 4_096
+
+    static func text(_ value: String?) -> String {
+        guard let value, !value.isEmpty else { return "" }
+        guard let end = value.index(
+            value.startIndex,
+            offsetBy: maximumCharacterCount,
+            limitedBy: value.endIndex
+        ), end != value.endIndex else {
+            return value
+        }
+        return String(value[..<end]) + "…"
     }
 }

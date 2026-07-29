@@ -25,6 +25,9 @@ jobs:
       - name: Verify history Settings
         run: swift run Pesty --verify-history-settings
 
+      - name: Verify deletion survives stale sync snapshots
+        run: scripts/test_deletion_sync.sh .build/debug/Pesty
+
       - name: Verify system appearance
         run: swift run Pesty --verify-appearance
 

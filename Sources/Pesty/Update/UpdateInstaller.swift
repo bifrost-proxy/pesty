@@ -1,6 +1,12 @@
 import CryptoKit
 import Foundation
 
+enum UpdatePreparationProgress: Equatable, Sendable {
+    case downloading(Double?)
+    case verifying
+    case preparing
+}
+
 struct UpdateInstallationPlan: Sendable {
     let helperURL: URL
     let arguments: [String]
@@ -58,9 +64,12 @@ enum UpdateInstaller {
         let stderr: Data
     }
 
-    static func prepare(release: AppRelease) async throws -> UpdateInstallationPlan {
+    static func prepare(
+        release: AppRelease,
+        progress: @escaping @Sendable (UpdatePreparationProgress) -> Void
+    ) async throws -> UpdateInstallationPlan {
         try await Task.detached(priority: .userInitiated) {
-            try await prepareOffMain(release: release)
+            try await prepareOffMain(release: release, progress: progress)
         }.value
     }
 
@@ -81,7 +90,8 @@ enum UpdateInstaller {
     }
 
     private static func prepareOffMain(
-        release: AppRelease
+        release: AppRelease,
+        progress: @escaping @Sendable (UpdatePreparationProgress) -> Void
     ) async throws -> UpdateInstallationPlan {
         let currentApp = Bundle.main.bundleURL.standardizedFileURL
         guard currentApp.pathExtension == "app",
@@ -98,12 +108,17 @@ enum UpdateInstaller {
         var request = URLRequest(url: release.downloadURL)
         request.timeoutInterval = 120
         request.setValue("Pesty/\(Bundle.main.shortVersion)", forHTTPHeaderField: "User-Agent")
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse,
-              (200..<300).contains(http.statusCode) else {
+        progress(.downloading(0))
+        let (data, response) = try await UpdateDownload.receive(
+            request: request
+        ) { fraction in
+            progress(.downloading(fraction))
+        }
+        guard (200..<300).contains(response.statusCode) else {
             throw Failure.invalidDownload
         }
 
+        progress(.verifying)
         let digest = SHA256.hash(data: data)
             .map { String(format: "%02x", $0) }
             .joined()
@@ -112,6 +127,7 @@ enum UpdateInstaller {
         }
         try data.write(to: dmgURL, options: [.atomic])
 
+        progress(.preparing)
         let mountPoint = try attach(dmgURL)
         defer { _ = try? run("/usr/bin/hdiutil", ["detach", mountPoint.path]) }
 
@@ -317,5 +333,95 @@ enum UpdateInstaller {
         String(data: data, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             ?? L10n.updateUnknownError
+    }
+}
+
+private final class UpdateDownload: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private let progress: @Sendable (Double?) -> Void
+    private var data = Data()
+    private var response: HTTPURLResponse?
+    private var continuation: CheckedContinuation<(Data, HTTPURLResponse), Error>?
+    private var session: URLSession?
+
+    private init(progress: @escaping @Sendable (Double?) -> Void) {
+        self.progress = progress
+    }
+
+    static func receive(
+        request: URLRequest,
+        progress: @escaping @Sendable (Double?) -> Void
+    ) async throws -> (Data, HTTPURLResponse) {
+        let receiver = UpdateDownload(progress: progress)
+        return try await receiver.start(request: request)
+    }
+
+    private func start(
+        request: URLRequest
+    ) async throws -> (Data, HTTPURLResponse) {
+        try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+            let session = URLSession(
+                configuration: configuration,
+                delegate: self,
+                delegateQueue: nil
+            )
+            self.session = session
+            session.dataTask(with: request).resume()
+        }
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        guard let response = response as? HTTPURLResponse else {
+            completionHandler(.cancel)
+            return
+        }
+        self.response = response
+        progress(nil)
+        completionHandler(.allow)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive data: Data
+    ) {
+        self.data.append(data)
+        let expected = response?.expectedContentLength ?? NSURLSessionTransferSizeUnknown
+        guard expected > 0 else {
+            progress(nil)
+            return
+        }
+        progress(min(Double(self.data.count) / Double(expected), 1))
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: Error?
+    ) {
+        defer {
+            continuation = nil
+            self.session?.finishTasksAndInvalidate()
+            self.session = nil
+        }
+        if let error {
+            continuation?.resume(throwing: error)
+            return
+        }
+        guard let response else {
+            continuation?.resume(throwing: UpdateInstaller.Failure.invalidDownload)
+            return
+        }
+        if response.expectedContentLength > 0 {
+            progress(1)
+        }
+        continuation?.resume(returning: (data, response))
     }
 }

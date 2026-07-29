@@ -3,48 +3,27 @@ import AppKit
 import SwiftUI
 
 struct AccessibilitySettingsGuidePresentation: Equatable {
-    enum Mode: Equatable {
-        case exactPestyRow
-        case applicationList
-    }
-
-    let mode: Mode
     let highlightFrame: CGRect
 }
 
 enum AccessibilitySettingsGuideLayout {
-    static let referenceWindowSize = CGSize(width: 723, height: 720)
+    static let referenceWindowSize = CGSize(width: 723, height: 470)
 
     static func presentation(
         in windowSize: CGSize
     ) -> AccessibilitySettingsGuidePresentation {
-        let matchesVerifiedLayout =
-            abs(windowSize.width - referenceWindowSize.width) <= 40
-            && abs(windowSize.height - referenceWindowSize.height) <= 40
-
-        if matchesVerifiedLayout {
-            let x = windowSize.width * 0.329
-            let y = windowSize.height * 0.565
-            return AccessibilitySettingsGuidePresentation(
-                mode: .exactPestyRow,
-                highlightFrame: CGRect(
-                    x: x,
-                    y: y,
-                    width: max(240, windowSize.width - x - 10),
-                    height: 46
-                )
-            )
-        }
-
-        let x = min(max(220, windowSize.width * 0.31), 290)
         return AccessibilitySettingsGuidePresentation(
-            mode: .applicationList,
-            highlightFrame: CGRect(
-                x: x,
-                y: 98,
-                width: max(260, windowSize.width - x - 12),
-                height: max(260, windowSize.height - 160)
-            )
+            highlightFrame: applicationListFrame(in: windowSize)
+        )
+    }
+
+    static func applicationListFrame(in windowSize: CGSize) -> CGRect {
+        let x = min(max(220, windowSize.width * 0.3085), 290)
+        return CGRect(
+            x: x,
+            y: 52,
+            width: max(260, windowSize.width - x - 12),
+            height: max(260, windowSize.height - 64)
         )
     }
 }
@@ -122,7 +101,7 @@ final class AccessibilitySettingsGuideController: NSObject {
     private func startTracking() {
         guard timer == nil else { return }
         let timer = Timer(
-            timeInterval: 0.15,
+            timeInterval: 0.06,
             target: self,
             selector: #selector(refresh),
             userInfo: nil,
@@ -181,7 +160,7 @@ final class AccessibilitySettingsGuideController: NSObject {
                       dictionaryRepresentation: bounds
                   ),
                   frame.width >= 520,
-                  frame.height >= 480 else {
+                  frame.height >= 400 else {
                 return nil
             }
             return frame
@@ -224,6 +203,8 @@ final class AccessibilitySettingsGuideController: NSObject {
 }
 
 private struct AccessibilitySettingsGuideOverlay: View {
+    @Bindable private var settings = Settings.shared
+
     var body: some View {
         GeometryReader { proxy in
             let presentation =
@@ -231,9 +212,9 @@ private struct AccessibilitySettingsGuideOverlay: View {
                     in: proxy.size
                 )
             let highlight = presentation.highlightFrame
-            let title = presentation.mode == .exactPestyRow
-                ? L10n.accessibilityGuideExactTitle
-                : L10n.accessibilityGuideListTitle
+            let prompt = L10n.accessibilityGuideListPrompt(
+                language: settings.language
+            )
 
             ZStack(alignment: .topLeading) {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -259,15 +240,10 @@ private struct AccessibilitySettingsGuideOverlay: View {
                     )
 
                 HStack(spacing: 10) {
-                    Image(systemName: "arrow.down.circle.fill")
+                    Image(systemName: "cursorarrow.click")
                         .font(.title3)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(title)
-                            .font(.system(size: 14, weight: .semibold))
-                        Text(L10n.accessibilityGuideMessage)
-                            .font(.system(size: 12))
-                            .opacity(0.9)
-                    }
+                    Text(prompt)
+                        .font(.system(size: 14, weight: .semibold))
                 }
                 .foregroundStyle(.white)
                 .padding(.horizontal, 14)
@@ -286,7 +262,7 @@ private struct AccessibilitySettingsGuideOverlay: View {
                         max(highlight.midX, 190),
                         proxy.size.width - 190
                     ),
-                    y: max(46, highlight.minY - 50)
+                    y: max(28, highlight.minY - 22)
                 )
             }
         }

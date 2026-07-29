@@ -6,6 +6,28 @@ All notable changes to Pesty are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.6.12] - 2026-07-29
+
+### Fixed
+
+- Removed the estimated single-row Accessibility guide, which could highlight
+  a different app when the authorization list order varied by device.
+- Always highlight the complete Accessibility application list and direct the
+  user to find Pesty there.
+
+[1.6.12]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.6.12
+
+## [1.6.8] - 2026-07-28
+
+### Fixed
+
+- Prevented deleted clipboard items from returning when stale iCloud snapshots
+  or conflict versions are merged, including after application restarts.
+- Persisted deletions immediately with content-hash tombstones while still
+  allowing the same content to be copied again later.
+
+[1.6.8]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.6.8
+
 ## [1.6.7] - 2026-07-28
 
 ### Changed
