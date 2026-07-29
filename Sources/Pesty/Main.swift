@@ -1,5 +1,4 @@
 import AppKit
-import Darwin
 
 @main
 struct PestyMain {
@@ -46,6 +45,17 @@ struct PestyMain {
                 print("History settings verification passed")
             } catch {
                 fputs("History settings verification failed: \(error)\n", stderr)
+                exit(EXIT_FAILURE)
+            }
+            return
+        }
+
+        if CommandLine.arguments.contains("--verify-translation") {
+            do {
+                try TranslationVerifier.run()
+                print("Translation verification passed")
+            } catch {
+                fputs("Translation verification failed: \(error)\n", stderr)
                 exit(EXIT_FAILURE)
             }
             return

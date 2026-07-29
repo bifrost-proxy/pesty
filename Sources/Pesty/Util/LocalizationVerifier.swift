@@ -76,6 +76,28 @@ enum LocalizationVerifier {
                 (L10n.fileCount(1), "1 file"),
                 (L10n.fileCount(2), "2 files"),
                 (L10n.version("1.2.3"), "Version 1.2.3"),
+                (L10n.translation, "Translation"),
+                (L10n.translationAndExplanation, "Translate & Explain"),
+                (L10n.sourceLanguage, "Source language"),
+                (L10n.targetLanguage, "Target language"),
+                (L10n.translationShortcutDescription, "Works while the Pesty panel is open. Default: ⌘T."),
+                (L10n.doubaoTranslation, "Doubao (Volcengine Ark)"),
+                (
+                    L10n.credentialStoredInKeychain,
+                    "API key is securely saved in macOS Keychain and is not displayed."
+                ),
+                (L10n.replaceAPIKey, "Replace API Key"),
+                (L10n.openDoubaoAPIKeyPage, "Get an API key"),
+                (L10n.doubaoModelIDExample, "Example: doubao-seed-evolving"),
+                (L10n.doubaoTranslationNeedsConfiguration, "Add your Volcengine Ark API key and model ID in Translation Settings."),
+                (L10n.translationServiceUnavailable, "Translation service unavailable"),
+                (L10n.explanation, "Explain"),
+                (L10n.usageTips, "Quick tips"),
+                (L10n.usageTipTranslation("⌘T", "⌘D"), "Select a text card, then press ⌘T to translate or ⌘D to explain."),
+                (L10n.usageTipPinboard, "Right-click a card to save it to a new or existing Pinboard—for fields you reuse, such as UID."),
+                (L10n.explanationShortcut, "Explanation shortcut"),
+                (L10n.explanationShortcutDescription, "Explains the selected text while the Pesty panel is open. Requires a configured AI model. Default: ⌘D."),
+                (L10n.explanationNeedsConfiguration, "Configure an AI model before using explanation. Add a Doubao model or an AI provider in Translation Settings."),
             ]
         }
         guard ClipType.richText.label == "Rich Text" else {
@@ -141,6 +163,28 @@ enum LocalizationVerifier {
                 (L10n.items(2), "2 项"),
                 (L10n.fileCount(2), "2 个文件"),
                 (L10n.version("1.2.3"), "版本 1.2.3"),
+                (L10n.translation, "翻译"),
+                (L10n.translationAndExplanation, "翻译&解释"),
+                (L10n.sourceLanguage, "原文语言"),
+                (L10n.targetLanguage, "目标语言"),
+                (L10n.translationShortcutDescription, "在 Pesty 面板打开时生效。默认：⌘T。"),
+                (L10n.doubaoTranslation, "豆包（火山方舟）"),
+                (
+                    L10n.credentialStoredInKeychain,
+                    "API Key 已安全保存在 macOS 钥匙串中，不会显示。"
+                ),
+                (L10n.replaceAPIKey, "更换 API Key"),
+                (L10n.openDoubaoAPIKeyPage, "获取 API Key"),
+                (L10n.doubaoModelIDExample, "示例：doubao-seed-evolving"),
+                (L10n.doubaoTranslationNeedsConfiguration, "请在“翻译设置”中配置火山方舟 API Key 和模型 ID。"),
+                (L10n.translationServiceUnavailable, "翻译服务暂不可用"),
+                (L10n.explanation, "解释"),
+                (L10n.usageTips, "使用小技巧"),
+                (L10n.usageTipTranslation("⌘T", "⌘D"), "选中文本卡片后，按 ⌘T 翻译、按 ⌘D 解释。"),
+                (L10n.usageTipPinboard, "右键卡片可新建或保存到 Pinboard，适合归类 UID 等常用字段。"),
+                (L10n.explanationShortcut, "解释快捷键"),
+                (L10n.explanationShortcutDescription, "在 Pesty 面板打开时解释选中的文本；需要配置大模型。默认：⌘D。"),
+                (L10n.explanationNeedsConfiguration, "使用解释前请先配置大模型：可配置豆包模型，或在“翻译设置”中添加 AI 服务商。"),
             ]
         }
         guard ClipType.richText.label == "富文本" else {

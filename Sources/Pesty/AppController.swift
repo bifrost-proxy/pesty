@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Carbon.HIToolbox
+import Darwin
 
 @MainActor
 final class AppController: NSObject, NSApplicationDelegate {
@@ -28,6 +29,9 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        if importDoubaoCredentialIfRequested() {
+            return
+        }
         if ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"] == nil {
             barController = BarWindowController()
         }
@@ -392,6 +396,8 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     func hideBar(completion: (() -> Void)? = nil) {
         stopKeyMonitor()
+        TranslationCenter.shared.dismiss()
+        ExplanationCenter.shared.dismiss()
         guard let barController else {
             completion?()
             return
@@ -447,18 +453,153 @@ final class AppController: NSObject, NSApplicationDelegate {
         #endif
     }
 
+    /// Importing through the launched app gives the Keychain the same access context that
+    /// regular Pesty launches use. The caller supplies a short-lived, owner-only file and
+    /// removes it immediately after this process exits.
+    private func importDoubaoCredentialIfRequested() -> Bool {
+        let arguments = CommandLine.arguments
+        guard let optionIndex = arguments.firstIndex(of: "--import-doubao-api-key-file") else {
+            return false
+        }
+        let pathIndex = arguments.index(after: optionIndex)
+        guard pathIndex < arguments.endIndex else {
+            fputs("Doubao credential import failed: missing input file\\n", stderr)
+            NSApp.terminate(nil)
+            return true
+        }
+        let keyFileURL = URL(fileURLWithPath: arguments[pathIndex])
+        do {
+            let data = try Data(contentsOf: keyFileURL)
+            guard let rawKey = String(data: data, encoding: .utf8) else {
+                throw CredentialImportError.invalidInput
+            }
+            let apiKey = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !apiKey.isEmpty else {
+                throw CredentialImportError.emptyInput
+            }
+            try SecureCredentialStore.save(apiKey, account: "doubao-ark-api-key")
+            FileHandle.standardOutput.write(Data("Doubao credential imported into Keychain\\n".utf8))
+            exit(EXIT_SUCCESS)
+        } catch {
+            FileHandle.standardError.write(
+                Data("Doubao credential import failed: \(error.localizedDescription)\\n".utf8)
+            )
+            exit(EXIT_FAILURE)
+        }
+    }
+
+    private enum CredentialImportError: LocalizedError {
+        case invalidInput
+        case emptyInput
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidInput: return "invalid input"
+            case .emptyInput: return "empty input"
+            }
+        }
+    }
+
     func copyItem(_ item: ClipItem) {
         let change = PasteService.copy(item)
         monitor.suppressUntilChangeCount = change
         hideBar()
     }
 
+    func toggleTranslationBoard() {
+        ExplanationCenter.shared.dismiss()
+        if barController?.window?.isVisible == true {
+            let item = store.selectedItem
+            TranslationCenter.shared.toggle(for: item)
+            presentAssistantPopoverIfNeeded(kind: .translation, item: item)
+        } else {
+            showBar()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let item = self.store.selectedItem
+                TranslationCenter.shared.toggle(for: item)
+                self.presentAssistantPopoverIfNeeded(kind: .translation, item: item)
+            }
+        }
+    }
+
+    func showTranslationBoard(for item: ClipItem) {
+        ExplanationCenter.shared.dismiss()
+        if barController?.window?.isVisible == true {
+            TranslationCenter.shared.present(for: item)
+            presentAssistantPopoverIfNeeded(kind: .translation, item: item)
+        } else {
+            showBar()
+            DispatchQueue.main.async { [weak self] in
+                TranslationCenter.shared.present(for: item)
+                self?.presentAssistantPopoverIfNeeded(kind: .translation, item: item)
+            }
+        }
+    }
+
+    func showExplanationBoard(for item: ClipItem) {
+        TranslationCenter.shared.dismiss()
+        if barController?.window?.isVisible == true {
+            ExplanationCenter.shared.present(for: item)
+            presentAssistantPopoverIfNeeded(kind: .explanation, item: item)
+        } else {
+            showBar()
+            DispatchQueue.main.async { [weak self] in
+                ExplanationCenter.shared.present(for: item)
+                self?.presentAssistantPopoverIfNeeded(kind: .explanation, item: item)
+            }
+        }
+    }
+
+    func toggleExplanationBoard() {
+        TranslationCenter.shared.dismiss()
+        if barController?.window?.isVisible == true {
+            let item = store.selectedItem
+            ExplanationCenter.shared.toggle(for: item)
+            presentAssistantPopoverIfNeeded(kind: .explanation, item: item)
+        } else {
+            showBar()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                let item = self.store.selectedItem
+                ExplanationCenter.shared.toggle(for: item)
+                self.presentAssistantPopoverIfNeeded(kind: .explanation, item: item)
+            }
+        }
+    }
+
+    func presentAssistantPopoverForAutomatedTest(
+        kind: AssistantPopoverKind,
+        item: ClipItem
+    ) {
+        AssistantPopoverController.shared.present(kind: kind, for: item.id)
+    }
+
+    private func presentAssistantPopoverIfNeeded(
+        kind: AssistantPopoverKind,
+        item: ClipItem?
+    ) {
+        guard let item else { return }
+        let isPresented: Bool
+        switch kind {
+        case .translation:
+            isPresented = TranslationCenter.shared.isPresented
+        case .explanation:
+            isPresented = ExplanationCenter.shared.isPresented
+        }
+        guard isPresented else { return }
+        AssistantPopoverController.shared.present(kind: kind, for: item.id)
+    }
+
     func showSettings(
-        accessibilityOnboarding reason: AccessibilityOnboardingReason? = nil
+        accessibilityOnboarding reason: AccessibilityOnboardingReason? = nil,
+        pane: SettingsPane? = nil
     ) {
         NSApp.activate(ignoringOtherApps: true)
         if let reason {
             settingsWindowState.presentAccessibilityOnboarding(reason: reason)
+        } else if let pane {
+            settingsWindowState.selectedPane = pane
         }
         if let win = settingsWindow {
             win.makeKeyAndOrderFront(nil)
@@ -768,6 +909,43 @@ final class AppController: NSObject, NSApplicationDelegate {
         if isComposingText {
             return event
         }
+
+        if TranslationShortcut.matches(
+            keyCode: code,
+            flags: flags,
+            expectedKeyCode: Settings.shared.translationHotkeyKeyCode,
+            expectedModifiers: Settings.shared.translationHotkeyModifiers
+        ) {
+            toggleTranslationBoard()
+            return nil
+        }
+
+        if ExplanationShortcut.matches(
+            keyCode: code,
+            flags: flags,
+            expectedKeyCode: Settings.shared.explanationHotkeyKeyCode,
+            expectedModifiers: Settings.shared.explanationHotkeyModifiers
+        ) {
+            toggleExplanationBoard()
+            return nil
+        }
+
+        if TranslationCenter.shared.isPresented {
+            if code == kVK_Escape {
+                TranslationCenter.shared.dismiss()
+                return nil
+            }
+            return event
+        }
+
+        if ExplanationCenter.shared.isPresented {
+            if code == kVK_Escape {
+                ExplanationCenter.shared.dismiss()
+                return nil
+            }
+            return event
+        }
+
         if textEditor?.isFieldEditor == true {
             return event
         }

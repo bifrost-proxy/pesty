@@ -129,6 +129,12 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
         localOutsideClickMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] event in
             guard let self else { return event }
             let panelWindowNumber = self.window?.windowNumber
+            if event.windowNumber == panelWindowNumber,
+               AssistantPopoverController.shared.dismissForPanelInteraction(
+                at: NSEvent.mouseLocation
+               ) {
+                return event
+            }
             if event.windowNumber != panelWindowNumber,
                !self.isMouseInsidePanel {
                 DispatchQueue.main.async { [weak self] in
@@ -168,6 +174,7 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
     private var isMouseInsidePanel: Bool {
         guard let panel = window, panel.isVisible else { return false }
         return panel.frame.contains(NSEvent.mouseLocation)
+            || AssistantPopoverController.shared.screenFrame?.contains(NSEvent.mouseLocation) == true
     }
 
     private func finishHiding() {

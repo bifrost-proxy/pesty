@@ -327,7 +327,9 @@ final class ClipboardStore {
     func replaceHistoryForAutomatedKeyboardTest(_ items: [ClipItem]) {
         let environment = ProcessInfo.processInfo.environment
         guard ClipboardStore.automatedTestBase != nil,
-              environment["PESTY_AUTOMATED_UI_TEST"] == "keyboard-delete" else { return }
+              ["keyboard-delete", "translation-board", "explanation-board"].contains(
+                environment["PESTY_AUTOMATED_UI_TEST"]
+              ) else { return }
         history = items
         pinboards = []
         source = .history

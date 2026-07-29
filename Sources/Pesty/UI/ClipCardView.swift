@@ -1,4 +1,37 @@
+import Carbon.HIToolbox
 import SwiftUI
+
+@MainActor
+struct ContextMenuShortcut {
+    let keyEquivalent: KeyEquivalent
+    let modifiers: SwiftUI.EventModifiers
+    let display: String
+
+    init?(keyCode: Int, carbonModifiers: Int) {
+        let keyName = HotKeyCenter.keyName(for: keyCode)
+        switch keyName {
+        case "Space":
+            keyEquivalent = .space
+        case "↩":
+            keyEquivalent = .return
+        case "⎋":
+            keyEquivalent = .escape
+        default:
+            guard keyName.count == 1, let character = keyName.lowercased().first else {
+                return nil
+            }
+            keyEquivalent = KeyEquivalent(character)
+        }
+        display = HotKeyCenter.describe(keyCode: keyCode, modifiers: carbonModifiers)
+
+        var eventModifiers: SwiftUI.EventModifiers = []
+        if carbonModifiers & controlKey != 0 { eventModifiers.insert(.control) }
+        if carbonModifiers & optionKey != 0 { eventModifiers.insert(.option) }
+        if carbonModifiers & shiftKey != 0 { eventModifiers.insert(.shift) }
+        if carbonModifiers & cmdKey != 0 { eventModifiers.insert(.command) }
+        modifiers = eventModifiers
+    }
+}
 
 struct ClipCardView: View {
     @Environment(\.colorScheme) private var colorScheme
@@ -207,6 +240,23 @@ struct ClipCardView: View {
     private var menu: some View {
         Button(L10n.paste) { AppController.shared.pasteItem(item) }
         Button(L10n.copy) { AppController.shared.copyItem(item) }
+        if let text = item.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !text.isEmpty {
+            assistantMenuButton(
+                L10n.translate,
+                keyCode: settings.translationHotkeyKeyCode,
+                modifiers: settings.translationHotkeyModifiers
+            ) {
+                AppController.shared.showTranslationBoard(for: item)
+            }
+            assistantMenuButton(
+                L10n.explanation,
+                keyCode: settings.explanationHotkeyKeyCode,
+                modifiers: settings.explanationHotkeyModifiers
+            ) {
+                AppController.shared.showExplanationBoard(for: item)
+            }
+        }
         Divider()
         if !store.pinboards.isEmpty {
             Menu(L10n.saveToPinboard) {
@@ -229,5 +279,23 @@ struct ClipCardView: View {
         }
         Divider()
         Button(L10n.delete, role: .destructive) { store.delete(item) }
+    }
+
+    @ViewBuilder
+    private func assistantMenuButton(
+        _ title: String,
+        keyCode: Int,
+        modifiers: Int,
+        action: @escaping () -> Void
+    ) -> some View {
+        if let shortcut = ContextMenuShortcut(
+            keyCode: keyCode,
+            carbonModifiers: modifiers
+        ) {
+            Button(title, action: action)
+                .keyboardShortcut(shortcut.keyEquivalent, modifiers: shortcut.modifiers)
+        } else {
+            Button(title, action: action)
+        }
     }
 }
