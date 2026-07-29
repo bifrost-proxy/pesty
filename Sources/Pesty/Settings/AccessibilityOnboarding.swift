@@ -24,6 +24,7 @@ enum AccessibilityOnboardingPolicy {
 
 enum SettingsPane: String, CaseIterable, Identifiable {
     case general
+    case translation
     case about
 
     var id: String { rawValue }

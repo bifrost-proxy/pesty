@@ -33,6 +33,8 @@ struct SettingsView: View {
                             onboardingReason:
                                 state.accessibilityOnboardingReason
                         )
+                    case .translation:
+                        TranslationSettingsView()
                     case .about:
                         AboutView()
                     }
@@ -55,11 +57,12 @@ private struct SettingsTopBar: View {
     var body: some View {
         Picker(L10n.settingsWindowTitle, selection: $selection) {
             Text(L10n.general).tag(SettingsPane.general)
+            Text(L10n.translationAndExplanation).tag(SettingsPane.translation)
             Text(L10n.about).tag(SettingsPane.about)
         }
         .labelsHidden()
         .pickerStyle(.segmented)
-        .frame(width: 230)
+        .frame(width: 340)
         .accessibilityLabel(L10n.settingsWindowTitle)
         .padding(.top, 10)
         .padding(.bottom, 12)

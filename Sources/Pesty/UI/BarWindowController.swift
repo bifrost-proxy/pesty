@@ -135,6 +135,12 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
         localOutsideClickMonitor = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] event in
             guard let self else { return event }
             let panelWindowNumber = self.window?.windowNumber
+            if event.windowNumber == panelWindowNumber,
+               AssistantPopoverController.shared.dismissForPanelInteraction(
+                at: NSEvent.mouseLocation
+               ) {
+                return event
+            }
             if event.windowNumber != panelWindowNumber,
                !ClipPreviewWindowController.shared.owns(event.window),
                !self.isMouseInsidePestyWindows {
@@ -175,7 +181,12 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
     private var isMouseInsidePestyWindows: Bool {
         let isInsideBar = window?.isVisible == true
             && window?.frame.contains(NSEvent.mouseLocation) == true
-        return isInsideBar || ClipPreviewWindowController.shared.isMouseInside
+        let isInsideAssistant =
+            AssistantPopoverController.shared.screenFrame?
+                .contains(NSEvent.mouseLocation) == true
+        return isInsideBar
+            || isInsideAssistant
+            || ClipPreviewWindowController.shared.isMouseInside
     }
 
     private func finishHiding() {

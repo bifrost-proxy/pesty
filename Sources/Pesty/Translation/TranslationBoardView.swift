@@ -1,0 +1,306 @@
+import AppKit
+import SwiftUI
+
+struct TranslationBoardView: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @Bindable private var center = TranslationCenter.shared
+
+    private var palette: ThemePalette { Theme.palette(for: colorScheme) }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider().opacity(0.45)
+            translationContent
+        }
+        .frame(width: AssistantPopoverLayout.width, height: AssistantPopoverLayout.translationHeight)
+        .background(opaqueBoardSurface)
+        .accessibilityIdentifier("pesty-translation-board")
+        .onAppear { AutomatedUITestProbe.recordTranslationBoard() }
+    }
+
+    private var header: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "character.bubble")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 28, height: 28)
+                .background(Color.accentColor.opacity(0.10), in: Circle())
+            languageMenu(
+                selected: center.sourceLanguage,
+                title: L10n.sourceLanguage,
+                acceptsAutomatic: true,
+                action: center.setSourceLanguage
+            )
+            Image(systemName: "arrow.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(palette.textTertiary.swiftUIColor)
+            languageMenu(
+                selected: center.targetLanguage,
+                title: L10n.targetLanguage,
+                acceptsAutomatic: false,
+                action: center.setTargetLanguage
+            )
+            Spacer(minLength: 4)
+            moreMenu
+            Button {
+                center.dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 28, height: 28)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(palette.textSecondary.swiftUIColor)
+            .help(L10n.closeTranslation)
+            .accessibilityIdentifier("pesty-translation-close")
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 44)
+    }
+
+    private var opaqueBoardSurface: Color {
+        Color(
+            .sRGB,
+            red: palette.cardBody.red,
+            green: palette.cardBody.green,
+            blue: palette.cardBody.blue,
+            opacity: 1
+        )
+    }
+
+    private func languageMenu(
+        selected: TranslationLanguage,
+        title: String,
+        acceptsAutomatic: Bool,
+        action: @escaping (TranslationLanguage) -> Void
+    ) -> some View {
+        Menu {
+            ForEach(TranslationLanguage.allCases) { language in
+                if acceptsAutomatic || language != .automatic {
+                    Button {
+                        action(language)
+                    } label: {
+                        HStack {
+                            Text(language.displayName)
+                            if language == selected { Image(systemName: "checkmark") }
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(selected.displayName)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(palette.textPrimary.swiftUIColor)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(palette.textTertiary.swiftUIColor)
+            }
+            .frame(minWidth: 66, maxWidth: 86, alignment: .leading)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .background(palette.fieldBackground.swiftUIColor, in: Capsule())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .accessibilityLabel(title)
+    }
+
+    private var moreMenu: some View {
+        Menu {
+            Menu(L10n.translationService) {
+                ForEach(TranslationService.allCases) { service in
+                    Button {
+                        center.setService(service)
+                    } label: {
+                        HStack {
+                            Text(service.displayName)
+                            if Settings.shared.translationService == service {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
+            }
+            Divider()
+            Button(L10n.translationSettings) {
+                AppController.shared.showSettings(pane: .translation)
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(palette.textSecondary.swiftUIColor)
+                .frame(width: 28, height: 28)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .help(L10n.moreTranslationOptions)
+        .accessibilityIdentifier("pesty-translation-more")
+    }
+
+    @ViewBuilder
+    private var translationContent: some View {
+        switch center.status {
+        case .translated:
+            translationResult
+        case .translating:
+            progressState
+        case .unavailable(let message):
+            unavailableState(message: message)
+        case .failed(let message):
+            messageState(
+                symbol: "exclamationmark.triangle",
+                message: message,
+                showsSettings: false
+            )
+        case .idle:
+            EmptyView()
+        }
+    }
+
+    private var translationResult: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(center.sourceText)
+                .font(.system(size: 12))
+                .foregroundStyle(palette.textSecondary.swiftUIColor)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(palette.fieldBackground.swiftUIColor, in: RoundedRectangle(cornerRadius: 9))
+            HStack {
+                Text(targetTitle)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                Spacer()
+                Text(center.providerName)
+                    .font(.caption)
+                    .foregroundStyle(palette.textTertiary.swiftUIColor)
+            }
+            ScrollView {
+                Text(center.translatedText)
+                    .font(.system(size: 15))
+                    .foregroundStyle(palette.textPrimary.swiftUIColor)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            HStack {
+                Spacer()
+                Button(L10n.copyTranslation) { copyTranslation() }
+                    .buttonStyle(.borderless)
+                    .font(.system(size: 12, weight: .medium))
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear { AutomatedUITestProbe.recordTranslationPreview() }
+    }
+
+    private var progressState: some View {
+        VStack(spacing: 10) {
+            ProgressView().controlSize(.small)
+            Text(L10n.translating)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(palette.textSecondary.swiftUIColor)
+            if !center.providerName.isEmpty {
+                Text(center.providerName)
+                    .font(.caption)
+                    .foregroundStyle(palette.textTertiary.swiftUIColor)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private func unavailableState(message: String) -> some View {
+        if center.sourceText.isEmpty {
+            messageState(
+                symbol: "text.badge.xmark",
+                message: message,
+                showsSettings: false
+            )
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                Label(L10n.translationServiceUnavailable, systemImage: "exclamationmark.circle")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(palette.textPrimary.swiftUIColor)
+                if !center.appleTranslationSupported {
+                    availabilityRow(
+                        title: "Apple Translate",
+                        detail: L10n.appleTranslationRequiresMacOS15,
+                        symbol: "macbook"
+                    )
+                }
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(palette.textSecondary.swiftUIColor)
+                    .lineLimit(2)
+                HStack {
+                    Spacer()
+                    Button(L10n.openTranslationSettings) {
+                        AppController.shared.showSettings(pane: .translation)
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
+    }
+
+    private func availabilityRow(title: String, detail: String, symbol: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(palette.textTertiary.swiftUIColor)
+                .frame(width: 16)
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .frame(width: 104, alignment: .leading)
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(palette.textSecondary.swiftUIColor)
+                .lineLimit(1)
+        }
+    }
+
+    private func messageState(
+        symbol: String,
+        message: String,
+        showsSettings: Bool
+    ) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 22, weight: .light))
+                .foregroundStyle(palette.textTertiary.swiftUIColor)
+            Text(message)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(palette.textSecondary.swiftUIColor)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 360)
+            HStack(spacing: 12) {
+                if showsSettings {
+                    Button(L10n.openTranslationSettings) {
+                        AppController.shared.showSettings(pane: .translation)
+                    }
+                }
+                if !showsSettings {
+                    Button(L10n.retryTranslation) { center.retry() }
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var targetTitle: String { center.targetLanguage.displayName }
+
+    private func copyTranslation() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(center.translatedText, forType: .string)
+    }
+}

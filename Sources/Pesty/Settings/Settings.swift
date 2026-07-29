@@ -103,6 +103,18 @@ final class Settings {
         static let accessibilityAuthorizedBuild = "accessibilityAuthorizedBuild"
         static let iCloudSync = "iCloudSync"
         static let language = "language"
+        static let translationService = "translationService"
+        static let translationSourceLanguage = "translationSourceLanguage"
+        static let translationTargetLanguage = "translationTargetLanguage"
+        static let translationHotkeyKeyCode = "translationHotkeyKeyCode"
+        static let translationHotkeyModifiers = "translationHotkeyModifiers"
+        static let explanationHotkeyKeyCode = "explanationHotkeyKeyCode"
+        static let explanationHotkeyModifiers = "explanationHotkeyModifiers"
+        static let explanationHotkeyDefaultMigrationVersion =
+            "explanationHotkeyDefaultMigrationVersion"
+        static let doubaoTranslationEndpointID = "doubaoTranslationEndpointID"
+        static let doubaoTranslationModelID = "doubaoTranslationModelID"
+        static let aiProviderProfiles = "aiProviderProfiles"
     }
 
     private(set) var historyLimit: Int
@@ -174,6 +186,63 @@ final class Settings {
         }
     }
 
+    var translationService: TranslationService {
+        didSet {
+            guard isLoaded else { return }
+            d.set(translationService.rawValue, forKey: Keys.translationService)
+        }
+    }
+
+    var translationSourceLanguage: TranslationLanguage {
+        didSet {
+            guard isLoaded else { return }
+            d.set(translationSourceLanguage.rawValue, forKey: Keys.translationSourceLanguage)
+        }
+    }
+
+    var translationTargetLanguage: TranslationLanguage {
+        didSet {
+            guard isLoaded else { return }
+            if translationTargetLanguage == .automatic {
+                translationTargetLanguage = .simplifiedChinese
+                return
+            }
+            d.set(translationTargetLanguage.rawValue, forKey: Keys.translationTargetLanguage)
+        }
+    }
+
+    var translationHotkeyKeyCode: Int {
+        didSet {
+            guard isLoaded else { return }
+            d.set(translationHotkeyKeyCode, forKey: Keys.translationHotkeyKeyCode)
+        }
+    }
+
+    var translationHotkeyModifiers: Int {
+        didSet {
+            guard isLoaded else { return }
+            d.set(translationHotkeyModifiers, forKey: Keys.translationHotkeyModifiers)
+        }
+    }
+
+    var explanationHotkeyKeyCode: Int {
+        didSet {
+            guard isLoaded else { return }
+            d.set(explanationHotkeyKeyCode, forKey: Keys.explanationHotkeyKeyCode)
+        }
+    }
+
+    var explanationHotkeyModifiers: Int {
+        didSet {
+            guard isLoaded else { return }
+            d.set(explanationHotkeyModifiers, forKey: Keys.explanationHotkeyModifiers)
+        }
+    }
+
+    private(set) var doubaoTranslationModelID: String
+    private(set) var doubaoTranslationConfigured: Bool
+    private(set) var aiProviderProfiles: [AIProviderProfile]
+
     private init() {
         if let suiteName = ProcessInfo.processInfo.environment[
             "PESTY_AUTOMATED_TEST_DEFAULTS_SUITE"
@@ -197,7 +266,14 @@ final class Settings {
             Keys.barHeight: BarLayoutPolicy.defaultHeight,
             Keys.onboarded: false,
             Keys.iCloudSync: false,
-            Keys.language: AppLanguage.systemDefault.rawValue
+            Keys.language: AppLanguage.systemDefault.rawValue,
+            Keys.translationService: TranslationService.automatic.rawValue,
+            Keys.translationSourceLanguage: TranslationLanguage.automatic.rawValue,
+            Keys.translationTargetLanguage: TranslationLanguage.simplifiedChinese.rawValue,
+            Keys.translationHotkeyKeyCode: TranslationShortcut.defaultKeyCode,
+            Keys.translationHotkeyModifiers: TranslationShortcut.defaultModifiers,
+            Keys.explanationHotkeyKeyCode: ExplanationShortcut.defaultKeyCode,
+            Keys.explanationHotkeyModifiers: ExplanationShortcut.defaultModifiers
         ])
         let loadedHistoryLimit = HistoryRetentionPolicy.normalized(
             d.integer(forKey: Keys.historyLimit)
@@ -240,11 +316,182 @@ final class Settings {
         )
         iCloudSync = d.bool(forKey: Keys.iCloudSync)
         language = AppLanguage(rawValue: d.string(forKey: Keys.language) ?? "") ?? .systemDefault
+        let storedTranslationService = d.string(forKey: Keys.translationService) ?? ""
+        let loadedTranslationService = TranslationService(rawValue: storedTranslationService) ?? .automatic
+        translationService = loadedTranslationService
+        if TranslationService(rawValue: storedTranslationService) == nil {
+            d.set(loadedTranslationService.rawValue, forKey: Keys.translationService)
+        }
+        translationSourceLanguage = TranslationLanguage(
+            rawValue: d.string(forKey: Keys.translationSourceLanguage) ?? ""
+        ) ?? .automatic
+        let loadedTranslationTargetLanguage = TranslationLanguage(
+            rawValue: d.string(forKey: Keys.translationTargetLanguage) ?? ""
+        ) ?? .simplifiedChinese
+        translationTargetLanguage = loadedTranslationTargetLanguage == .automatic
+            ? .simplifiedChinese
+            : loadedTranslationTargetLanguage
+        translationHotkeyKeyCode = d.integer(forKey: Keys.translationHotkeyKeyCode)
+        translationHotkeyModifiers = d.integer(forKey: Keys.translationHotkeyModifiers)
+        Settings.migrateExplanationShortcutDefaultIfNeeded(defaults: d)
+        explanationHotkeyKeyCode = d.integer(forKey: Keys.explanationHotkeyKeyCode)
+        explanationHotkeyModifiers = d.integer(forKey: Keys.explanationHotkeyModifiers)
+        let legacyDoubaoEndpointID = d.string(
+            forKey: Keys.doubaoTranslationEndpointID
+        ) ?? ""
+        let storedDoubaoModelID = d.string(forKey: Keys.doubaoTranslationModelID) ?? ""
+        let loadedDoubaoModelID: String
+        if !storedDoubaoModelID.isEmpty {
+            loadedDoubaoModelID = storedDoubaoModelID
+        } else if legacyDoubaoEndpointID.hasPrefix("ep-") {
+            // Seed Evolving is invoked by its model ID. Preserve the legacy endpoint
+            // setting, but migrate this translation integration to the supported ID.
+            loadedDoubaoModelID = "doubao-seed-evolving"
+            d.set(loadedDoubaoModelID, forKey: Keys.doubaoTranslationModelID)
+        } else {
+            loadedDoubaoModelID = legacyDoubaoEndpointID
+        }
+        doubaoTranslationModelID = loadedDoubaoModelID
+        // Isolated UI regressions don't call an AI provider. Avoid triggering a
+        // Keychain access prompt from an unsigned temporary test binary, which
+        // would prevent its AppKit run loop from ever starting. The three tests
+        // that deliberately exercise a provider still read the real credential.
+        let savedDoubaoAPIKey = Self.skipsCredentialReadForAutomatedUITest
+            ? nil
+            : (try? SecureCredentialStore.read(account: "doubao-ark-api-key"))
+        doubaoTranslationConfigured = !(savedDoubaoAPIKey ?? "").isEmpty
+            && !loadedDoubaoModelID.isEmpty
+        aiProviderProfiles = Self.loadAIProviderProfiles(from: d)
         isLoaded = true
+    }
+
+    private static var skipsCredentialReadForAutomatedUITest: Bool {
+        guard let phase = ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"] else {
+            return false
+        }
+        return !["doubao-live", "explanation-live", "doubao-prompt-diagnosis"].contains(phase)
     }
 
     var hotkeyDisplay: String {
         HotKeyCenter.describe(keyCode: hotkeyKeyCode, modifiers: hotkeyModifiers)
+    }
+
+    var translationHotkeyDisplay: String {
+        HotKeyCenter.describe(
+            keyCode: translationHotkeyKeyCode,
+            modifiers: translationHotkeyModifiers
+        )
+    }
+
+    var explanationHotkeyDisplay: String {
+        HotKeyCenter.describe(
+            keyCode: explanationHotkeyKeyCode,
+            modifiers: explanationHotkeyModifiers
+        )
+    }
+
+    /// Beta.38 shipped the first explanation shortcut as Command-E. Move only
+    /// that exact previous default to Command-D; all other user choices remain intact.
+    private static func migrateExplanationShortcutDefaultIfNeeded(defaults: UserDefaults) {
+        let migrationVersion = defaults.integer(forKey: Keys.explanationHotkeyDefaultMigrationVersion)
+        let keyCode = defaults.integer(forKey: Keys.explanationHotkeyKeyCode)
+        let modifiers = defaults.integer(forKey: Keys.explanationHotkeyModifiers)
+        guard shouldMigrateExplanationShortcutDefault(
+            migrationVersion: migrationVersion,
+            keyCode: keyCode,
+            modifiers: modifiers
+        ) else {
+            return
+        }
+        defaults.set(ExplanationShortcut.defaultKeyCode, forKey: Keys.explanationHotkeyKeyCode)
+        defaults.set(ExplanationShortcut.defaultModifiers, forKey: Keys.explanationHotkeyModifiers)
+        defaults.set(1, forKey: Keys.explanationHotkeyDefaultMigrationVersion)
+    }
+
+    static func shouldMigrateExplanationShortcutDefault(
+        migrationVersion: Int,
+        keyCode: Int,
+        modifiers: Int
+    ) -> Bool {
+        guard migrationVersion < 1 else { return false }
+        guard keyCode == ExplanationShortcut.previousDefaultKeyCode,
+              modifiers == ExplanationShortcut.previousDefaultModifiers else {
+            return false
+        }
+        return true
+    }
+
+    func doubaoTranslationAPIKey() -> String? {
+        (try? SecureCredentialStore.read(account: "doubao-ark-api-key")) ?? nil
+    }
+
+    var explanationConfigured: Bool {
+        configuredExplanationProvider() != nil
+    }
+
+    func configuredExplanationProvider() -> ExplanationProvider? {
+        for profile in aiProviderProfiles {
+            let endpoint = profile.endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+            let model = profile.model.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !endpoint.isEmpty, !model.isEmpty,
+                  let apiKey = (try? SecureCredentialStore.read(
+                    account: profile.credentialAccount
+                  )) ?? nil,
+                  !apiKey.isEmpty else {
+                continue
+            }
+            return .openAICompatible(profile: profile, apiKey: apiKey)
+        }
+        guard doubaoTranslationConfigured,
+              let apiKey = doubaoTranslationAPIKey(),
+              !apiKey.isEmpty else {
+            return nil
+        }
+        return .doubao(modelID: doubaoTranslationModelID, apiKey: apiKey)
+    }
+
+    func saveDoubaoTranslationAPIKey(_ apiKey: String) throws {
+        try SecureCredentialStore.save(apiKey, account: "doubao-ark-api-key")
+        updateDoubaoTranslationConfigurationState()
+    }
+
+    func saveDoubaoTranslationModelID(_ modelID: String) {
+        doubaoTranslationModelID = modelID.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        d.set(doubaoTranslationModelID, forKey: Keys.doubaoTranslationModelID)
+        updateDoubaoTranslationConfigurationState()
+    }
+
+    private func updateDoubaoTranslationConfigurationState() {
+        let apiKey = (try? SecureCredentialStore.read(account: "doubao-ark-api-key")) ?? nil
+        doubaoTranslationConfigured = !(apiKey ?? "").isEmpty
+            && !doubaoTranslationModelID.isEmpty
+    }
+
+    func addAIProviderProfile(_ profile: AIProviderProfile, apiKey: String) throws {
+        try SecureCredentialStore.save(apiKey, account: profile.credentialAccount)
+        aiProviderProfiles.append(profile)
+        persistAIProviderProfiles()
+    }
+
+    func removeAIProviderProfile(_ profile: AIProviderProfile) throws {
+        try SecureCredentialStore.delete(account: profile.credentialAccount)
+        aiProviderProfiles.removeAll { $0.id == profile.id }
+        persistAIProviderProfiles()
+    }
+
+    private func persistAIProviderProfiles() {
+        guard let data = try? JSONEncoder().encode(aiProviderProfiles) else { return }
+        d.set(data, forKey: Keys.aiProviderProfiles)
+    }
+
+    private static func loadAIProviderProfiles(from defaults: UserDefaults) -> [AIProviderProfile] {
+        guard let data = defaults.data(forKey: Keys.aiProviderProfiles),
+              let profiles = try? JSONDecoder().decode([AIProviderProfile].self, from: data) else {
+            return []
+        }
+        return profiles
     }
 
     var retainedHistoryLimit: Int? {

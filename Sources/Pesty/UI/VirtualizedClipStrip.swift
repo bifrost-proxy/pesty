@@ -577,6 +577,13 @@ final class ClipCollectionViewItem: NSCollectionViewItem {
             ])
             self.hostingView = hostingView
         }
+        if selected {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.view.layoutSubtreeIfNeeded()
+                SelectedClipPopoverAnchor.shared.update(itemID: item.id, view: self.view)
+            }
+        }
     }
 
     func updateSelection(_ selected: Bool) {

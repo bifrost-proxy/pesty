@@ -144,6 +144,10 @@ struct BarView: View {
     @Bindable private var store = ClipboardStore.shared
     @Bindable private var settings = Settings.shared
     @Bindable private var updater = UpdateManager.shared
+    @Bindable private var translator = TranslationCenter.shared
+    @State private var usageTipsVisible = false
+    @State private var usageTipsPinned = false
+    @State private var usageTipsHovering = false
 
     private var palette: ThemePalette { Theme.palette(for: colorScheme) }
 
@@ -177,6 +181,7 @@ struct BarView: View {
                 .fill(Color.white.opacity(colorScheme == .dark ? 0.18 : 0.55))
                 .frame(height: 1)
         }
+        .attachAppleTranslationTask(translator)
         .ignoresSafeArea()
         .id(settings.language)
     }
@@ -191,10 +196,56 @@ struct BarView: View {
             if updater.showInClipboardBar, let release = updater.availableRelease {
                 updateButton(release)
             }
-            moreMenu
+            HStack(spacing: 0) {
+                usageTipsButton
+                moreMenu
+            }
         }
         .padding(.horizontal, 18)
         .frame(height: 56)
+    }
+
+    private var usageTipsButton: some View {
+        Button {
+            usageTipsPinned.toggle()
+            usageTipsVisible = usageTipsPinned
+        } label: {
+            Image(systemName: "lightbulb")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(palette.textSecondary.swiftUIColor)
+                .frame(width: 26, height: 26)
+                .background(
+                    palette.textPrimary.swiftUIColor.opacity(usageTipsVisible ? 0.08 : 0.025),
+                    in: Circle()
+                )
+        }
+        .buttonStyle(.plain)
+        .contentShape(Circle())
+        .accessibilityLabel(L10n.usageTips)
+        .accessibilityIdentifier("pesty-usage-tips")
+        .help(L10n.usageTips)
+        .onHover { hovering in
+            usageTipsHovering = hovering
+            if hovering {
+                usageTipsVisible = true
+            } else if !usageTipsPinned {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                    guard !usageTipsPinned, !usageTipsHovering else { return }
+                    usageTipsVisible = false
+                }
+            }
+        }
+        .onChange(of: usageTipsVisible) { _, visible in
+            if !visible {
+                usageTipsPinned = false
+            }
+        }
+        .popover(isPresented: $usageTipsVisible, arrowEdge: .bottom) {
+            UsageTipsPopover(
+                translationShortcut: settings.translationHotkeyDisplay,
+                explanationShortcut: settings.explanationHotkeyDisplay
+            )
+        }
     }
 
     private var syncButton: some View {
@@ -352,6 +403,55 @@ struct BarView: View {
                  : L10n.noMatches(store.searchText))
                 .font(.system(size: 13))
                 .foregroundStyle(palette.textSecondary.swiftUIColor)
+        }
+    }
+}
+
+private struct UsageTipsPopover: View {
+    let translationShortcut: String
+    let explanationShortcut: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            Label(L10n.usageTips, systemImage: "lightbulb.fill")
+                .font(.system(size: 15, weight: .semibold))
+
+            UsageTipRow(
+                icon: "command",
+                text: L10n.usageTipTranslation(translationShortcut, explanationShortcut)
+            )
+            UsageTipRow(
+                icon: "pin",
+                text: L10n.usageTipPinboard
+            )
+            UsageTipRow(
+                icon: "cursorarrow.click.2",
+                text: L10n.usageTipQuickPaste
+            )
+            UsageTipRow(
+                icon: "magnifyingglass",
+                text: L10n.usageTipSearch
+            )
+        }
+        .padding(16)
+        .frame(width: 350, alignment: .leading)
+        .accessibilityIdentifier("pesty-usage-tips-popover")
+    }
+}
+
+private struct UsageTipRow: View {
+    let icon: String
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: icon)
+                .font(.system(size: 12, weight: .semibold))
+                .frame(width: 16, height: 17)
+                .foregroundStyle(.secondary)
+            Text(text)
+                .font(.system(size: 12.5))
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

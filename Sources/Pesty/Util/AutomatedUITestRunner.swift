@@ -6,6 +6,10 @@ import Foundation
 @MainActor
 enum AutomatedUITestProbe {
     private(set) static var renderedTexts = Set<String>()
+    private(set) static var translationBoardRendered = false
+    private(set) static var translationPreviewRendered = false
+    private(set) static var explanationBoardRendered = false
+    private(set) static var explanationPreviewRendered = false
     private(set) static var renderedItemIDs = Set<UUID>()
 
     static var isEnabled: Bool {
@@ -14,6 +18,10 @@ enum AutomatedUITestProbe {
 
     static func reset() {
         renderedTexts.removeAll()
+        translationBoardRendered = false
+        translationPreviewRendered = false
+        explanationBoardRendered = false
+        explanationPreviewRendered = false
         renderedItemIDs.removeAll()
     }
 
@@ -24,6 +32,26 @@ enum AutomatedUITestProbe {
                 != "performance",
               let text = item.text else { return }
         renderedTexts.insert(text)
+    }
+
+    static func recordTranslationBoard() {
+        guard isEnabled else { return }
+        translationBoardRendered = true
+    }
+
+    static func recordTranslationPreview() {
+        guard isEnabled else { return }
+        translationPreviewRendered = true
+    }
+
+    static func recordExplanationBoard() {
+        guard isEnabled else { return }
+        explanationBoardRendered = true
+    }
+
+    static func recordExplanationPreview() {
+        guard isEnabled else { return }
+        explanationPreviewRendered = true
     }
 }
 
@@ -185,6 +213,69 @@ enum AutomatedUITestRunner {
         let longChineseQueryFits: Bool
     }
 
+    private struct TranslationBoardResult: Codable {
+        let phase: String
+        let success: Bool
+        let shortcutOpenedBoard: Bool
+        let shortcutClosedBoard: Bool
+        let boardRendered: Bool
+        let previewContentRendered: Bool
+        let popoverPresented: Bool
+        let popoverAnchoredAboveCard: Bool
+        let translationShortcut: String
+    }
+
+    private struct TranslationSettingsResult: Codable {
+        let phase: String
+        let success: Bool
+        let settingsWindowPresented: Bool
+    }
+
+    private struct ExplanationBoardResult: Codable {
+        let phase: String
+        let success: Bool
+        let shortcutOpenedBoard: Bool
+        let shortcutClosedBoard: Bool
+        let boardRendered: Bool
+        let previewContentRendered: Bool
+        let popoverPresented: Bool
+        let popoverAnchoredAboveCard: Bool
+        let explanationShortcut: String
+    }
+
+    private struct ExplanationLiveResult: Codable {
+        let phase: String
+        let success: Bool
+        let configurationPresent: Bool
+        let state: String
+        let provider: String
+        let explanationLength: Int
+        /// Provider/UI error metadata only. Never contains a clipboard value or model answer.
+        let failureReason: String?
+    }
+
+    private struct DoubaoLiveTranslationResult: Codable {
+        let phase: String
+        let success: Bool
+        let serviceSelected: Bool
+        let configurationPresent: Bool
+        let state: String
+        let provider: String
+        let translationLength: Int
+        /// A provider/UI error only; the synthetic source text and translated text are never logged.
+        let failureReason: String?
+    }
+
+    private struct DoubaoPromptDiagnosticResult: Codable {
+        let phase: String
+        let success: Bool
+        let configurationPresent: Bool
+        let httpStatus: Int?
+        let requestBody: String?
+        let responseBody: String?
+        let failureReason: String?
+    }
+
     private struct PreviewResult: Codable {
         let phase: String
         let success: Bool
@@ -301,6 +392,30 @@ enum AutomatedUITestRunner {
             runSearchInputTest(controller: controller)
             return
         }
+        if phase == "translation-board" {
+            runTranslationBoardTest(controller: controller)
+            return
+        }
+        if phase == "explanation-board" {
+            runExplanationBoardTest(controller: controller)
+            return
+        }
+        if phase == "translation-settings" {
+            runTranslationSettingsTest(controller: controller)
+            return
+        }
+        if phase == "doubao-live" {
+            runDoubaoLiveTranslationTest(controller: controller)
+            return
+        }
+        if phase == "explanation-live" {
+            runLiveExplanationTest(controller: controller)
+            return
+        }
+        if phase == "doubao-prompt-diagnosis" {
+            runDoubaoPromptDiagnostic(controller: controller)
+            return
+        }
         if phase == "preview" {
             runPreviewTest(controller: controller, runID: runID)
             return
@@ -396,7 +511,7 @@ enum AutomatedUITestRunner {
                 controller.handleKey($0) == nil
             } ?? false
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 let textFieldCount = descendantViews(
                     of: barWindow?.contentView
                 ).compactMap { $0 as? NSTextField }.count
@@ -446,6 +561,105 @@ enum AutomatedUITestRunner {
                 writeSearchInput(result)
                 exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
             }
+        }
+    }
+
+    private static func runTranslationBoardTest(controller: AppController) {
+        let item = ClipItem(
+            type: .text,
+            text: "Pesty translation board verification",
+            createdAt: Date()
+        )
+        controller.monitor.stop()
+        controller.store.replaceHistoryForAutomatedKeyboardTest([item])
+        Settings.shared.translationService = .doubao
+        AutomatedUITestProbe.reset()
+        controller.showBar()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            let translationEvent = makeKeyEvent(
+                keyCode: UInt16(TranslationShortcut.defaultKeyCode),
+                characters: "t",
+                modifierFlags: [.command]
+            )
+            let shortcutWasConsumed = translationEvent.map {
+                controller.handleKey($0) == nil
+            } ?? false
+            let shortcutOpenedBoard = shortcutWasConsumed
+                && TranslationCenter.shared.isPresented
+
+            let secondTranslationEvent = makeKeyEvent(
+                keyCode: UInt16(TranslationShortcut.defaultKeyCode),
+                characters: "t",
+                modifierFlags: [.command]
+            )
+            let shortcutClosedBoard = (secondTranslationEvent.map {
+                controller.handleKey($0) == nil
+            } ?? false) && !TranslationCenter.shared.isPresented
+
+            TranslationCenter.shared.showAutomatedPreview(
+                source: "Pesty translation board verification",
+                translation: "Pesty 翻译看板验证"
+            )
+            controller.presentAssistantPopoverForAutomatedTest(kind: .translation, item: item)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                let boardRendered = AutomatedUITestProbe.translationBoardRendered
+                let previewContentRendered = TranslationCenter.shared.status == .translated
+                    && TranslationCenter.shared.translatedText == "Pesty 翻译看板验证"
+                    && AutomatedUITestProbe.translationPreviewRendered
+                let popoverPresented = AssistantPopoverController.shared.isPresented
+                let popoverAnchoredAboveCard = isAssistantPopoverAnchoredAboveCard(item.id)
+                let result = TranslationBoardResult(
+                    phase: "translation-board",
+                    success: shortcutOpenedBoard
+                        && shortcutClosedBoard
+                        && boardRendered
+                        && previewContentRendered
+                        && popoverPresented
+                        && popoverAnchoredAboveCard,
+                    shortcutOpenedBoard: shortcutOpenedBoard,
+                    shortcutClosedBoard: shortcutClosedBoard,
+                    boardRendered: boardRendered,
+                    previewContentRendered: previewContentRendered,
+                    popoverPresented: popoverPresented,
+                    popoverAnchoredAboveCard: popoverAnchoredAboveCard,
+                    translationShortcut: Settings.shared.translationHotkeyDisplay
+                )
+                captureKeyWindowScreenshotIfRequested()
+                writeTranslationBoard(result)
+                let exitCode = result.success ? EXIT_SUCCESS : EXIT_FAILURE
+                let holdSeconds = TimeInterval(
+                    ProcessInfo.processInfo.environment[
+                        "PESTY_AUTOMATED_TEST_HOLD_SECONDS"
+                    ] ?? ""
+                ) ?? 0
+                guard holdSeconds > 0 else {
+                    controller.hideBar()
+                    exit(exitCode)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + holdSeconds) {
+                    controller.hideBar()
+                    exit(exitCode)
+                }
+            }
+        }
+    }
+
+    private static func runTranslationSettingsTest(controller: AppController) {
+        controller.monitor.stop()
+        controller.showSettings(pane: .translation)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            let settingsWindow = visibleContentWindow()
+            let settingsWindowPresented = settingsWindow != nil
+            captureKeyWindowScreenshotIfRequested()
+            let result = TranslationSettingsResult(
+                phase: "translation-settings",
+                success: settingsWindowPresented,
+                settingsWindowPresented: settingsWindowPresented
+            )
+            writeTranslationSettings(result)
+            settingsWindow?.orderOut(nil)
+            exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
         }
     }
 
@@ -766,6 +980,330 @@ enum AutomatedUITestRunner {
         }
     }
 
+    private static func runExplanationBoardTest(controller: AppController) {
+        let item = ClipItem(
+            type: .text,
+            text: "Pesty explanation board verification",
+            createdAt: Date()
+        )
+        controller.monitor.stop()
+        controller.store.replaceHistoryForAutomatedKeyboardTest([item])
+        AutomatedUITestProbe.reset()
+        controller.showBar()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            let explanationEvent = makeKeyEvent(
+                keyCode: UInt16(ExplanationShortcut.defaultKeyCode),
+                characters: "d",
+                modifierFlags: [.command]
+            )
+            let shortcutOpenedBoard = (explanationEvent.map {
+                controller.handleKey($0) == nil
+            } ?? false) && ExplanationCenter.shared.isPresented
+
+            let secondExplanationEvent = makeKeyEvent(
+                keyCode: UInt16(ExplanationShortcut.defaultKeyCode),
+                characters: "d",
+                modifierFlags: [.command]
+            )
+            let shortcutClosedBoard = (secondExplanationEvent.map {
+                controller.handleKey($0) == nil
+            } ?? false) && !ExplanationCenter.shared.isPresented
+
+            let markdownPreview = """
+            **核心含义：** 解释结果现在使用 Markdown 排版。
+
+            - 支持 `行内代码` 与粗体
+            - 列表更紧凑，减少滚动
+            """
+            ExplanationCenter.shared.showAutomatedPreview(
+                source: "Pesty explanation board verification",
+                explanation: markdownPreview
+            )
+            controller.presentAssistantPopoverForAutomatedTest(kind: .explanation, item: item)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                let boardRendered = AutomatedUITestProbe.explanationBoardRendered
+                let previewContentRendered = ExplanationCenter.shared.status == .explained
+                    && ExplanationCenter.shared.explanationText == markdownPreview
+                    && AutomatedUITestProbe.explanationPreviewRendered
+                let popoverPresented = AssistantPopoverController.shared.isPresented
+                let popoverAnchoredAboveCard = isAssistantPopoverAnchoredAboveCard(item.id)
+                let result = ExplanationBoardResult(
+                    phase: "explanation-board",
+                    success: shortcutOpenedBoard
+                        && shortcutClosedBoard
+                        && boardRendered
+                        && previewContentRendered
+                        && popoverPresented
+                        && popoverAnchoredAboveCard,
+                    shortcutOpenedBoard: shortcutOpenedBoard,
+                    shortcutClosedBoard: shortcutClosedBoard,
+                    boardRendered: boardRendered,
+                    previewContentRendered: previewContentRendered,
+                    popoverPresented: popoverPresented,
+                    popoverAnchoredAboveCard: popoverAnchoredAboveCard,
+                    explanationShortcut: Settings.shared.explanationHotkeyDisplay
+                )
+                captureKeyWindowScreenshotIfRequested()
+                writeExplanationBoard(result)
+                let exitCode = result.success ? EXIT_SUCCESS : EXIT_FAILURE
+                let holdSeconds = TimeInterval(
+                    ProcessInfo.processInfo.environment[
+                        "PESTY_AUTOMATED_TEST_HOLD_SECONDS"
+                    ] ?? ""
+                ) ?? 0
+                guard holdSeconds > 0 else {
+                    controller.hideBar()
+                    exit(exitCode)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + holdSeconds) {
+                    controller.hideBar()
+                    exit(exitCode)
+                }
+            }
+        }
+    }
+
+    /// Exercises Pesty's real translation path with a fixed synthetic string.
+    /// This intentionally does not read, write, or persist clipboard contents.
+    private static func runDoubaoLiveTranslationTest(controller: AppController) {
+        controller.monitor.stop()
+        let serviceSelected = Settings.shared.translationService == .doubao
+        let configurationPresent = Settings.shared.doubaoTranslationConfigured
+        let credentialReadState: String
+        do {
+            let apiKey = try SecureCredentialStore.read(account: "doubao-ark-api-key")
+            credentialReadState = (apiKey?.isEmpty == false) ? "present" : "empty-or-missing"
+        } catch let error as SecureCredentialStore.CredentialStoreError {
+            credentialReadState = "keychain-status-\(error.status)"
+        } catch {
+            credentialReadState = "keychain-read-failed"
+        }
+        let modelPresent = !Settings.shared.doubaoTranslationModelID.isEmpty
+        guard serviceSelected, configurationPresent else {
+            writeDoubaoLiveTranslation(
+                DoubaoLiveTranslationResult(
+                    phase: "doubao-live",
+                    success: false,
+                    serviceSelected: serviceSelected,
+                    configurationPresent: configurationPresent,
+                    state: "not-configured",
+                    provider: "",
+                    translationLength: 0,
+                    failureReason: "credential=\(credentialReadState), model=\(modelPresent)"
+                )
+            )
+            exit(EXIT_FAILURE)
+        }
+
+        let item = ClipItem(
+            type: .text,
+            text: "Pesty live translation verification.",
+            createdAt: Date()
+        )
+        TranslationCenter.shared.present(for: item)
+        let deadline = Date().addingTimeInterval(35)
+
+        func finish(
+            success: Bool,
+            state: String,
+            translationLength: Int,
+            failureReason: String? = nil
+        ) {
+            let result = DoubaoLiveTranslationResult(
+                phase: "doubao-live",
+                success: success,
+                serviceSelected: serviceSelected,
+                configurationPresent: configurationPresent,
+                state: state,
+                provider: TranslationCenter.shared.providerName,
+                translationLength: translationLength,
+                failureReason: failureReason
+            )
+            TranslationCenter.shared.dismiss()
+            writeDoubaoLiveTranslation(result)
+            exit(success ? EXIT_SUCCESS : EXIT_FAILURE)
+        }
+
+        func poll() {
+            switch TranslationCenter.shared.status {
+            case .translated:
+                finish(
+                    success: true,
+                    state: "translated",
+                    translationLength: TranslationCenter.shared.translatedText.count
+                )
+            case .failed(let message):
+                finish(
+                    success: false,
+                    state: "failed",
+                    translationLength: 0,
+                    failureReason: TranslationCenter.shared.failureDiagnostic ?? message
+                )
+            case .unavailable(let message):
+                finish(
+                    success: false,
+                    state: "unavailable",
+                    translationLength: 0,
+                    failureReason: message
+                )
+            case .idle:
+                finish(success: false, state: "idle", translationLength: 0)
+            case .translating:
+                guard Date() < deadline else {
+                    finish(success: false, state: "timeout", translationLength: 0)
+                    return
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    poll()
+                }
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            poll()
+        }
+    }
+
+    /// Exercises the exact explanation client with a fixed synthetic string.
+    /// It never reads, writes, or persists a user's clipboard content.
+    private static func runLiveExplanationTest(controller: AppController) {
+        controller.monitor.stop()
+        let configurationPresent = Settings.shared.explanationConfigured
+        guard configurationPresent else {
+            writeExplanationLive(ExplanationLiveResult(
+                phase: "explanation-live",
+                success: false,
+                configurationPresent: false,
+                state: "not-configured",
+                provider: "",
+                explanationLength: 0,
+                failureReason: "no-configured-ai-provider"
+            ))
+            exit(EXIT_FAILURE)
+        }
+
+        let item = ClipItem(
+            type: .text,
+            text: "Pesty explanation verification: HTTP 429 means too many requests.",
+            createdAt: Date()
+        )
+        ExplanationCenter.shared.present(for: item)
+        let deadline = Date().addingTimeInterval(35)
+
+        func finish(
+            success: Bool,
+            state: String,
+            explanationLength: Int,
+            failureReason: String? = nil
+        ) {
+            let result = ExplanationLiveResult(
+                phase: "explanation-live",
+                success: success,
+                configurationPresent: configurationPresent,
+                state: state,
+                provider: ExplanationCenter.shared.providerName,
+                explanationLength: explanationLength,
+                failureReason: failureReason
+            )
+            ExplanationCenter.shared.dismiss()
+            writeExplanationLive(result)
+            exit(success ? EXIT_SUCCESS : EXIT_FAILURE)
+        }
+
+        func poll() {
+            switch ExplanationCenter.shared.status {
+            case .explained:
+                finish(
+                    success: true,
+                    state: "explained",
+                    explanationLength: ExplanationCenter.shared.explanationText.count
+                )
+            case .failed(let message):
+                finish(
+                    success: false,
+                    state: "failed",
+                    explanationLength: 0,
+                    failureReason: ExplanationCenter.shared.failureDiagnostic ?? message
+                )
+            case .unavailable(let message):
+                finish(
+                    success: false,
+                    state: "unavailable",
+                    explanationLength: 0,
+                    failureReason: message
+                )
+            case .idle:
+                finish(success: false, state: "idle", explanationLength: 0)
+            case .explaining:
+                guard Date() < deadline else {
+                    finish(success: false, state: "timeout", explanationLength: 0)
+                    return
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    poll()
+                }
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            poll()
+        }
+    }
+
+    /// Calls the exact production prompt with the fixed text from the reported failure.
+    /// It never reads clipboard contents and never serializes the API key.
+    private static func runDoubaoPromptDiagnostic(controller: AppController) {
+        controller.monitor.stop()
+        let configurationPresent = Settings.shared.doubaoTranslationConfigured
+        guard configurationPresent,
+              let apiKey = Settings.shared.doubaoTranslationAPIKey(),
+              !apiKey.isEmpty else {
+            writeDoubaoPromptDiagnostic(DoubaoPromptDiagnosticResult(
+                phase: "doubao-prompt-diagnosis",
+                success: false,
+                configurationPresent: configurationPresent,
+                httpStatus: nil,
+                requestBody: nil,
+                responseBody: nil,
+                failureReason: "credentials-unavailable"
+            ))
+            exit(EXIT_FAILURE)
+        }
+
+        DoubaoTranslationClient.diagnosePrompt(
+            text: "Evolving",
+            source: .automatic,
+            target: .simplifiedChinese,
+            modelID: Settings.shared.doubaoTranslationModelID,
+            apiKey: apiKey
+        ) { result in
+            switch result {
+            case .success(let response):
+                writeDoubaoPromptDiagnostic(DoubaoPromptDiagnosticResult(
+                    phase: "doubao-prompt-diagnosis",
+                    success: (200..<300).contains(response.statusCode),
+                    configurationPresent: configurationPresent,
+                    httpStatus: response.statusCode,
+                    requestBody: response.requestBody,
+                    responseBody: response.responseBody,
+                    failureReason: nil
+                ))
+                exit((200..<300).contains(response.statusCode) ? EXIT_SUCCESS : EXIT_FAILURE)
+            case .failure(let error):
+                let diagnostic = error.localizedDescription
+                writeDoubaoPromptDiagnostic(DoubaoPromptDiagnosticResult(
+                    phase: "doubao-prompt-diagnosis",
+                    success: false,
+                    configurationPresent: configurationPresent,
+                    httpStatus: nil,
+                    requestBody: nil,
+                    responseBody: nil,
+                    failureReason: diagnostic
+                ))
+                exit(EXIT_FAILURE)
+            }
+        }
+    }
+
     private static func previewSnapshotIsWithinScreen(
         _ snapshot: ClipPreviewAutomationSnapshot
     ) -> Bool {
@@ -843,6 +1381,45 @@ enum AutomatedUITestRunner {
     private static func descendantViews(of root: NSView?) -> [NSView] {
         guard let root else { return [] }
         return [root] + root.subviews.flatMap { descendantViews(of: $0) }
+    }
+
+    private static func isAssistantPopoverAnchoredAboveCard(_ itemID: UUID) -> Bool {
+        guard let anchorFrame = SelectedClipPopoverAnchor.shared.screenFrame(for: itemID),
+              let popoverFrame = AssistantPopoverController.shared.screenFrame else {
+            return false
+        }
+        let verticallyAbove = popoverFrame.minY >= anchorFrame.maxY - 18
+        let pointsAtCard = popoverFrame.minX - 24 <= anchorFrame.midX
+            && anchorFrame.midX <= popoverFrame.maxX + 24
+        return verticallyAbove && pointsAtCard
+    }
+
+    private static func captureKeyWindowScreenshotIfRequested() {
+        guard let path = ProcessInfo.processInfo.environment[
+            "PESTY_AUTOMATED_SCREENSHOT_PATH"
+        ], !path.isEmpty else {
+            return
+        }
+        let url = URL(fileURLWithPath: path)
+        guard let view = AssistantPopoverController.shared.contentViewForScreenshot
+            ?? visibleContentWindow()?.contentView else {
+            return
+        }
+        view.layoutSubtreeIfNeeded()
+        view.displayIfNeeded()
+        guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+            return
+        }
+        view.cacheDisplay(in: view.bounds, to: bitmap)
+        guard let png = bitmap.representation(using: .png, properties: [:]) else { return }
+        try? png.write(to: url, options: Data.WritingOptions.atomic)
+    }
+
+    private static func visibleContentWindow() -> NSWindow? {
+        if let keyWindow = NSApp.keyWindow, keyWindow.contentView != nil {
+            return keyWindow
+        }
+        return NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil })
     }
 
     private static func runClearConfirmationTest(
@@ -1950,13 +2527,13 @@ enum AutomatedUITestRunner {
         let originalItems = snapshot(pasteboard)
 
         for (index, text) in expected.enumerated() {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7 * Double(index + 1)) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8 * Double(index + 1)) {
                 pasteboard.clearContents()
                 pasteboard.setString(text, forType: .string)
             }
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.4) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.2) {
             showAndVerify(
                 expected,
                 controller: controller,
@@ -2122,6 +2699,60 @@ enum AutomatedUITestRunner {
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(result) else { return }
         FileHandle.standardOutput.write(Data("AUTOMATED_SEARCH_INPUT_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeTranslationBoard(_ result: TranslationBoardResult) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(Data("AUTOMATED_TRANSLATION_BOARD_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeTranslationSettings(_ result: TranslationSettingsResult) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(Data("AUTOMATED_TRANSLATION_SETTINGS_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeExplanationBoard(_ result: ExplanationBoardResult) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(Data("AUTOMATED_EXPLANATION_BOARD_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeDoubaoLiveTranslation(_ result: DoubaoLiveTranslationResult) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(Data("AUTOMATED_DOUBAO_LIVE_TRANSLATION_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeExplanationLive(_ result: ExplanationLiveResult) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(Data("AUTOMATED_EXPLANATION_LIVE_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeDoubaoPromptDiagnostic(_ result: DoubaoPromptDiagnosticResult) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(Data("AUTOMATED_DOUBAO_PROMPT_DIAGNOSTIC_RESULT ".utf8))
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data("\n".utf8))
     }

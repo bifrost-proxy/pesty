@@ -184,6 +184,154 @@ enum L10n {
         text("Choose the language used by Pesty.", "选择 Pesty 使用的语言。")
     }
     static var settingsWindowTitle: String { text("Pesty Settings", "Pesty 设置") }
+    static var translation: String { text("Translation", "翻译") }
+    static var translationAndExplanation: String {
+        text("Translate & Explain", "翻译&解释")
+    }
+    static var translate: String { text("Translate", "翻译") }
+    static var automatic: String { text("Automatic", "自动") }
+    static var english: String { text("English", "英语") }
+    static var simplifiedChinese: String { text("Chinese (Simplified)", "中文（简体）") }
+    static var japanese: String { text("Japanese", "日语") }
+    static var korean: String { text("Korean", "韩语") }
+    static var french: String { text("French", "法语") }
+    static var german: String { text("German", "德语") }
+    static var spanish: String { text("Spanish", "西班牙语") }
+    static var sourceLanguage: String { text("Source language", "原文语言") }
+    static var targetLanguage: String { text("Target language", "目标语言") }
+    static var translationService: String { text("Translation service", "翻译服务") }
+    static var translationSettings: String { text("Translation Settings…", "翻译设置…") }
+    static var openTranslationSettings: String { text("Open Translation Settings", "打开翻译设置") }
+    static var closeTranslation: String { text("Close translation", "关闭翻译") }
+    static var moreTranslationOptions: String { text("More translation options", "更多翻译选项") }
+    static var translating: String { text("Translating…", "正在翻译…") }
+    static var copyTranslation: String { text("Copy translation", "复制译文") }
+    static var retryTranslation: String { text("Retry", "重试") }
+    static var translationFailed: String { text("Translation failed. Please try again.", "翻译失败，请重试。") }
+    static var noTranslatableText: String {
+        text("Select a text clip to translate.", "请选择一条文本剪贴内容进行翻译。")
+    }
+    static var targetLanguageRequired: String {
+        text("Choose a target language before translating.", "请先选择目标语言。")
+    }
+    static var translationServiceReturnedInvalidResponse: String {
+        text("The translation service returned an invalid response.", "翻译服务返回了无效响应。")
+    }
+    static var appleLanguagePairUnavailable: String {
+        text("Apple Translate does not support this language pair.", "Apple 翻译不支持此语言组合。")
+    }
+    static var appleTranslationRequiresMacOS15: String {
+        text("Apple Translate requires macOS 15 or later.", "Apple 翻译需要 macOS 15 或更高版本。")
+    }
+    static var doubaoTranslation: String { text("Doubao (Volcengine Ark)", "豆包（火山方舟）") }
+    static var doubaoTranslationDisclosure: String {
+        text("Doubao sends only text you explicitly translate or explain to Volcengine Ark. The API key is stored in macOS Keychain; the model ID stays only on this Mac.",
+             "豆包只会向火山方舟发送你明确点击翻译或解释的文本。API Key 保存在 macOS 钥匙串中；模型 ID 仅保存在本机。")
+    }
+    static var doubaoTranslationAPIKey: String { text("Volcengine Ark API key", "火山方舟 API Key") }
+    static var openDoubaoAPIKeyPage: String {
+        text("Get an API key", "获取 API Key")
+    }
+    static var credentialStoredInKeychain: String {
+        text("API key is securely saved in macOS Keychain and is not displayed.", "API Key 已安全保存在 macOS 钥匙串中，不会显示。")
+    }
+    static var replaceAPIKey: String { text("Replace API Key", "更换 API Key") }
+    static var doubaoTranslationModelID: String { text("Ark model ID", "方舟模型 ID") }
+    static var doubaoModelIDExample: String {
+        text("Example: doubao-seed-evolving", "示例：doubao-seed-evolving")
+    }
+    static var doubaoTranslationConfigured: String { text("Doubao is ready", "豆包翻译已就绪") }
+    static var doubaoTranslationNotConfigured: String { text("Add an API key and model ID", "请配置 API Key 和模型 ID") }
+    static var doubaoTranslationNeedsConfiguration: String {
+        text("Add your Volcengine Ark API key and model ID in Translation Settings.",
+             "请在“翻译设置”中配置火山方舟 API Key 和模型 ID。")
+    }
+    static func doubaoTranslationRequestFailed(_ statusCode: Int) -> String {
+        text("Doubao request failed (HTTP \(statusCode)).", "豆包请求失败（HTTP \(statusCode)）。")
+    }
+    static var doubaoModelSaved: String { text("Model ID saved.", "模型 ID 已保存。") }
+    static var translationNeedsService: String {
+        text("No translation service is ready. Use macOS 15 or later for Apple Translate, or configure Doubao.",
+             "当前没有可用的翻译服务：Apple 翻译需要 macOS 15 或更高版本；也可以配置豆包。")
+    }
+    static var translationServiceUnavailable: String {
+        text("Translation service unavailable", "翻译服务暂不可用")
+    }
+    static var translationPreferences: String { text("Translation preferences", "翻译偏好") }
+    static var translationServiceDescription: String {
+        text("Automatic prefers Apple Translate on macOS 15 or later, then your configured Doubao service.",
+             "自动模式会优先使用 macOS 15 及以上的 Apple 翻译，其次使用你配置的豆包服务。")
+    }
+    static var translationShortcut: String { text("Translation shortcut", "翻译快捷键") }
+    static var showTranslationBoard: String { text("Show translation board", "打开翻译看板") }
+    static var translationShortcutDescription: String {
+        text("Works while the Pesty panel is open. Default: ⌘T.",
+             "在 Pesty 面板打开时生效。默认：⌘T。")
+    }
+    static var explanation: String { text("Explain", "解释") }
+    static var usageTips: String { text("Quick tips", "使用小技巧") }
+    static func usageTipTranslation(_ translationShortcut: String, _ explanationShortcut: String) -> String {
+        text(
+            "Select a text card, then press \(translationShortcut) to translate or \(explanationShortcut) to explain.",
+            "选中文本卡片后，按 \(translationShortcut) 翻译、按 \(explanationShortcut) 解释。"
+        )
+    }
+    static var usageTipPinboard: String {
+        text(
+            "Right-click a card to save it to a new or existing Pinboard—for fields you reuse, such as UID.",
+            "右键卡片可新建或保存到 Pinboard，适合归类 UID 等常用字段。"
+        )
+    }
+    static var usageTipQuickPaste: String {
+        text("Double-click a card to paste it right away.", "双击卡片，即可快速粘贴。")
+    }
+    static var usageTipSearch: String {
+        text("Start typing to search; press Return to paste the selected card.", "直接输入即可搜索；按回车粘贴选中卡片。")
+    }
+    static var explanationShortcut: String { text("Explanation shortcut", "解释快捷键") }
+    static var showExplanationBoard: String { text("Explain selected content", "解释选中内容") }
+    static var explanationShortcutDescription: String {
+        text("Explains the selected text while the Pesty panel is open. Requires a configured AI model. Default: ⌘D.",
+             "在 Pesty 面板打开时解释选中的文本；需要配置大模型。默认：⌘D。")
+    }
+    static var explaining: String { text("Explaining…", "正在解释…") }
+    static var closeExplanation: String { text("Close explanation", "关闭解释") }
+    static var moreExplanationOptions: String { text("More explanation options", "更多解释选项") }
+    static var copyExplanation: String { text("Copy explanation", "复制解释") }
+    static var retryExplanation: String { text("Retry", "重试") }
+    static var noExplainableText: String { text("Select a text clip to explain.", "请选择一条文本剪贴内容进行解释。") }
+    static var explanationNeedsConfiguration: String {
+        text("Configure an AI model before using explanation. Add a Doubao model or an AI provider in Translation Settings.",
+             "使用解释前请先配置大模型：可配置豆包模型，或在“翻译设置”中添加 AI 服务商。")
+    }
+    static var explanationFailed: String { text("Explanation failed. Please try again.", "解释失败，请重试。") }
+    static var explanationInvalidResponse: String { text("The AI model returned an invalid response.", "大模型返回了无效响应。") }
+    static func explanationRequestFailed(_ statusCode: Int) -> String {
+        text("Explanation request failed (HTTP \(statusCode)).", "解释请求失败（HTTP \(statusCode)）。")
+    }
+    static var aiProviderInvalidEndpoint: String { text("The AI provider endpoint is invalid.", "AI 服务商接口地址无效。") }
+    static var aiProviders: String { text("AI providers", "AI 服务商") }
+    static var aiProvidersDescription: String {
+        text("These profiles can power content explanation and future AI-native features. Their endpoint and model metadata stay local; API keys are stored separately in macOS Keychain.",
+             "这些配置可用于内容解释和后续 AI 原生功能。接口地址和模型信息仅保存在本机；API Key 单独存储在 macOS 钥匙串中。")
+    }
+    static var noAIProviders: String { text("No AI provider configured", "尚未配置 AI 服务商") }
+    static var addAIProvider: String { text("Add AI provider", "添加 AI 服务商") }
+    static var openAICompatible: String { text("OpenAI compatible", "OpenAI 兼容接口") }
+    static var aiProviderEditorDescription: String {
+        text("Use an OpenAI-compatible endpoint. This version stores the profile securely for future AI features and does not send translation requests to it yet.",
+             "请使用 OpenAI 兼容接口。本版本会安全保存该配置供后续 AI 功能使用，暂不会向它发送翻译请求。")
+    }
+    static var aiProviderName: String { text("Provider name", "服务商名称") }
+    static var apiEndpoint: String { text("API endpoint", "API 接口地址") }
+    static var modelName: String { text("Model name", "模型名称") }
+    static var apiKey: String { text("API key", "API Key") }
+    static var save: String { text("Save", "保存") }
+    static var remove: String { text("Remove", "移除") }
+    static var credentialSaved: String { text("Saved in macOS Keychain.", "已保存到 macOS 钥匙串。") }
+    static var credentialRemoved: String { text("Credential removed.", "凭据已移除。") }
+    static var credentialSaveFailed: String { text("Could not save the credential in macOS Keychain.", "无法将凭据保存到 macOS 钥匙串。") }
+    static var credentialRemoveFailed: String { text("Could not remove the credential from macOS Keychain.", "无法从 macOS 钥匙串移除凭据。") }
 
     static var openPesty: String { text("Open Pesty", "打开 Pesty") }
     static var settings: String { text("Settings…", "设置…") }

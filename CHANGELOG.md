@@ -6,6 +6,24 @@ All notable changes to Pesty are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.6.15] - 2026-07-29
+
+### Added
+
+- Added card-anchored translation with `Command-T`, using Apple Translation on
+  macOS 15 or a user-configured Doubao Ark model.
+- Added concise Markdown explanations with `Command-D`, backed by the
+  configured AI provider.
+- Added secure Keychain storage for API keys, reusable AI provider profiles,
+  contextual Translate and Explain actions, and an in-panel usage guide.
+
+### Changed
+
+- Kept translation, explanation, and full clipboard previews mutually
+  exclusive so only one card-anchored panel is shown at a time.
+
+[1.6.15]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.6.15
+
 ## [1.6.12] - 2026-07-29
 
 ### Fixed
