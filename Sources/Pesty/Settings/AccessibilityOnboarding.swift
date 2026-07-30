@@ -34,8 +34,13 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 @MainActor
 final class SettingsWindowState {
     var selectedPane: SettingsPane = .general
+    private(set) var currentRecordCount = 0
     private(set) var accessibilityOnboardingReason:
         AccessibilityOnboardingReason?
+
+    func prepareForPresentation(historyCount: Int) {
+        currentRecordCount = historyCount
+    }
 
     func presentAccessibilityOnboarding(
         reason: AccessibilityOnboardingReason

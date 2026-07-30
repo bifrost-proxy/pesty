@@ -123,6 +123,19 @@ enum AutomatedUITestRunner {
         let maximumDurationMilliseconds: Int
     }
 
+    private struct SettingsRecordCountResult: Codable {
+        let phase: String
+        let success: Bool
+        let initialHistoryCount: Int
+        let snapshotWhileOpen: Int
+        let changedHistoryCount: Int
+        let snapshotBeforeReopen: Int
+        let snapshotAfterReopen: Int
+        let settingsWindowPresented: Bool
+        let reorderCount: Int
+        let elapsedMilliseconds: Int
+    }
+
     private struct MouseSelectionResult: Codable {
         let phase: String
         let success: Bool
@@ -413,6 +426,10 @@ enum AutomatedUITestRunner {
         }
         if phase == "performance" {
             runPerformanceTest(controller: controller, runID: runID)
+            return
+        }
+        if phase == "settings-record-count" {
+            runSettingsRecordCountTest(controller: controller, runID: runID)
             return
         }
         if phase == "mouse-selection" {
@@ -2865,6 +2882,68 @@ enum AutomatedUITestRunner {
         }
     }
 
+    private static func runSettingsRecordCountTest(
+        controller: AppController,
+        runID: String
+    ) {
+        let initialCount = 1_000
+        let reorderCount = 200
+        let startedAt = Date()
+        controller.monitor.stop()
+        let items = (0..<initialCount).map { index in
+            ClipItem(
+                type: .text,
+                text: "pesty-settings-count-\(runID)-\(index)",
+                sourceBundleID: "com.bifrostproxy.pesty.settings-count-test",
+                sourceAppName: "Pesty Settings Count Test",
+                createdAt: Date(timeIntervalSinceNow: -Double(index))
+            )
+        }
+        controller.store.replaceHistoryForAutomatedSettingsCountTest(items)
+        controller.showSettings(pane: .general)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            let snapshotWhileOpen =
+                controller.settingsRecordCountSnapshotForAutomatedTest
+            for _ in 0..<reorderCount {
+                controller.store.reverseHistoryForAutomatedSettingsCountTest()
+            }
+            controller.store.replaceHistoryForAutomatedSettingsCountTest(
+                Array(items.dropLast())
+            )
+            let snapshotBeforeReopen =
+                controller.settingsRecordCountSnapshotForAutomatedTest
+            controller.showSettings(pane: .general)
+            let snapshotAfterReopen =
+                controller.settingsRecordCountSnapshotForAutomatedTest
+            let changedCount = controller.store.history.count
+            let settingsWindowPresented = visibleContentWindow() != nil
+            let elapsedMilliseconds = Int(
+                Date().timeIntervalSince(startedAt) * 1_000
+            )
+            let result = SettingsRecordCountResult(
+                phase: "settings-record-count",
+                success:
+                    snapshotWhileOpen == initialCount
+                    && changedCount == initialCount - 1
+                    && snapshotBeforeReopen == initialCount
+                    && snapshotAfterReopen == changedCount
+                    && settingsWindowPresented
+                    && elapsedMilliseconds < 5_000,
+                initialHistoryCount: initialCount,
+                snapshotWhileOpen: snapshotWhileOpen,
+                changedHistoryCount: changedCount,
+                snapshotBeforeReopen: snapshotBeforeReopen,
+                snapshotAfterReopen: snapshotAfterReopen,
+                settingsWindowPresented: settingsWindowPresented,
+                reorderCount: reorderCount,
+                elapsedMilliseconds: elapsedMilliseconds
+            )
+            writeSettingsRecordCount(result)
+            exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+        }
+    }
+
     private static func finishPerformanceTest(
         controller: AppController,
         items: [ClipItem],
@@ -3631,6 +3710,19 @@ enum AutomatedUITestRunner {
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(result) else { return }
         FileHandle.standardOutput.write(Data("AUTOMATED_PERFORMANCE_TEST_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeSettingsRecordCount(
+        _ result: SettingsRecordCountResult
+    ) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(
+            Data("AUTOMATED_SETTINGS_RECORD_COUNT_RESULT ".utf8)
+        )
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data("\n".utf8))
     }

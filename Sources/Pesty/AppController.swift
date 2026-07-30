@@ -924,6 +924,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         pane: SettingsPane? = nil
     ) {
         NSApp.activate(ignoringOtherApps: true)
+        settingsWindowState.prepareForPresentation(
+            historyCount: store.history.count
+        )
         if let reason {
             settingsWindowState.presentAccessibilityOnboarding(reason: reason)
         } else if let pane {
@@ -969,6 +972,14 @@ final class AppController: NSObject, NSApplicationDelegate {
         win.makeKeyAndOrderFront(nil)
     }
 
+    var settingsRecordCountSnapshotForAutomatedTest: Int {
+        guard ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"]
+                == "settings-record-count" else {
+            return -1
+        }
+        return settingsWindowState.currentRecordCount
+    }
+
     private func verifySettingsAccessAndExit() {
         do {
             try verifySettingsAccess()
@@ -986,6 +997,16 @@ final class AppController: NSObject, NSApplicationDelegate {
             Settings.shared.showMenuBarIcon = previousVisibility
             settingsWindow?.orderOut(nil)
         }
+
+        settingsWindowState.prepareForPresentation(historyCount: 123)
+        guard settingsWindowState.currentRecordCount == 123 else {
+            throw SettingsAccessVerificationFailure(
+                description: "Settings did not snapshot the history count for presentation"
+            )
+        }
+        settingsWindowState.prepareForPresentation(
+            historyCount: store.history.count
+        )
 
 #if !MAS
         let resetCommand = PasteService.accessibilityResetCommand()

@@ -50,6 +50,15 @@ enum L10n {
         )
     }
     static var storageUsed: String { text("Current storage used", "当前占用空间") }
+    static var currentRecordCount: String {
+        text("Current record count", "当前记录数量")
+    }
+    static func records(_ count: Int) -> String {
+        if currentLanguage == .chinese {
+            return "\(count) 条"
+        }
+        return count == 1 ? "1 record" : "\(count) records"
+    }
     static func items(_ count: Int) -> String {
         currentLanguage == .chinese ? "\(count) 项" : "\(count) items"
     }

@@ -31,7 +31,8 @@ struct SettingsView: View {
                     case .general:
                         GeneralSettings(
                             onboardingReason:
-                                state.accessibilityOnboardingReason
+                                state.accessibilityOnboardingReason,
+                            recordCount: state.currentRecordCount
                         )
                     case .translation:
                         TranslationSettingsView()
@@ -74,6 +75,7 @@ private struct GeneralSettings: View {
     @Bindable private var settings = Settings.shared
     @Bindable private var store = ClipboardStore.shared
     let onboardingReason: AccessibilityOnboardingReason?
+    let recordCount: Int
 
     @State private var retentionSliderPosition =
         Settings.shared.historyRetentionSliderPosition
@@ -129,6 +131,13 @@ private struct GeneralSettings: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+
+                    Divider()
+
+                    SettingsRow(
+                        title: L10n.currentRecordCount,
+                        value: L10n.records(recordCount)
+                    )
 
                     Divider()
 

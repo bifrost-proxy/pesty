@@ -47,6 +47,9 @@ enum LocalizationVerifier {
                     "If a lower limit would remove existing items, deletion waits 10 seconds so you can undo it."
                 ),
                 (L10n.storageUsed, "Current storage used"),
+                (L10n.currentRecordCount, "Current record count"),
+                (L10n.records(1), "1 record"),
+                (L10n.records(2), "2 records"),
                 (L10n.accessibilitySetupTitle, "Finish Setting Up Pesty"),
                 (
                     L10n.accessibilityUpdateDescription,
@@ -178,6 +181,8 @@ enum LocalizationVerifier {
                     "如果降低上限会删除已有记录，Pesty 将等待 10 秒再清理，期间可以调高或切回无限。"
                 ),
                 (L10n.storageUsed, "当前占用空间"),
+                (L10n.currentRecordCount, "当前记录数量"),
+                (L10n.records(2), "2 条"),
                 (L10n.accessibilitySetupTitle, "完成 Pesty 设置"),
                 (
                     L10n.accessibilityUpdateDescription,

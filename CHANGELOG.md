@@ -6,6 +6,23 @@ All notable changes to Pesty are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.6.20] - 2026-07-30
+
+### Added
+
+- Added the current clipboard record count beside storage usage in General
+  Settings.
+
+### Performance
+
+- Snapshot the record count only when Settings is presented, avoiding
+  clipboard-history observation and repeated Settings redraws while captures,
+  ordering, or iCloud snapshots change.
+- Added an isolated regression that keeps the displayed count stable across
+  repeated history updates and refreshes it only when Settings is reopened.
+
+[1.6.20]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.6.20
+
 ## [1.6.19] - 2026-07-30
 
 ### Added

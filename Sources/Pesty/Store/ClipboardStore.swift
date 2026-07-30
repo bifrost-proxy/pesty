@@ -363,6 +363,27 @@ final class ClipboardStore {
         saveNow()
     }
 
+    func replaceHistoryForAutomatedSettingsCountTest(_ items: [ClipItem]) {
+        guard ClipboardStore.automatedTestBase != nil,
+              ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"]
+                == "settings-record-count" else {
+            return
+        }
+        history = items
+        source = .history
+        searchText = ""
+        selectedID = items.first?.id
+    }
+
+    func reverseHistoryForAutomatedSettingsCountTest() {
+        guard ClipboardStore.automatedTestBase != nil,
+              ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"]
+                == "settings-record-count" else {
+            return
+        }
+        history.reverse()
+    }
+
     func replaceHistoryForAutomatedKeyboardTest(_ items: [ClipItem]) {
         let environment = ProcessInfo.processInfo.environment
         guard ClipboardStore.automatedTestBase != nil,
