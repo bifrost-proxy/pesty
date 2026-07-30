@@ -94,6 +94,18 @@ enum LocalizationVerifier {
                 (L10n.doubaoModelIDExample, "Example: doubao-seed-evolving"),
                 (L10n.doubaoTranslationNeedsConfiguration, "Add your Volcengine Ark API key and model ID in Translation Settings."),
                 (L10n.translationServiceUnavailable, "Translation service unavailable"),
+                (
+                    L10n.appleTranslationLanguagePacksDescription,
+                    "English and Simplified Chinese are always checked. Pesty also checks the language pair selected above."
+                ),
+                (
+                    L10n.appleTranslationLanguagePacksNotInstalled,
+                    "The required Apple Translate language packs are not downloaded. Download them in Translation Settings."
+                ),
+                (
+                    L10n.checkingTranslationService,
+                    "Checking translation service…"
+                ),
                 (L10n.explanation, "Explain"),
                 (L10n.usageTips, "Quick tips"),
                 (L10n.usageTipTranslation("⌘T", "⌘D"), "Select a text card, then press ⌘T to translate or ⌘D to explain."),
@@ -184,6 +196,18 @@ enum LocalizationVerifier {
                 (L10n.doubaoModelIDExample, "示例：doubao-seed-evolving"),
                 (L10n.doubaoTranslationNeedsConfiguration, "请在“翻译设置”中配置火山方舟 API Key 和模型 ID。"),
                 (L10n.translationServiceUnavailable, "翻译服务暂不可用"),
+                (
+                    L10n.appleTranslationLanguagePacksDescription,
+                    "始终检查英语和简体中文基础包，并同时检查上方选择的语言组合。"
+                ),
+                (
+                    L10n.appleTranslationLanguagePacksNotInstalled,
+                    "所需的 Apple 翻译语言包尚未下载，请在“翻译设置”中下载。"
+                ),
+                (
+                    L10n.checkingTranslationService,
+                    "正在检查翻译服务…"
+                ),
                 (L10n.explanation, "解释"),
                 (L10n.usageTips, "使用小技巧"),
                 (L10n.usageTipTranslation("⌘T", "⌘D"), "选中文本卡片后，按 ⌘T 翻译、按 ⌘D 解释。"),

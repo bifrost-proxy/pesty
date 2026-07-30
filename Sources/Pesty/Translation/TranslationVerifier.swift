@@ -10,6 +10,11 @@ enum TranslationVerifier {
         let automaticFallsBackToDoubao: Bool
         let appleFailureFallsBackToDoubao: Bool
         let appleRequiresMacOS15: Bool
+        let manualAppleRequiresInstalledLanguagePacks: Bool
+        let automaticAppleMissingPacksFallsBackToDoubao: Bool
+        let applePackPlanAlwaysIncludesEnglishAndChinese: Bool
+        let applePackPlanIncludesSelectedLanguages: Bool
+        let applePackPlanIncludesAutomaticTarget: Bool
         let doubaoRequestUsesChatCompletion: Bool
         let doubaoRequestUsesBearer: Bool
         let doubaoBodyContainsText: Bool
@@ -65,6 +70,71 @@ enum TranslationVerifier {
         )
         guard case .unavailable = appleUnavailable else {
             throw Failure(description: "Apple provider did not enforce its macOS availability")
+        }
+        let manualAppleMissingPacks =
+            TranslationProviderResolver.resolveAppleReadiness(
+                selected: .apple,
+                hasDoubaoConfiguration: true,
+                readiness: .downloadRequired
+            )
+        guard case .unavailable(let missingPackMessage) =
+                manualAppleMissingPacks,
+              missingPackMessage
+                == L10n.appleTranslationLanguagePacksNotInstalled else {
+            throw Failure(
+                description:
+                    "Manual Apple translation did not require installed language packs"
+            )
+        }
+        let automaticAppleMissingPacks =
+            TranslationProviderResolver.resolveAppleReadiness(
+                selected: .automatic,
+                hasDoubaoConfiguration: true,
+                readiness: .downloadRequired
+            )
+        guard automaticAppleMissingPacks == .doubao else {
+            throw Failure(
+                description:
+                    "Automatic translation did not fall back when Apple language packs were missing"
+            )
+        }
+        let baselinePackPlan = AppleTranslationPackPlanner.requirements(
+            source: .automatic,
+            target: .simplifiedChinese
+        )
+        let selectedPackPlan = AppleTranslationPackPlanner.requirements(
+            source: .japanese,
+            target: .simplifiedChinese
+        )
+        let automaticTargetPackPlan =
+            AppleTranslationPackPlanner.requirements(
+                source: .automatic,
+                target: .japanese
+            )
+        let baselinePackIsEnglishAndChinese =
+            baselinePackPlan.count == 1
+            && baselinePackPlan.first?.source == .english
+            && baselinePackPlan.first?.target == .simplifiedChinese
+            && baselinePackPlan.first?.kind == .baseline
+        let selectedPackIsIncluded =
+            selectedPackPlan.count == 2
+            && selectedPackPlan.first?.kind == .baseline
+            && selectedPackPlan.last?.source == .japanese
+            && selectedPackPlan.last?.target == .simplifiedChinese
+            && selectedPackPlan.last?.kind == .selected
+        let automaticTargetPackIsIncluded =
+            automaticTargetPackPlan.count == 2
+            && automaticTargetPackPlan.first?.kind == .baseline
+            && automaticTargetPackPlan.last?.source == .english
+            && automaticTargetPackPlan.last?.target == .japanese
+            && automaticTargetPackPlan.last?.kind == .selected
+        guard baselinePackIsEnglishAndChinese,
+              selectedPackIsIncluded,
+              automaticTargetPackIsIncluded else {
+            throw Failure(
+                description:
+                    "Apple language-pack planning did not include baseline and selected languages"
+            )
         }
         let doubaoUnavailable = TranslationProviderResolver.resolve(
             selected: .doubao,
@@ -265,6 +335,20 @@ enum TranslationVerifier {
                 if case .unavailable = appleUnavailable { return true }
                 return false
             }(),
+            manualAppleRequiresInstalledLanguagePacks: {
+                if case .unavailable = manualAppleMissingPacks {
+                    return true
+                }
+                return false
+            }(),
+            automaticAppleMissingPacksFallsBackToDoubao:
+                automaticAppleMissingPacks == .doubao,
+            applePackPlanAlwaysIncludesEnglishAndChinese:
+                baselinePackIsEnglishAndChinese,
+            applePackPlanIncludesSelectedLanguages:
+                selectedPackIsIncluded,
+            applePackPlanIncludesAutomaticTarget:
+                automaticTargetPackIsIncluded,
             doubaoRequestUsesChatCompletion: usesDoubaoChatCompletion,
             doubaoRequestUsesBearer: usesDoubaoBearer,
             doubaoBodyContainsText: doubaoBody.contains(syntheticText),

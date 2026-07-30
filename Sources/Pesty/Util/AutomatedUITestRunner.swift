@@ -10,6 +10,7 @@ enum AutomatedUITestProbe {
     private(set) static var translationPreviewRendered = false
     private(set) static var explanationBoardRendered = false
     private(set) static var explanationPreviewRendered = false
+    private(set) static var appleLanguagePackSettingsRendered = false
     private(set) static var assistantProcessingItemIDs = Set<UUID>()
     private(set) static var renderedItemIDs = Set<UUID>()
 
@@ -23,6 +24,7 @@ enum AutomatedUITestProbe {
         translationPreviewRendered = false
         explanationBoardRendered = false
         explanationPreviewRendered = false
+        appleLanguagePackSettingsRendered = false
         assistantProcessingItemIDs.removeAll()
         renderedItemIDs.removeAll()
     }
@@ -54,6 +56,11 @@ enum AutomatedUITestProbe {
     static func recordExplanationPreview() {
         guard isEnabled else { return }
         explanationPreviewRendered = true
+    }
+
+    static func recordAppleLanguagePackSettings() {
+        guard isEnabled else { return }
+        appleLanguagePackSettingsRendered = true
     }
 
     static func recordAssistantProcessing(itemID: UUID, visible: Bool) {
@@ -257,6 +264,7 @@ enum AutomatedUITestRunner {
         let modelIDCopyWorked: Bool
         let modelIDPasteWorked: Bool
         let pasteboardRestored: Bool
+        let appleLanguagePackSettingsRendered: Bool
     }
 
     private struct ExplanationBoardResult: Codable {
@@ -745,6 +753,7 @@ enum AutomatedUITestRunner {
 
     private static func runTranslationSettingsTest(controller: AppController) {
         controller.monitor.stop()
+        AutomatedUITestProbe.reset()
         let pasteboardItems = snapshot(.general)
         controller.showSettings(pane: .translation)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
@@ -783,54 +792,82 @@ enum AutomatedUITestRunner {
             )
             restore(pasteboardItems, to: .general)
             let pasteboardRestored = snapshot(.general) == pasteboardItems
+            let languagePackSettingsExpected =
+                Settings.shared.translationService == .apple
+            let languagePackSettingsRendered =
+                AutomatedUITestProbe.appleLanguagePackSettingsRendered
 
-            captureKeyWindowScreenshotIfRequested()
-            let closeHandled = makeKeyEvent(
-                keyCode: UInt16(kVK_ANSI_W),
-                characters: "w",
-                modifierFlags: [.command],
-                windowNumber: settingsWindow?.windowNumber ?? 0
-            ).map {
-                controller.handleKey($0) == nil
-            } ?? false
-            let commandWClosedWindow = closeHandled
-                && settingsWindow?.isVisible == false
-            let result = TranslationSettingsResult(
-                phase: "translation-settings",
-                success: settingsWindowPresented
-                    && apiKeyEditing.selectAll
-                    && apiKeyEditing.copy
-                    && apiKeyEditing.paste
-                    && apiKeyEditing.copyMarkedConcealed
-                    && apiKeyEditing.excludedFromHistory
-                    && apiKeyEditing.pasteMarkedConcealed
-                    && apiKeyEditing.pasteExcludedFromHistory
-                    && modelIDEditing.copy
-                    && modelIDEditing.paste
-                    && modelIDEditing.cut
-                    && commandWClosedWindow
-                    && pasteboardRestored,
-                settingsWindowPresented: settingsWindowPresented,
-                selectAllShortcutWorked: apiKeyEditing.selectAll,
-                copyShortcutWorked: apiKeyEditing.copy,
-                pasteShortcutWorked: apiKeyEditing.paste,
-                cutShortcutWorked: modelIDEditing.cut,
-                commandWClosedWindow: commandWClosedWindow,
-                apiKeyCopyMarkedConcealed:
-                    apiKeyEditing.copyMarkedConcealed,
-                apiKeyExcludedFromHistory:
-                    apiKeyEditing.excludedFromHistory,
-                apiKeyPasteMarkedConcealed:
-                    apiKeyEditing.pasteMarkedConcealed,
-                apiKeyPasteExcludedFromHistory:
-                    apiKeyEditing.pasteExcludedFromHistory,
-                modelIDCopyWorked: modelIDEditing.copy,
-                modelIDPasteWorked: modelIDEditing.paste,
-                pasteboardRestored: pasteboardRestored
-            )
-            writeTranslationSettings(result)
-            settingsWindow?.orderOut(nil)
-            exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+            @MainActor
+            func finish() {
+                captureKeyWindowScreenshotIfRequested()
+                let closeHandled = makeKeyEvent(
+                    keyCode: UInt16(kVK_ANSI_W),
+                    characters: "w",
+                    modifierFlags: [.command],
+                    windowNumber: settingsWindow?.windowNumber ?? 0
+                ).map {
+                    controller.handleKey($0) == nil
+                } ?? false
+                let commandWClosedWindow = closeHandled
+                    && settingsWindow?.isVisible == false
+                let result = TranslationSettingsResult(
+                    phase: "translation-settings",
+                    success: settingsWindowPresented
+                        && apiKeyEditing.selectAll
+                        && apiKeyEditing.copy
+                        && apiKeyEditing.paste
+                        && apiKeyEditing.copyMarkedConcealed
+                        && apiKeyEditing.excludedFromHistory
+                        && apiKeyEditing.pasteMarkedConcealed
+                        && apiKeyEditing.pasteExcludedFromHistory
+                        && modelIDEditing.copy
+                        && modelIDEditing.paste
+                        && modelIDEditing.cut
+                        && commandWClosedWindow
+                        && pasteboardRestored
+                        && (
+                            !languagePackSettingsExpected
+                            || languagePackSettingsRendered
+                        ),
+                    settingsWindowPresented: settingsWindowPresented,
+                    selectAllShortcutWorked: apiKeyEditing.selectAll,
+                    copyShortcutWorked: apiKeyEditing.copy,
+                    pasteShortcutWorked: apiKeyEditing.paste,
+                    cutShortcutWorked: modelIDEditing.cut,
+                    commandWClosedWindow: commandWClosedWindow,
+                    apiKeyCopyMarkedConcealed:
+                        apiKeyEditing.copyMarkedConcealed,
+                    apiKeyExcludedFromHistory:
+                        apiKeyEditing.excludedFromHistory,
+                    apiKeyPasteMarkedConcealed:
+                        apiKeyEditing.pasteMarkedConcealed,
+                    apiKeyPasteExcludedFromHistory:
+                        apiKeyEditing.pasteExcludedFromHistory,
+                    modelIDCopyWorked: modelIDEditing.copy,
+                    modelIDPasteWorked: modelIDEditing.paste,
+                    pasteboardRestored: pasteboardRestored,
+                    appleLanguagePackSettingsRendered:
+                        languagePackSettingsRendered
+                )
+                writeTranslationSettings(result)
+                settingsWindow?.orderOut(nil)
+                exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+            }
+
+            let holdSeconds = TimeInterval(
+                ProcessInfo.processInfo.environment[
+                    "PESTY_AUTOMATED_TEST_HOLD_SECONDS"
+                ] ?? ""
+            ) ?? 0
+            guard holdSeconds > 0 else {
+                finish()
+                return
+            }
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + holdSeconds
+            ) {
+                finish()
+            }
         }
     }
 
@@ -1516,7 +1553,7 @@ enum AutomatedUITestRunner {
                 )
             case .idle:
                 finish(success: false, state: "idle", translationLength: 0)
-            case .translating:
+            case .checkingService, .translating:
                 guard Date() < deadline else {
                     finish(success: false, state: "timeout", translationLength: 0)
                     return

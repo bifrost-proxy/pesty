@@ -53,6 +53,13 @@ struct TranslationSettingsView: View {
                         .labelsHidden()
                         .frame(width: 150)
                     }
+                    if settings.translationService == .apple {
+                        Divider()
+                        AppleTranslationLanguagePacksView(
+                            source: settings.translationSourceLanguage,
+                            target: settings.translationTargetLanguage
+                        )
+                    }
                 }
 
                 TranslationSettingsSection(

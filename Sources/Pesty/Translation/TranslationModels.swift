@@ -102,6 +102,56 @@ enum TranslationResolution: Equatable {
     case unavailable(String)
 }
 
+enum AppleTranslationReadiness: Equatable {
+    case installed
+    case downloadRequired
+    case unsupported
+}
+
+struct AppleTranslationPackRequirement: Equatable, Identifiable {
+    enum Kind: Equatable {
+        case baseline
+        case selected
+    }
+
+    let source: TranslationLanguage
+    let target: TranslationLanguage
+    let kind: Kind
+
+    var id: String {
+        [source.rawValue, target.rawValue].sorted().joined(separator: "-")
+    }
+}
+
+enum AppleTranslationPackPlanner {
+    static func requirements(
+        source: TranslationLanguage,
+        target: TranslationLanguage
+    ) -> [AppleTranslationPackRequirement] {
+        let baseline = AppleTranslationPackRequirement(
+            source: .english,
+            target: .simplifiedChinese,
+            kind: .baseline
+        )
+        let selectedSource = source == .automatic
+            ? automaticCheckSource(for: target)
+            : source
+        let selected = AppleTranslationPackRequirement(
+            source: selectedSource,
+            target: target,
+            kind: .selected
+        )
+        guard selected.id != baseline.id else { return [baseline] }
+        return [baseline, selected]
+    }
+
+    private static func automaticCheckSource(
+        for target: TranslationLanguage
+    ) -> TranslationLanguage {
+        target == .english ? .simplifiedChinese : .english
+    }
+}
+
 enum TranslationProviderResolver {
     static func resolve(
         selected: TranslationService,
@@ -129,6 +179,35 @@ enum TranslationProviderResolver {
         hasDoubaoConfiguration: Bool
     ) -> Bool {
         selected == .automatic && hasDoubaoConfiguration
+    }
+
+    static func resolveAppleReadiness(
+        selected: TranslationService,
+        hasDoubaoConfiguration: Bool,
+        readiness: AppleTranslationReadiness
+    ) -> TranslationResolution {
+        switch readiness {
+        case .installed:
+            return .apple
+        case .downloadRequired:
+            if shouldFallbackFromApple(
+                selected: selected,
+                hasDoubaoConfiguration: hasDoubaoConfiguration
+            ) {
+                return .doubao
+            }
+            return .unavailable(
+                L10n.appleTranslationLanguagePacksNotInstalled
+            )
+        case .unsupported:
+            if shouldFallbackFromApple(
+                selected: selected,
+                hasDoubaoConfiguration: hasDoubaoConfiguration
+            ) {
+                return .doubao
+            }
+            return .unavailable(L10n.appleLanguagePairUnavailable)
+        }
     }
 }
 

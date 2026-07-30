@@ -88,9 +88,15 @@ struct ClipCardView: View {
     }
 
     private var processingLabel: String? {
-        if translationCenter.itemID == item.id,
-           translationCenter.status == .translating {
-            return L10n.translating
+        if translationCenter.itemID == item.id {
+            switch translationCenter.status {
+            case .checkingService:
+                return L10n.checkingTranslationService
+            case .translating:
+                return L10n.translating
+            default:
+                break
+            }
         }
         if explanationCenter.itemID == item.id,
            explanationCenter.status == .explaining {
