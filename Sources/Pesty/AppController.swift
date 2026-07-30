@@ -1165,11 +1165,21 @@ final class AppController: NSObject, NSApplicationDelegate {
             let selectedText = (editor.string as NSString).substring(
                 with: selectedRange
             )
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(selectedText, forType: .string)
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(selectedText, forType: .string)
+            if editor.delegate is NSSecureTextField {
+                concealSensitivePasteboard(pasteboard)
+            }
         case kVK_ANSI_V where commandOnly:
             editor.paste(nil)
+            if editor.delegate is NSSecureTextField {
+                concealSensitivePasteboard(.general)
+            }
         case kVK_ANSI_X where commandOnly:
+            if editor.delegate is NSSecureTextField {
+                return true
+            }
             editor.cut(nil)
         case kVK_ANSI_Z where commandOnly:
             editor.undoManager?.undo()
@@ -1179,6 +1189,18 @@ final class AppController: NSObject, NSApplicationDelegate {
             return false
         }
         return true
+    }
+
+    private func concealSensitivePasteboard(_ pasteboard: NSPasteboard) {
+        pasteboard.addTypes(
+            [ClipboardMonitor.concealedPasteboardType],
+            owner: nil
+        )
+        pasteboard.setData(
+            Data(),
+            forType: ClipboardMonitor.concealedPasteboardType
+        )
+        monitor.suppressUntilChangeCount = pasteboard.changeCount
     }
 }
 
