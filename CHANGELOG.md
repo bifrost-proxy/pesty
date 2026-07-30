@@ -6,6 +6,22 @@ All notable changes to Pesty are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.6.18] - 2026-07-30
+
+### Added
+
+- Added Apple Translate language-pack status and download actions to Translation
+  Settings, always checking the English and Simplified Chinese baseline together
+  with the currently selected language pair.
+
+### Fixed
+
+- Check Apple Translate language availability before starting translation.
+  Missing or unsupported language packs now show an immediate settings prompt
+  instead of leaving the selected card indefinitely in a translating state.
+
+[1.6.18]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.6.18
+
 ## [1.6.15] - 2026-07-29
 
 ### Added

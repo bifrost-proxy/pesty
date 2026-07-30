@@ -223,6 +223,71 @@ enum L10n {
     static var appleTranslationRequiresMacOS15: String {
         text("Apple Translate requires macOS 15 or later.", "Apple 翻译需要 macOS 15 或更高版本。")
     }
+    static var appleTranslationLanguagePacks: String {
+        text("Apple Translate language packs", "Apple 翻译语言包")
+    }
+    static var appleTranslationBaselinePack: String {
+        text("Required baseline", "默认必备")
+    }
+    static var appleTranslationSelectedPack: String {
+        text("Current language selection", "当前语言选择")
+    }
+    static var appleTranslationLanguagePacksChecking: String {
+        text("Checking download status…", "正在检查下载状态…")
+    }
+    static var appleTranslationLanguagePacksInstalled: String {
+        text("Downloaded and ready", "已下载，可以使用")
+    }
+    static var appleTranslationLanguagePacksNotInstalled: String {
+        text(
+            "The required Apple Translate language packs are not downloaded. Download them in Translation Settings.",
+            "所需的 Apple 翻译语言包尚未下载，请在“翻译设置”中下载。"
+        )
+    }
+    static var appleTranslationCurrentlyUnavailable: String {
+        text(
+            "Apple Translate is currently unavailable. Open Translation Settings to review language packs or choose another service.",
+            "Apple 翻译当前不可用，请打开“翻译设置”检查语言包或选择其他服务。"
+        )
+    }
+    static var appleTranslationLanguagePacksDownloadRequired: String {
+        text("Not downloaded", "尚未下载")
+    }
+    static var appleTranslationLanguagePacksDownloading: String {
+        text(
+            "Downloading… Keep this settings window open.",
+            "正在下载…请保持设置窗口打开。"
+        )
+    }
+    static var appleTranslationLanguagePacksDownload: String {
+        text("Download", "下载")
+    }
+    static var appleTranslationLanguagePacksRetry: String {
+        text("Try Again", "重试")
+    }
+    static func appleTranslationLanguagePacksDownloadFailed(
+        _ reason: String
+    ) -> String {
+        text(
+            "Could not download the language packs: \(reason)",
+            "无法下载语言包：\(reason)"
+        )
+    }
+    static var appleTranslationLanguagePacksAutomaticSourceNote: String {
+        text(
+            "Automatic source detection may require another source-language pack. Choose a specific source language above to download it in advance.",
+            "自动识别可能还需要其他来源语言包；如需提前下载，请在上方选择明确的来源语言。"
+        )
+    }
+    static var appleTranslationLanguagePacksDescription: String {
+        text(
+            "English and Simplified Chinese are always checked. Pesty also checks the language pair selected above.",
+            "始终检查英语和简体中文基础包，并同时检查上方选择的语言组合。"
+        )
+    }
+    static var checkingTranslationService: String {
+        text("Checking translation service…", "正在检查翻译服务…")
+    }
     static var doubaoTranslation: String { text("Doubao (Volcengine Ark)", "豆包（火山方舟）") }
     static var doubaoTranslationDisclosure: String {
         text("Doubao sends only text you explicitly translate or explain to Volcengine Ark. The API key is stored in macOS Keychain; the model ID stays only on this Mac.",

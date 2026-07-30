@@ -154,8 +154,10 @@ struct TranslationBoardView: View {
         switch center.status {
         case .translated:
             translationResult
+        case .checkingService:
+            progressState(label: L10n.checkingTranslationService)
         case .translating:
-            progressState
+            progressState(label: L10n.translating)
         case .unavailable(let message):
             unavailableState(message: message)
         case .failed(let message):
@@ -200,10 +202,10 @@ struct TranslationBoardView: View {
         .onAppear { AutomatedUITestProbe.recordTranslationPreview() }
     }
 
-    private var progressState: some View {
+    private func progressState(label: String) -> some View {
         VStack(spacing: 10) {
             ProgressView().controlSize(.small)
-            Text(L10n.translating)
+            Text(label)
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(palette.textSecondary.swiftUIColor)
             if !center.providerName.isEmpty {

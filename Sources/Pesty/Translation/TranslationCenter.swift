@@ -9,6 +9,7 @@ import SwiftUI
 
 enum TranslationBoardStatus: Equatable {
     case idle
+    case checkingService
     case translating
     case translated
     case unavailable(String)
@@ -39,6 +40,8 @@ final class TranslationCenter {
     private(set) var failureDiagnostic: String?
     private(set) var appleTranslationRequest: TranslationInput?
     private var activeRequestID: UUID?
+    @ObservationIgnored private var appleAvailabilityTask:
+        Task<Void, Never>?
 
     private init() {}
 
@@ -65,6 +68,10 @@ final class TranslationCenter {
     }
 
     func present(for item: ClipItem?) {
+        appleAvailabilityTask?.cancel()
+        appleAvailabilityTask = nil
+        appleTranslationRequest = nil
+        activeRequestID = nil
         itemID = item?.id
         guard let text = item?.text?.trimmingCharacters(in: .whitespacesAndNewlines),
               !text.isEmpty else {
@@ -95,6 +102,8 @@ final class TranslationCenter {
         status = .idle
         appleTranslationRequest = nil
         activeRequestID = nil
+        appleAvailabilityTask?.cancel()
+        appleAvailabilityTask = nil
     }
 
     func setSourceLanguage(_ language: TranslationLanguage) {
@@ -135,6 +144,8 @@ final class TranslationCenter {
         status = .translated
         appleTranslationRequest = nil
         activeRequestID = nil
+        appleAvailabilityTask?.cancel()
+        appleAvailabilityTask = nil
     }
 
     func showAutomatedProcessing(for item: ClipItem) {
@@ -152,6 +163,8 @@ final class TranslationCenter {
         status = .translating
         appleTranslationRequest = nil
         activeRequestID = nil
+        appleAvailabilityTask?.cancel()
+        appleAvailabilityTask = nil
     }
 
     @discardableResult
@@ -176,9 +189,11 @@ final class TranslationCenter {
         translatedText = ""
         detectedSourceLanguage = nil
         failureDiagnostic = nil
-        status = .translating
+        status = .checkingService
         appleTranslationRequest = nil
         activeRequestID = input.id
+        appleAvailabilityTask?.cancel()
+        appleAvailabilityTask = nil
 
         let resolution = TranslationProviderResolver.resolve(
             selected: Settings.shared.translationService,
@@ -188,14 +203,30 @@ final class TranslationCenter {
         switch resolution {
         case .apple:
             providerName = "Apple Translate"
-            appleTranslationRequest = input
+            startAppleAvailabilityCheck(input)
         case .doubao:
             providerName = L10n.doubaoTranslation
+            status = .translating
             startDoubaoTranslation(input)
         case .unavailable(let message):
             providerName = ""
             status = .unavailable(message)
         }
+    }
+
+    private func startAppleAvailabilityCheck(
+        _ input: TranslationInput
+    ) {
+        #if canImport(Translation)
+        if #available(macOS 15.0, *) {
+            appleAvailabilityTask = Task { [weak self] in
+                guard let self else { return }
+                await self.checkAppleAvailability(for: input)
+            }
+            return
+        }
+        #endif
+        status = .unavailable(L10n.appleTranslationRequiresMacOS15)
     }
 
     private func startDoubaoTranslation(_ input: TranslationInput) {
@@ -258,29 +289,145 @@ final class TranslationCenter {
 #if canImport(Translation)
 @available(macOS 15.0, *)
 extension TranslationCenter {
-    func performAppleTranslation(using session: TranslationSession) async {
-        guard let input = appleTranslationRequest,
-              let targetIdentifier = input.target.localeIdentifier else {
-            return
-        }
+    private func checkAppleAvailability(
+        for input: TranslationInput
+    ) async {
         do {
-            let target = Locale.Language(identifier: targetIdentifier)
-            let availability = LanguageAvailability()
-            let availabilityStatus = try await availability.status(
+            let readiness = try await appleReadiness(for: input)
+            guard isCurrent(input.id) else { return }
+            applyAppleReadiness(readiness, to: input)
+        } catch is CancellationError {
+            return
+        } catch {
+            guard isCurrent(input.id) else { return }
+            if TranslationProviderResolver.shouldFallbackFromApple(
+                selected: Settings.shared.translationService,
+                hasDoubaoConfiguration:
+                    Settings.shared.doubaoTranslationConfigured
+            ) {
+                providerName = L10n.doubaoTranslation
+                status = .translating
+                startDoubaoTranslation(input)
+                return
+            }
+            let nsError = error as NSError
+            failureDiagnostic = "\(nsError.domain):\(nsError.code)"
+            status = .unavailable(
+                L10n.appleTranslationCurrentlyUnavailable
+            )
+        }
+    }
+
+    private func appleReadiness(
+        for input: TranslationInput
+    ) async throws -> AppleTranslationReadiness {
+        guard let targetIdentifier = input.target.localeIdentifier else {
+            return .unsupported
+        }
+        let target = Locale.Language(identifier: targetIdentifier)
+        let availability = LanguageAvailability()
+        let availabilityStatus: LanguageAvailability.Status
+        if let sourceIdentifier = input.source.localeIdentifier {
+            availabilityStatus = await availability.status(
+                from: Locale.Language(identifier: sourceIdentifier),
+                to: target
+            )
+        } else {
+            availabilityStatus = try await availability.status(
                 for: input.text,
                 to: target
             )
-            guard availabilityStatus != .unsupported else {
-                completeAppleTranslation(
-                    result: .failure(TranslationServiceError.appleLanguagePairUnavailable),
-                    for: input.id
+        }
+        switch availabilityStatus {
+        case .installed:
+            return .installed
+        case .supported:
+            return .downloadRequired
+        case .unsupported:
+            return .unsupported
+        @unknown default:
+            return .unsupported
+        }
+    }
+
+    private func applyAppleReadiness(
+        _ readiness: AppleTranslationReadiness,
+        to input: TranslationInput
+    ) {
+        let resolution = TranslationProviderResolver.resolveAppleReadiness(
+            selected: Settings.shared.translationService,
+            hasDoubaoConfiguration:
+                Settings.shared.doubaoTranslationConfigured,
+            readiness: readiness
+        )
+        switch resolution {
+        case .apple:
+            status = .translating
+            appleTranslationRequest = input
+        case .doubao:
+            providerName = L10n.doubaoTranslation
+            status = .translating
+            appleTranslationRequest = nil
+            startDoubaoTranslation(input)
+        case .unavailable(let message):
+            appleTranslationRequest = nil
+            status = .unavailable(message)
+        }
+    }
+
+    func performAppleTranslation(using session: TranslationSession) async {
+        guard let input = appleTranslationRequest else {
+            return
+        }
+        do {
+            let readiness = try await appleReadiness(for: input)
+            guard readiness == .installed else {
+                completeAppleUnavailable(
+                    readiness: readiness,
+                    for: input
                 )
                 return
             }
             let response = try await session.translate(input.text)
             completeAppleTranslation(result: .success(response.targetText), for: input.id)
         } catch {
+            if let readiness = try? await appleReadiness(for: input),
+               readiness != .installed {
+                completeAppleUnavailable(
+                    readiness: readiness,
+                    for: input
+                )
+                return
+            }
             completeAppleTranslation(result: .failure(error), for: input.id)
+        }
+    }
+
+    private func completeAppleUnavailable(
+        readiness: AppleTranslationReadiness,
+        for input: TranslationInput
+    ) {
+        guard isPresented,
+              appleTranslationRequest?.id == input.id else {
+            return
+        }
+        let resolution = TranslationProviderResolver.resolveAppleReadiness(
+            selected: Settings.shared.translationService,
+            hasDoubaoConfiguration:
+                Settings.shared.doubaoTranslationConfigured,
+            readiness: readiness
+        )
+        switch resolution {
+        case .doubao:
+            appleTranslationRequest = nil
+            providerName = L10n.doubaoTranslation
+            status = .translating
+            startDoubaoTranslation(input)
+        case .unavailable(let message):
+            appleTranslationRequest = nil
+            status = .unavailable(message)
+        case .apple:
+            break
         }
     }
 
