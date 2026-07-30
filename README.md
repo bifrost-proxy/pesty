@@ -1,5 +1,3 @@
-![Pesty 图标](docs/assets/icon.png)
-
 # Pesty
 
 一款原生、轻量、开源的 macOS 剪贴板历史工具。
