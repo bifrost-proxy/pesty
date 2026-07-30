@@ -55,6 +55,46 @@ enum TranslationLanguage: String, CaseIterable, Codable, Identifiable {
         case .spanish: return "es"
         }
     }
+
+    static func detectedLanguage(identifier: String) -> TranslationLanguage? {
+        let normalized = identifier
+            .replacingOccurrences(of: "_", with: "-")
+            .lowercased()
+        if normalized == "en" || normalized.hasPrefix("en-") { return .english }
+        if normalized == "zh" || normalized.hasPrefix("zh-") {
+            return .simplifiedChinese
+        }
+        if normalized == "ja" || normalized.hasPrefix("ja-") { return .japanese }
+        if normalized == "ko" || normalized.hasPrefix("ko-") { return .korean }
+        if normalized == "fr" || normalized.hasPrefix("fr-") { return .french }
+        if normalized == "de" || normalized.hasPrefix("de-") { return .german }
+        if normalized == "es" || normalized.hasPrefix("es-") { return .spanish }
+        return nil
+    }
+}
+
+enum AppleAutomaticSourceResolution: Equatable {
+    case source(identifier: String)
+    case alreadyInTarget(identifier: String)
+    case unidentified
+}
+
+enum AppleAutomaticSourceResolver {
+    static func resolve(
+        detectedIdentifier: String?,
+        target: TranslationLanguage
+    ) -> AppleAutomaticSourceResolution {
+        guard let detectedIdentifier,
+              !detectedIdentifier.isEmpty,
+              let targetIdentifier = target.localeIdentifier else {
+            return .unidentified
+        }
+        if Locale.Language(identifier: detectedIdentifier)
+            == Locale.Language(identifier: targetIdentifier) {
+            return .alreadyInTarget(identifier: detectedIdentifier)
+        }
+        return .source(identifier: detectedIdentifier)
+    }
 }
 
 enum AIProviderKind: String, CaseIterable, Codable, Identifiable {
@@ -231,5 +271,20 @@ enum TranslationShortcut {
         if expectedModifiers & optionKey != 0 { expected.insert(.option) }
         if expectedModifiers & shiftKey != 0 { expected.insert(.shift) }
         return keyCode == expectedKeyCode && eventModifiers == expected
+    }
+}
+
+enum TranslationLanguageSwapShortcut {
+    static let defaultKeyCode = kVK_ANSI_T
+
+    static func matches(
+        keyCode: Int,
+        flags: NSEvent.ModifierFlags
+    ) -> Bool {
+        let disallowedModifiers: NSEvent.ModifierFlags = [
+            .command, .control, .option, .shift,
+        ]
+        return keyCode == defaultKeyCode
+            && flags.intersection(disallowedModifiers).isEmpty
     }
 }

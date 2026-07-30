@@ -199,6 +199,12 @@ enum L10n {
     static var spanish: String { text("Spanish", "西班牙语") }
     static var sourceLanguage: String { text("Source language", "原文语言") }
     static var targetLanguage: String { text("Target language", "目标语言") }
+    static var swapTranslationLanguages: String {
+        text("Swap languages", "交换语言")
+    }
+    static var swapTranslationLanguagesShortcut: String {
+        text("Swap source and target languages (T)", "交换原文和目标语言（T）")
+    }
     static var translationService: String { text("Translation service", "翻译服务") }
     static var translationSettings: String { text("Translation Settings…", "翻译设置…") }
     static var openTranslationSettings: String { text("Open Translation Settings", "打开翻译设置") }
@@ -219,6 +225,24 @@ enum L10n {
     }
     static var appleLanguagePairUnavailable: String {
         text("Apple Translate does not support this language pair.", "Apple 翻译不支持此语言组合。")
+    }
+    static func translationAlreadyInTargetLanguage(_ language: String) -> String {
+        text(
+            "This content is already in \(language), so no translation is needed.",
+            "当前内容已经是\(language)，无需翻译。"
+        )
+    }
+    static var appleTranslationSourceLanguageUnidentified: String {
+        text(
+            "Apple Translate couldn’t identify the source language. Choose it manually and try again.",
+            "Apple 翻译无法识别原文语言，请手动选择原文语言后重试。"
+        )
+    }
+    static var appleTranslationTimedOut: String {
+        text(
+            "Apple Translate didn’t respond in time. Please try again.",
+            "Apple 翻译响应超时，请重试。"
+        )
     }
     static var appleTranslationRequiresMacOS15: String {
         text("Apple Translate requires macOS 15 or later.", "Apple 翻译需要 macOS 15 或更高版本。")

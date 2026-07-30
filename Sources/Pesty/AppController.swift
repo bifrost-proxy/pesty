@@ -1041,6 +1041,12 @@ final class AppController: NSObject, NSApplicationDelegate {
                 TranslationCenter.shared.dismiss()
                 return nil
             }
+            if TranslationLanguageSwapShortcut.matches(
+                keyCode: code,
+                flags: flags
+            ), TranslationCenter.shared.swapLanguages() {
+                return nil
+            }
             return event
         }
 

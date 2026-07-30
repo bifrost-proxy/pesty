@@ -144,7 +144,6 @@ struct BarView: View {
     @Bindable private var store = ClipboardStore.shared
     @Bindable private var settings = Settings.shared
     @Bindable private var updater = UpdateManager.shared
-    @Bindable private var translator = TranslationCenter.shared
     @State private var usageTipsVisible = false
     @State private var usageTipsPinned = false
     @State private var usageTipsHovering = false
@@ -181,7 +180,6 @@ struct BarView: View {
                 .fill(Color.white.opacity(colorScheme == .dark ? 0.18 : 0.55))
                 .frame(height: 1)
         }
-        .attachAppleTranslationTask(translator)
         .ignoresSafeArea()
         .id(settings.language)
     }

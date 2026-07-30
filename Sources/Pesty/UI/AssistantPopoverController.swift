@@ -7,7 +7,7 @@ enum AssistantPopoverKind: Equatable {
 }
 
 enum AssistantPopoverLayout {
-    static let width: CGFloat = 404
+    static let width: CGFloat = 480
     static let translationDefaultHeight: CGFloat = 320
     static let translationMaximumHeight: CGFloat = 520
     static let explanationDefaultHeight: CGFloat = 300
@@ -41,7 +41,7 @@ enum AssistantPopoverLayout {
                 width: textWidth
             )
         )
-        let chromeHeight: CGFloat = 44 + 1 + 28 + 16 + 18 + 18
+        let chromeHeight: CGFloat = 44 + 1 + 16 + 18 + 18
         let naturalHeight = chromeHeight + translationHeight
         return min(
             translationMaximumHeight,

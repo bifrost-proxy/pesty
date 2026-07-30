@@ -20,6 +20,7 @@ struct TranslationBoardView: View {
             )
         )
         .background(opaqueBoardSurface)
+        .attachAppleTranslationTask(center)
         .accessibilityIdentifier("pesty-translation-board")
         .onAppear {
             updatePopoverHeight()
@@ -50,7 +51,56 @@ struct TranslationBoardView: View {
                 acceptsAutomatic: false,
                 action: center.setTargetLanguage
             )
+            Button {
+                center.swapLanguages()
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.left.arrow.right")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("T")
+                        .font(.system(size: 9, weight: .semibold))
+                        .monospaced()
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(
+                            palette.fieldBackground.swiftUIColor,
+                            in: RoundedRectangle(cornerRadius: 4)
+                        )
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(
+                                    palette.textTertiary.swiftUIColor
+                                        .opacity(0.35),
+                                    lineWidth: 0.5
+                                )
+                        }
+                }
+                .frame(height: 28)
+                .padding(.horizontal, 4)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(
+                center.canSwapLanguages
+                    ? palette.textSecondary.swiftUIColor
+                    : palette.textTertiary.swiftUIColor
+            )
+            .disabled(!center.canSwapLanguages)
+            .help(L10n.swapTranslationLanguagesShortcut)
+            .accessibilityLabel(L10n.swapTranslationLanguages)
+            .accessibilityIdentifier("pesty-translation-language-swap")
             Spacer(minLength: 4)
+            if !center.providerName.isEmpty {
+                Text(center.providerName)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(palette.textTertiary.swiftUIColor)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                    .frame(maxWidth: 76, alignment: .trailing)
+                    .help(center.providerName)
+                    .accessibilityIdentifier(
+                        "pesty-translation-header-provider"
+                    )
+            }
             moreMenu
             Button {
                 center.dismiss()
@@ -154,6 +204,8 @@ struct TranslationBoardView: View {
         switch center.status {
         case .translated:
             translationResult
+        case .alreadyInTarget(let message):
+            alreadyInTargetState(message: message)
         case .checkingService:
             progressState(label: L10n.checkingTranslationService)
         case .translating:
@@ -171,17 +223,23 @@ struct TranslationBoardView: View {
         }
     }
 
+    private func alreadyInTargetState(message: String) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: "checkmark.circle")
+                .font(.system(size: 22, weight: .light))
+                .foregroundStyle(Color.accentColor)
+            Text(message)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(palette.textSecondary.swiftUIColor)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 360)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
     private var translationResult: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(targetTitle)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
-                Spacer()
-                Text(center.providerName)
-                    .font(.caption)
-                    .foregroundStyle(palette.textTertiary.swiftUIColor)
-            }
             ScrollView {
                 Text(center.translatedText)
                     .font(.system(size: 15))
@@ -298,8 +356,6 @@ struct TranslationBoardView: View {
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-
-    private var targetTitle: String { center.targetLanguage.displayName }
 
     private func updatePopoverHeight() {
         AssistantPopoverController.shared.updatePreferredHeight(

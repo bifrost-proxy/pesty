@@ -244,6 +244,9 @@ enum AutomatedUITestRunner {
         let processingIndicatorRenderedOnSelectedCard: Bool
         let processingIndicatorClearedAfterResult: Bool
         let popoverExpandedForLongResult: Bool
+        let languageSwapAvailable: Bool
+        let languageSwapShortcutConsumed: Bool
+        let languageSwapPersisted: Bool
         let resultCopied: Bool
         let translationShortcut: String
     }
@@ -303,6 +306,18 @@ enum AutomatedUITestRunner {
         let provider: String
         let translationLength: Int
         /// A provider/UI error only; the synthetic source text and translated text are never logged.
+        let failureReason: String?
+    }
+
+    private struct AppleLiveTranslationResult: Codable {
+        let phase: String
+        let success: Bool
+        let translatedSyntheticText: Bool
+        let automaticSameTargetHandled: Bool
+        let state: String
+        let provider: String
+        let translationLength: Int
+        /// Provider/UI error metadata only. Never contains source or translated text.
         let failureReason: String?
     }
 
@@ -446,6 +461,10 @@ enum AutomatedUITestRunner {
         }
         if phase == "doubao-live" {
             runDoubaoLiveTranslationTest(controller: controller)
+            return
+        }
+        if phase == "apple-translation-live" {
+            runAppleLiveTranslationTest(controller: controller)
             return
         }
         if phase == "explanation-live" {
@@ -625,6 +644,8 @@ enum AutomatedUITestRunner {
         controller.monitor.stop()
         controller.store.replaceHistoryForAutomatedKeyboardTest(items)
         Settings.shared.translationService = .doubao
+        Settings.shared.translationSourceLanguage = .english
+        Settings.shared.translationTargetLanguage = .simplifiedChinese
         AutomatedUITestProbe.reset()
         controller.showBar()
 
@@ -662,6 +683,41 @@ enum AutomatedUITestRunner {
                         AutomatedUITestProbe.assistantProcessingItemIDs.contains(
                             item.id
                         )
+                    TranslationCenter.shared.showAutomatedPreview(
+                        source: item.text ?? "",
+                        translation: translationPreview,
+                        itemID: item.id
+                    )
+                    let languageSwapAvailable =
+                        TranslationCenter.shared.canSwapLanguages
+                    let languageSwapEvent = makeKeyEvent(
+                        keyCode: UInt16(
+                            TranslationLanguageSwapShortcut.defaultKeyCode
+                        ),
+                        characters: "t",
+                        modifierFlags: []
+                    )
+                    let languageSwapShortcutConsumed =
+                        languageSwapEvent.map {
+                            controller.handleKey($0) == nil
+                        } ?? false
+                    let suiteName = ProcessInfo.processInfo.environment[
+                        "PESTY_AUTOMATED_TEST_DEFAULTS_SUITE"
+                    ]
+                    let persistedDefaults = suiteName.flatMap(
+                        UserDefaults.init(suiteName:)
+                    )
+                    let languageSwapPersisted =
+                        Settings.shared.translationSourceLanguage
+                            == .simplifiedChinese
+                        && Settings.shared.translationTargetLanguage
+                            == .english
+                        && persistedDefaults?.string(
+                            forKey: Settings.Keys.translationSourceLanguage
+                        ) == TranslationLanguage.simplifiedChinese.rawValue
+                        && persistedDefaults?.string(
+                            forKey: Settings.Keys.translationTargetLanguage
+                        ) == TranslationLanguage.english.rawValue
                     TranslationCenter.shared.showAutomatedPreview(
                         source: item.text ?? "",
                         translation: translationPreview,
@@ -707,6 +763,9 @@ enum AutomatedUITestRunner {
                                 && popoverPresented
                                 && popoverAnchoredAboveCard
                                 && popoverExpandedForLongResult
+                                && languageSwapAvailable
+                                && languageSwapShortcutConsumed
+                                && languageSwapPersisted
                                 && resultCopied,
                             shortcutOpenedBoard: shortcutOpenedBoard,
                             shortcutClosedBoard: shortcutClosedBoard,
@@ -721,6 +780,10 @@ enum AutomatedUITestRunner {
                                 processingIndicatorCleared,
                             popoverExpandedForLongResult:
                                 popoverExpandedForLongResult,
+                            languageSwapAvailable: languageSwapAvailable,
+                            languageSwapShortcutConsumed:
+                                languageSwapShortcutConsumed,
+                            languageSwapPersisted: languageSwapPersisted,
                             resultCopied: resultCopied,
                             translationShortcut:
                                 Settings.shared.translationHotkeyDisplay
@@ -1551,6 +1614,13 @@ enum AutomatedUITestRunner {
                     translationLength: 0,
                     failureReason: message
                 )
+            case .alreadyInTarget(let message):
+                finish(
+                    success: false,
+                    state: "already-in-target",
+                    translationLength: 0,
+                    failureReason: message
+                )
             case .idle:
                 finish(success: false, state: "idle", translationLength: 0)
             case .checkingService, .translating:
@@ -1565,6 +1635,176 @@ enum AutomatedUITestRunner {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             poll()
+        }
+    }
+
+    /// Exercises Pesty's installed Apple Translation session and automatic
+    /// same-language handling with fixed synthetic strings. It does not read,
+    /// write, or persist clipboard content.
+    private static func runAppleLiveTranslationTest(controller: AppController) {
+        controller.monitor.stop()
+        guard #available(macOS 26.0, *) else {
+            writeAppleLiveTranslation(
+                AppleLiveTranslationResult(
+                    phase: "apple-translation-live",
+                    success: false,
+                    translatedSyntheticText: false,
+                    automaticSameTargetHandled: false,
+                    state: "unsupported-os",
+                    provider: "",
+                    translationLength: 0,
+                    failureReason: "direct-session-requires-macos-26"
+                )
+            )
+            exit(EXIT_FAILURE)
+        }
+
+        Settings.shared.translationService = .apple
+        Settings.shared.translationSourceLanguage = .english
+        Settings.shared.translationTargetLanguage = .simplifiedChinese
+        let englishItem = ClipItem(
+            type: .text,
+            text: "Pesty installed Apple translation verification.",
+            createdAt: Date()
+        )
+        TranslationCenter.shared.present(for: englishItem)
+        let translationDeadline = Date().addingTimeInterval(20)
+
+        func finish(
+            translatedSyntheticText: Bool,
+            automaticSameTargetHandled: Bool,
+            state: String,
+            translationLength: Int,
+            failureReason: String? = nil
+        ) {
+            let success =
+                translatedSyntheticText && automaticSameTargetHandled
+            let result = AppleLiveTranslationResult(
+                phase: "apple-translation-live",
+                success: success,
+                translatedSyntheticText: translatedSyntheticText,
+                automaticSameTargetHandled: automaticSameTargetHandled,
+                state: state,
+                provider: TranslationCenter.shared.providerName,
+                translationLength: translationLength,
+                failureReason: failureReason
+            )
+            TranslationCenter.shared.dismiss()
+            writeAppleLiveTranslation(result)
+            exit(success ? EXIT_SUCCESS : EXIT_FAILURE)
+        }
+
+        func verifyAutomaticSameTarget(translationLength: Int) {
+            Settings.shared.translationSourceLanguage = .automatic
+            let chineseItem = ClipItem(
+                type: .text,
+                text: "这是 Pesty 自动语言识别的合成验证文本。",
+                createdAt: Date()
+            )
+            TranslationCenter.shared.present(for: chineseItem)
+            let sameTargetDeadline = Date().addingTimeInterval(5)
+
+            func pollSameTarget() {
+                switch TranslationCenter.shared.status {
+                case .alreadyInTarget:
+                    finish(
+                        translatedSyntheticText: true,
+                        automaticSameTargetHandled: true,
+                        state: "translated-and-same-target-handled",
+                        translationLength: translationLength
+                    )
+                case .failed(let message), .unavailable(let message):
+                    finish(
+                        translatedSyntheticText: true,
+                        automaticSameTargetHandled: false,
+                        state: "same-target-failed",
+                        translationLength: translationLength,
+                        failureReason:
+                            TranslationCenter.shared.failureDiagnostic
+                            ?? message
+                    )
+                case .idle:
+                    finish(
+                        translatedSyntheticText: true,
+                        automaticSameTargetHandled: false,
+                        state: "same-target-idle",
+                        translationLength: translationLength
+                    )
+                case .translated, .checkingService, .translating:
+                    guard Date() < sameTargetDeadline else {
+                        finish(
+                            translatedSyntheticText: true,
+                            automaticSameTargetHandled: false,
+                            state: "same-target-timeout",
+                            translationLength: translationLength
+                        )
+                        return
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        pollSameTarget()
+                    }
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                pollSameTarget()
+            }
+        }
+
+        func pollTranslation() {
+            switch TranslationCenter.shared.status {
+            case .translated:
+                let length = TranslationCenter.shared.translatedText.count
+                guard length > 0 else {
+                    finish(
+                        translatedSyntheticText: false,
+                        automaticSameTargetHandled: false,
+                        state: "empty-translation",
+                        translationLength: 0
+                    )
+                    return
+                }
+                verifyAutomaticSameTarget(translationLength: length)
+            case .failed(let message), .unavailable(let message):
+                finish(
+                    translatedSyntheticText: false,
+                    automaticSameTargetHandled: false,
+                    state: "translation-failed",
+                    translationLength: 0,
+                    failureReason:
+                        TranslationCenter.shared.failureDiagnostic ?? message
+                )
+            case .alreadyInTarget(let message):
+                finish(
+                    translatedSyntheticText: false,
+                    automaticSameTargetHandled: false,
+                    state: "unexpected-same-target",
+                    translationLength: 0,
+                    failureReason: message
+                )
+            case .idle:
+                finish(
+                    translatedSyntheticText: false,
+                    automaticSameTargetHandled: false,
+                    state: "idle",
+                    translationLength: 0
+                )
+            case .checkingService, .translating:
+                guard Date() < translationDeadline else {
+                    finish(
+                        translatedSyntheticText: false,
+                        automaticSameTargetHandled: false,
+                        state: "timeout",
+                        translationLength: 0
+                    )
+                    return
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    pollTranslation()
+                }
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            pollTranslation()
         }
     }
 
@@ -3139,6 +3379,17 @@ enum AutomatedUITestRunner {
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(result) else { return }
         FileHandle.standardOutput.write(Data("AUTOMATED_DOUBAO_LIVE_TRANSLATION_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeAppleLiveTranslation(_ result: AppleLiveTranslationResult) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(
+            Data("AUTOMATED_APPLE_TRANSLATION_RESULT ".utf8)
+        )
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data("\n".utf8))
     }

@@ -83,6 +83,11 @@ enum LocalizationVerifier {
                 (L10n.translationAndExplanation, "Translate & Explain"),
                 (L10n.sourceLanguage, "Source language"),
                 (L10n.targetLanguage, "Target language"),
+                (L10n.swapTranslationLanguages, "Swap languages"),
+                (
+                    L10n.swapTranslationLanguagesShortcut,
+                    "Swap source and target languages (T)"
+                ),
                 (L10n.translationShortcutDescription, "Works while the Pesty panel is open. Default: ⌘T."),
                 (L10n.doubaoTranslation, "Doubao (Volcengine Ark)"),
                 (
@@ -101,6 +106,18 @@ enum LocalizationVerifier {
                 (
                     L10n.appleTranslationLanguagePacksNotInstalled,
                     "The required Apple Translate language packs are not downloaded. Download them in Translation Settings."
+                ),
+                (
+                    L10n.translationAlreadyInTargetLanguage("Chinese (Simplified)"),
+                    "This content is already in Chinese (Simplified), so no translation is needed."
+                ),
+                (
+                    L10n.appleTranslationSourceLanguageUnidentified,
+                    "Apple Translate couldn’t identify the source language. Choose it manually and try again."
+                ),
+                (
+                    L10n.appleTranslationTimedOut,
+                    "Apple Translate didn’t respond in time. Please try again."
                 ),
                 (
                     L10n.checkingTranslationService,
@@ -185,6 +202,11 @@ enum LocalizationVerifier {
                 (L10n.translationAndExplanation, "翻译&解释"),
                 (L10n.sourceLanguage, "原文语言"),
                 (L10n.targetLanguage, "目标语言"),
+                (L10n.swapTranslationLanguages, "交换语言"),
+                (
+                    L10n.swapTranslationLanguagesShortcut,
+                    "交换原文和目标语言（T）"
+                ),
                 (L10n.translationShortcutDescription, "在 Pesty 面板打开时生效。默认：⌘T。"),
                 (L10n.doubaoTranslation, "豆包（火山方舟）"),
                 (
@@ -203,6 +225,18 @@ enum LocalizationVerifier {
                 (
                     L10n.appleTranslationLanguagePacksNotInstalled,
                     "所需的 Apple 翻译语言包尚未下载，请在“翻译设置”中下载。"
+                ),
+                (
+                    L10n.translationAlreadyInTargetLanguage("中文（简体）"),
+                    "当前内容已经是中文（简体），无需翻译。"
+                ),
+                (
+                    L10n.appleTranslationSourceLanguageUnidentified,
+                    "Apple 翻译无法识别原文语言，请手动选择原文语言后重试。"
+                ),
+                (
+                    L10n.appleTranslationTimedOut,
+                    "Apple 翻译响应超时，请重试。"
                 ),
                 (
                     L10n.checkingTranslationService,

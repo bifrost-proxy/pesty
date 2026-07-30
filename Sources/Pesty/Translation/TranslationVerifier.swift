@@ -7,6 +7,8 @@ enum TranslationVerifier {
     private struct Result: Codable {
         let shortcutMatchesDefault: Bool
         let shortcutRejectsDifferentKey: Bool
+        let languageSwapShortcutMatchesBareT: Bool
+        let languageSwapShortcutRejectsModifiers: Bool
         let automaticFallsBackToDoubao: Bool
         let appleFailureFallsBackToDoubao: Bool
         let appleRequiresMacOS15: Bool
@@ -15,6 +17,9 @@ enum TranslationVerifier {
         let applePackPlanAlwaysIncludesEnglishAndChinese: Bool
         let applePackPlanIncludesSelectedLanguages: Bool
         let applePackPlanIncludesAutomaticTarget: Bool
+        let automaticSourceDetectsInstalledPair: Bool
+        let automaticSourceRecognizesSameTarget: Bool
+        let automaticSourcePreservesAdditionalLanguage: Bool
         let doubaoRequestUsesChatCompletion: Bool
         let doubaoRequestUsesBearer: Bool
         let doubaoBodyContainsText: Bool
@@ -136,6 +141,29 @@ enum TranslationVerifier {
                     "Apple language-pack planning did not include baseline and selected languages"
             )
         }
+        let automaticSourceDetectsInstalledPair =
+            AppleAutomaticSourceResolver.resolve(
+                detectedIdentifier: "en",
+                target: .simplifiedChinese
+            ) == .source(identifier: "en")
+        let automaticSourceRecognizesSameTarget =
+            AppleAutomaticSourceResolver.resolve(
+                detectedIdentifier: "zh-Hans",
+                target: .simplifiedChinese
+            ) == .alreadyInTarget(identifier: "zh-Hans")
+        let automaticSourcePreservesAdditionalLanguage =
+            AppleAutomaticSourceResolver.resolve(
+                detectedIdentifier: "ru",
+                target: .simplifiedChinese
+            ) == .source(identifier: "ru")
+        guard automaticSourceDetectsInstalledPair,
+              automaticSourceRecognizesSameTarget,
+              automaticSourcePreservesAdditionalLanguage else {
+            throw Failure(
+                description:
+                    "Automatic Apple source-language resolution is incorrect"
+            )
+        }
         let doubaoUnavailable = TranslationProviderResolver.resolve(
             selected: .doubao,
             hasDoubaoConfiguration: false,
@@ -179,6 +207,22 @@ enum TranslationVerifier {
         )
         guard defaultShortcutMatches, shortcutRejectsDifferentKey else {
             throw Failure(description: "Translation shortcut matching is incorrect")
+        }
+        let languageSwapShortcutMatchesBareT =
+            TranslationLanguageSwapShortcut.matches(
+                keyCode: kVK_ANSI_T,
+                flags: []
+            )
+        let languageSwapShortcutRejectsModifiers =
+            !TranslationLanguageSwapShortcut.matches(
+                keyCode: kVK_ANSI_T,
+                flags: [.command]
+            )
+        guard languageSwapShortcutMatchesBareT,
+              languageSwapShortcutRejectsModifiers else {
+            throw Failure(
+                description: "Translation language-swap shortcut is incorrect"
+            )
         }
 
         let explanationShortcutMatches = ExplanationShortcut.matches(
@@ -292,7 +336,10 @@ enum TranslationVerifier {
         )
         let expandedExplanationHeight = AssistantPopoverLayout.preferredExplanationHeight(
             sourceText: syntheticText,
-            explanation: String(repeating: "这是一段用于验证解释浮层高度会随内容增长的测试文本。", count: 12)
+            explanation: String(
+                repeating: "这是一段用于验证解释浮层高度会随内容增长的测试文本。",
+                count: 24
+            )
         )
         let cappedExplanationHeight = AssistantPopoverLayout.preferredExplanationHeight(
             sourceText: syntheticText,
@@ -329,6 +376,10 @@ enum TranslationVerifier {
         let result = Result(
             shortcutMatchesDefault: defaultShortcutMatches,
             shortcutRejectsDifferentKey: shortcutRejectsDifferentKey,
+            languageSwapShortcutMatchesBareT:
+                languageSwapShortcutMatchesBareT,
+            languageSwapShortcutRejectsModifiers:
+                languageSwapShortcutRejectsModifiers,
             automaticFallsBackToDoubao: automaticWithDoubao == .doubao,
             appleFailureFallsBackToDoubao: appleFailureFallsBackToDoubao,
             appleRequiresMacOS15: {
@@ -349,6 +400,12 @@ enum TranslationVerifier {
                 selectedPackIsIncluded,
             applePackPlanIncludesAutomaticTarget:
                 automaticTargetPackIsIncluded,
+            automaticSourceDetectsInstalledPair:
+                automaticSourceDetectsInstalledPair,
+            automaticSourceRecognizesSameTarget:
+                automaticSourceRecognizesSameTarget,
+            automaticSourcePreservesAdditionalLanguage:
+                automaticSourcePreservesAdditionalLanguage,
             doubaoRequestUsesChatCompletion: usesDoubaoChatCompletion,
             doubaoRequestUsesBearer: usesDoubaoBearer,
             doubaoBodyContainsText: doubaoBody.contains(syntheticText),
