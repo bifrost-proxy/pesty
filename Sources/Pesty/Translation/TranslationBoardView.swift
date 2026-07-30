@@ -19,7 +19,6 @@ struct TranslationBoardView: View {
                 translation: center.translatedText
             )
         )
-        .background(opaqueBoardSurface)
         .attachAppleTranslationTask(center)
         .accessibilityIdentifier("pesty-translation-board")
         .onAppear {
@@ -116,16 +115,6 @@ struct TranslationBoardView: View {
         }
         .padding(.horizontal, 12)
         .frame(height: 44)
-    }
-
-    private var opaqueBoardSurface: Color {
-        Color(
-            .sRGB,
-            red: palette.cardBody.red,
-            green: palette.cardBody.green,
-            blue: palette.cardBody.blue,
-            opacity: 1
-        )
     }
 
     private func languageMenu(
@@ -278,11 +267,32 @@ struct TranslationBoardView: View {
     @ViewBuilder
     private func unavailableState(message: String) -> some View {
         if center.sourceText.isEmpty {
-            messageState(
-                symbol: "text.badge.xmark",
-                message: message,
-                showsSettings: false
-            )
+            VStack(spacing: 14) {
+                Image(systemName: "text.badge.xmark")
+                    .font(.system(size: 24, weight: .light))
+                    .foregroundStyle(
+                        palette.textSecondary.swiftUIColor
+                    )
+                Text(message)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(
+                        palette.textSecondary.swiftUIColor
+                    )
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 390)
+                #if !MAS
+                if message == L10n.globalTranslationAccessibilityRequired {
+                    Button(L10n.openAccessibilitySettings) {
+                        PasteService.openAccessibilitySettings(
+                            forceGuide: true
+                        )
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                }
+                #endif
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 Label(L10n.translationServiceUnavailable, systemImage: "exclamationmark.circle")

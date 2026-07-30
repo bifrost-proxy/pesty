@@ -6,6 +6,34 @@ All notable changes to Pesty are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.6.19] - 2026-07-30
+
+### Added
+
+- Added customizable global shortcuts for translating and explaining selected
+  text in other applications.
+- Added precise Accessibility selection anchoring with a safe copy-and-restore
+  fallback for applications that do not expose selected text through
+  Accessibility.
+- Added selection-gesture tracking so fallback popovers point to the recent
+  mouse-up endpoint instead of an unrelated current cursor position.
+
+### Changed
+
+- Made translation language swapping persistent and available from the `T`
+  shortcut inside the translation popover.
+- Unified translation and explanation popovers on the native macOS popover
+  material so the body and arrow use one continuous surface.
+
+### Fixed
+
+- Close assistant popovers synchronously when their shortcut is pressed again,
+  preventing a translucent empty frame from appearing during dismissal.
+- Preserve every pasteboard item and declared type while temporarily copying
+  selected text from applications with incomplete Accessibility support.
+
+[1.6.19]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.6.19
+
 ## [1.6.18] - 2026-07-30
 
 ### Added

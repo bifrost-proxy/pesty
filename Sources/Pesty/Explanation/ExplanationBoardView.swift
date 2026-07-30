@@ -20,7 +20,6 @@ struct ExplanationBoardView: View {
                 explanation: center.explanationText
             )
         )
-        .background(opaqueBoardSurface)
         .accessibilityIdentifier("pesty-explanation-board")
         .onAppear {
             updatePopoverHeight()
@@ -156,6 +155,15 @@ struct ExplanationBoardView: View {
                 if canRetry {
                     Button(L10n.retryExplanation) { center.retry() }
                 }
+                #if !MAS
+                if text == L10n.globalTranslationAccessibilityRequired {
+                    Button(L10n.openAccessibilitySettings) {
+                        PasteService.openAccessibilitySettings(
+                            forceGuide: true
+                        )
+                    }
+                }
+                #endif
                 Button(L10n.openTranslationSettings) {
                     AppController.shared.showSettings(pane: .translation)
                 }
@@ -163,16 +171,6 @@ struct ExplanationBoardView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var opaqueBoardSurface: Color {
-        Color(
-            .sRGB,
-            red: palette.cardBody.red,
-            green: palette.cardBody.green,
-            blue: palette.cardBody.blue,
-            opacity: 1
-        )
     }
 
     private func updatePopoverHeight() {

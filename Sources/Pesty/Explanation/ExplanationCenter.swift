@@ -56,6 +56,33 @@ final class ExplanationCenter {
         explainCurrentText()
     }
 
+    func present(text: String) {
+        itemID = nil
+        let normalized = text.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard !normalized.isEmpty else {
+            presentUnavailable(L10n.selectTextToExplain)
+            return
+        }
+        isPresented = true
+        sourceText = normalized
+        explanationText = ""
+        failureDiagnostic = nil
+        explainCurrentText()
+    }
+
+    func presentUnavailable(_ message: String) {
+        isPresented = true
+        itemID = nil
+        sourceText = ""
+        explanationText = ""
+        providerName = ""
+        failureDiagnostic = nil
+        activeRequestID = nil
+        status = .unavailable(message)
+    }
+
     func dismiss() {
         AssistantPopoverController.shared.dismiss(kind: .explanation)
         isPresented = false

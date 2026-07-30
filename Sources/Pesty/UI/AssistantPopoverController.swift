@@ -6,6 +6,11 @@ enum AssistantPopoverKind: Equatable {
     case explanation
 }
 
+enum AssistantPopoverAnchor: Equatable {
+    case clipItem(UUID)
+    case screenRect(NSRect)
+}
+
 enum AssistantPopoverLayout {
     static let width: CGFloat = 480
     static let translationDefaultHeight: CGFloat = 320
@@ -127,8 +132,11 @@ final class AssistantPopoverController: NSObject, NSPopoverDelegate {
 
     private let popover = NSPopover()
     private var kind: AssistantPopoverKind?
-    private var itemID: UUID?
+    private var anchor: AssistantPopoverAnchor?
     private var remainingAnchorRetries = 0
+    private var screenAnchorPanel: NSPanel?
+    private var localOutsideClickMonitor: Any?
+    private var globalOutsideClickMonitor: Any?
 
     private override init() {
         super.init()
@@ -139,18 +147,33 @@ final class AssistantPopoverController: NSObject, NSPopoverDelegate {
     }
 
     var isPresented: Bool { popover.isShown }
+    var isWindowVisible: Bool {
+        popover.contentViewController?.view.window?.isVisible == true
+    }
+    var isScreenAnchored: Bool { anchor?.isScreenRect == true }
 
     var screenFrame: NSRect? {
         popover.contentViewController?.view.window?.frame
     }
+    var screenAnchorFrame: NSRect? { screenAnchorPanel?.frame }
 
     var contentViewForScreenshot: NSView? {
         popover.contentViewController?.view
     }
 
     func present(kind: AssistantPopoverKind, for itemID: UUID) {
+        present(kind: kind, anchor: .clipItem(itemID))
+    }
+
+    func present(
+        kind: AssistantPopoverKind,
+        anchor: AssistantPopoverAnchor
+    ) {
+        if popover.isShown {
+            closePopoverImmediately()
+        }
         self.kind = kind
-        self.itemID = itemID
+        self.anchor = anchor
         remainingAnchorRetries = 8
         configureContent(for: kind)
         showWhenAnchorIsReady()
@@ -158,10 +181,12 @@ final class AssistantPopoverController: NSObject, NSPopoverDelegate {
 
     func dismiss(kind requestedKind: AssistantPopoverKind? = nil) {
         guard requestedKind == nil || requestedKind == kind else { return }
-        popover.close()
+        closePopoverImmediately()
         kind = nil
-        itemID = nil
+        anchor = nil
         remainingAnchorRetries = 0
+        releaseScreenAnchor()
+        stopOutsideClickMonitoring()
     }
 
     /// The clipboard panel remains interactive while an assistant card is
@@ -197,8 +222,10 @@ final class AssistantPopoverController: NSObject, NSPopoverDelegate {
 
     func popoverDidClose(_ notification: Notification) {
         kind = nil
-        itemID = nil
+        anchor = nil
         remainingAnchorRetries = 0
+        releaseScreenAnchor()
+        stopOutsideClickMonitoring()
     }
 
     private func configureContent(for kind: AssistantPopoverKind) {
@@ -215,8 +242,29 @@ final class AssistantPopoverController: NSObject, NSPopoverDelegate {
         popover.contentViewController?.preferredContentSize = size
     }
 
+    /// Assistant state is cleared as part of the same shortcut action that
+    /// dismisses the popover. Letting AppKit animate that close would briefly
+    /// render the now-empty SwiftUI board inside the fading popover, producing
+    /// a translucent ghost frame. Opening can still animate; closing is
+    /// deliberately synchronous.
+    private func closePopoverImmediately() {
+        let shouldAnimateOpening = popover.animates
+        popover.animates = false
+        popover.close()
+        popover.animates = shouldAnimateOpening
+    }
+
     private func showWhenAnchorIsReady() {
-        guard let itemID else { return }
+        guard let anchor else { return }
+        switch anchor {
+        case .clipItem(let itemID):
+            showWhenClipAnchorIsReady(itemID: itemID)
+        case .screenRect(let screenRect):
+            showAtScreenRect(screenRect)
+        }
+    }
+
+    private func showWhenClipAnchorIsReady(itemID: UUID) {
         let resolvedAnchor =
             SelectedClipPopoverAnchor.shared.view(for: itemID)
             ?? ClipStripGeometryBridge.shared.assistantPopoverAnchorView(
@@ -228,15 +276,111 @@ final class AssistantPopoverController: NSObject, NSPopoverDelegate {
         }
         SelectedClipPopoverAnchor.shared.update(itemID: itemID, view: anchorView)
         anchorView.layoutSubtreeIfNeeded()
-        if popover.isShown {
-            popover.close()
-        }
         let positioningRect = anchorView.bounds.insetBy(dx: 20, dy: 0)
         popover.show(
             relativeTo: positioningRect,
             of: anchorView,
             preferredEdge: .maxY
         )
+    }
+
+    private func showAtScreenRect(_ selectionRect: NSRect) {
+        guard let screen = NSScreen.screens.first(where: {
+            $0.frame.intersects(selectionRect)
+        }) ?? NSScreen.main ?? NSScreen.screens.first else {
+            return
+        }
+        let visibleFrame = screen.visibleFrame
+        let roomAbove = visibleFrame.maxY - selectionRect.maxY
+        let roomBelow = selectionRect.minY - visibleFrame.minY
+        let placesAbove = roomAbove >= roomBelow
+        let anchorX = min(
+            visibleFrame.maxX - 2,
+            max(visibleFrame.minX + 2, selectionRect.midX)
+        )
+        let anchorY = placesAbove
+            ? min(visibleFrame.maxY - 1, selectionRect.maxY)
+            : max(visibleFrame.minY + 1, selectionRect.minY)
+        let panelFrame = NSRect(
+            x: anchorX - 1,
+            y: anchorY - 1,
+            width: 2,
+            height: 2
+        )
+
+        releaseScreenAnchor()
+        let panel = NSPanel(
+            contentRect: panelFrame,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.hidesOnDeactivate = false
+        panel.isFloatingPanel = true
+        panel.level = .popUpMenu
+        panel.collectionBehavior = [
+            .canJoinAllSpaces,
+            .fullScreenAuxiliary,
+            .stationary,
+        ]
+        let anchorView = NSView(frame: NSRect(origin: .zero, size: panelFrame.size))
+        panel.contentView = anchorView
+        panel.orderFrontRegardless()
+        screenAnchorPanel = panel
+
+        popover.show(
+            relativeTo: anchorView.bounds,
+            of: anchorView,
+            preferredEdge: placesAbove ? .maxY : .minY
+        )
+        startOutsideClickMonitoring()
+    }
+
+    private func releaseScreenAnchor() {
+        screenAnchorPanel?.orderOut(nil)
+        screenAnchorPanel = nil
+    }
+
+    private func startOutsideClickMonitoring() {
+        stopOutsideClickMonitoring()
+        localOutsideClickMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] event in
+            guard let self,
+                  self.anchor?.isScreenRect == true,
+                  self.screenFrame?.contains(NSEvent.mouseLocation) != true else {
+                return event
+            }
+            self.dismissActiveAssistant()
+            return event
+        }
+        globalOutsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self,
+                      self.anchor?.isScreenRect == true,
+                      self.screenFrame?.contains(NSEvent.mouseLocation) != true else {
+                    return
+                }
+                self.dismissActiveAssistant()
+            }
+        }
+    }
+
+    private func stopOutsideClickMonitoring() {
+        if let localOutsideClickMonitor {
+            NSEvent.removeMonitor(localOutsideClickMonitor)
+            self.localOutsideClickMonitor = nil
+        }
+        if let globalOutsideClickMonitor {
+            NSEvent.removeMonitor(globalOutsideClickMonitor)
+            self.globalOutsideClickMonitor = nil
+        }
     }
 
     private func retryAfterLayout() {
@@ -250,5 +394,12 @@ final class AssistantPopoverController: NSObject, NSPopoverDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.04) { [weak self] in
             self?.showWhenAnchorIsReady()
         }
+    }
+}
+
+private extension AssistantPopoverAnchor {
+    var isScreenRect: Bool {
+        if case .screenRect = self { return true }
+        return false
     }
 }

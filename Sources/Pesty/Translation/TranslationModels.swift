@@ -253,7 +253,19 @@ enum TranslationProviderResolver {
 
 enum TranslationShortcut {
     static let defaultKeyCode = kVK_ANSI_T
-    static let defaultModifiers = cmdKey
+    static let defaultModifiers = cmdKey | shiftKey
+    static let previousDefaultKeyCode = kVK_ANSI_T
+    static let previousDefaultModifiers = cmdKey
+
+    static func shouldMigratePreviousDefault(
+        migrationVersion: Int,
+        keyCode: Int,
+        modifiers: Int
+    ) -> Bool {
+        migrationVersion < 1
+            && keyCode == previousDefaultKeyCode
+            && modifiers == previousDefaultModifiers
+    }
 
     static func matches(
         keyCode: Int,

@@ -7,6 +7,11 @@ enum TranslationVerifier {
     private struct Result: Codable {
         let shortcutMatchesDefault: Bool
         let shortcutRejectsDifferentKey: Bool
+        let shortcutMigratesPreviousDefault: Bool
+        let shortcutPreservesUserChoice: Bool
+        let selectedTextScreenGeometryIsCorrect: Bool
+        let selectionGestureAnchorPolicyIsCorrect: Bool
+        let pasteboardSnapshotRoundTripsAllTypes: Bool
         let languageSwapShortcutMatchesBareT: Bool
         let languageSwapShortcutRejectsModifiers: Bool
         let automaticFallsBackToDoubao: Bool
@@ -195,18 +200,98 @@ enum TranslationVerifier {
 
         let defaultShortcutMatches = TranslationShortcut.matches(
             keyCode: TranslationShortcut.defaultKeyCode,
-            flags: [.command],
+            flags: [.command, .shift],
             expectedKeyCode: TranslationShortcut.defaultKeyCode,
             expectedModifiers: TranslationShortcut.defaultModifiers
         )
         let shortcutRejectsDifferentKey = !TranslationShortcut.matches(
             keyCode: kVK_ANSI_R,
-            flags: [.command],
+            flags: [.command, .shift],
             expectedKeyCode: TranslationShortcut.defaultKeyCode,
             expectedModifiers: TranslationShortcut.defaultModifiers
         )
         guard defaultShortcutMatches, shortcutRejectsDifferentKey else {
             throw Failure(description: "Translation shortcut matching is incorrect")
+        }
+        let shortcutMigratesPreviousDefault =
+            TranslationShortcut.shouldMigratePreviousDefault(
+                migrationVersion: 0,
+                keyCode: TranslationShortcut.previousDefaultKeyCode,
+                modifiers: TranslationShortcut.previousDefaultModifiers
+            )
+        let shortcutPreservesUserChoice =
+            !TranslationShortcut.shouldMigratePreviousDefault(
+                migrationVersion: 0,
+                keyCode: kVK_ANSI_R,
+                modifiers: cmdKey | optionKey
+            )
+            && !TranslationShortcut.shouldMigratePreviousDefault(
+                migrationVersion: 1,
+                keyCode: TranslationShortcut.previousDefaultKeyCode,
+                modifiers: TranslationShortcut.previousDefaultModifiers
+            )
+        guard shortcutMigratesPreviousDefault,
+              shortcutPreservesUserChoice else {
+            throw Failure(
+                description: "Translation shortcut migration is incorrect"
+            )
+        }
+        let convertedSelectionRect =
+            SelectedTextScreenGeometry.appKitRect(
+                fromAccessibilityRect: CGRect(
+                    x: 100,
+                    y: 200,
+                    width: 120,
+                    height: 24
+                ),
+                primaryScreenMaxY: 1_000
+            )
+        let selectedTextScreenGeometryIsCorrect =
+            convertedSelectionRect
+                == NSRect(x: 100, y: 776, width: 120, height: 24)
+            && SelectedTextScreenGeometry.usableAnchorRect(
+                convertedSelectionRect,
+                screens: [NSRect(x: 0, y: 0, width: 1_440, height: 1_000)]
+            ) == convertedSelectionRect
+            && SelectedTextScreenGeometry.usableAnchorRect(
+                .zero,
+                screens: [NSRect(x: 0, y: 0, width: 1_440, height: 1_000)]
+            ) == nil
+        guard selectedTextScreenGeometryIsCorrect else {
+            throw Failure(
+                description: "Selected-text screen geometry is incorrect"
+            )
+        }
+        let testPasteboard = NSPasteboard(
+            name: NSPasteboard.Name(
+                "com.bifrostproxy.pesty.translation-verifier.\(UUID().uuidString)"
+            )
+        )
+        testPasteboard.clearContents()
+        let textItem = NSPasteboardItem()
+        textItem.setString(syntheticText, forType: .string)
+        textItem.setData(
+            Data([0x01, 0x02, 0x03]),
+            forType: NSPasteboard.PasteboardType(
+                "com.bifrostproxy.pesty.synthetic"
+            )
+        )
+        let secondItem = NSPasteboardItem()
+        secondItem.setString("second-item", forType: .string)
+        testPasteboard.writeObjects([textItem, secondItem])
+        let pasteboardSnapshot = PasteboardSnapshot(
+            pasteboard: testPasteboard
+        )
+        testPasteboard.clearContents()
+        testPasteboard.setString("temporary-copy", forType: .string)
+        pasteboardSnapshot.restore(to: testPasteboard)
+        let pasteboardSnapshotRoundTripsAllTypes =
+            PasteboardSnapshot(pasteboard: testPasteboard)
+                == pasteboardSnapshot
+        guard pasteboardSnapshotRoundTripsAllTypes else {
+            throw Failure(
+                description: "Pasteboard snapshot did not restore every item"
+            )
         }
         let languageSwapShortcutMatchesBareT =
             TranslationLanguageSwapShortcut.matches(
@@ -227,14 +312,14 @@ enum TranslationVerifier {
 
         let explanationShortcutMatches = ExplanationShortcut.matches(
             keyCode: ExplanationShortcut.defaultKeyCode,
-            flags: [.command],
+            flags: [.command, .shift],
             expectedKeyCode: ExplanationShortcut.defaultKeyCode,
             expectedModifiers: ExplanationShortcut.defaultModifiers
         )
         guard explanationShortcutMatches,
               !ExplanationShortcut.matches(
                 keyCode: TranslationShortcut.defaultKeyCode,
-                flags: [.command],
+                flags: [.command, .shift],
                 expectedKeyCode: ExplanationShortcut.defaultKeyCode,
                 expectedModifiers: ExplanationShortcut.defaultModifiers
               ) else {
@@ -246,10 +331,20 @@ enum TranslationVerifier {
                 keyCode: ExplanationShortcut.previousDefaultKeyCode,
                 modifiers: ExplanationShortcut.previousDefaultModifiers
             )
+            && Settings.shouldMigrateExplanationShortcutDefault(
+                migrationVersion: 1,
+                keyCode: kVK_ANSI_D,
+                modifiers: cmdKey
+            )
         let explanationShortcutPreservesUserChoice =
             !Settings.shouldMigrateExplanationShortcutDefault(
                 migrationVersion: 0,
                 keyCode: kVK_ANSI_R,
+                modifiers: cmdKey
+            )
+            && !Settings.shouldMigrateExplanationShortcutDefault(
+                migrationVersion: ExplanationShortcut.migrationVersion,
+                keyCode: kVK_ANSI_D,
                 modifiers: cmdKey
             )
         guard explanationShortcutMigratesOldDefault,
@@ -259,12 +354,62 @@ enum TranslationVerifier {
         let contextualMenuShortcutsRender = ContextMenuShortcut(
             keyCode: TranslationShortcut.defaultKeyCode,
             carbonModifiers: TranslationShortcut.defaultModifiers
-        )?.display == "⌘T" && ContextMenuShortcut(
+        )?.display == "⇧⌘T" && ContextMenuShortcut(
             keyCode: ExplanationShortcut.defaultKeyCode,
             carbonModifiers: ExplanationShortcut.defaultModifiers
-        )?.display == "⌘D"
+        )?.display == "⇧⌘D"
         guard contextualMenuShortcutsRender else {
             throw Failure(description: "Context-menu shortcut rendering is incorrect")
+        }
+
+        let gestureTracker = SelectionGestureTracker.shared
+        let gestureTime = Date()
+        gestureTracker.recordMouseDown(
+            at: NSPoint(x: 40, y: 50),
+            sourceBundleIdentifier: "com.pesty.synthetic.source"
+        )
+        gestureTracker.recordMouseDragged(
+            to: NSPoint(x: 120, y: 70)
+        )
+        gestureTracker.recordMouseUp(
+            at: NSPoint(x: 180, y: 80),
+            sourceBundleIdentifier: "com.pesty.synthetic.source",
+            occurredAt: gestureTime
+        )
+        let selectionGestureAnchorIsRecentAndSourceScoped =
+            gestureTracker.bestAnchorPoint(
+                for: "com.pesty.synthetic.source",
+                now: gestureTime.addingTimeInterval(1)
+            ) == NSPoint(x: 180, y: 80)
+            && gestureTracker.bestAnchorPoint(
+                for: "com.pesty.synthetic.other",
+                now: gestureTime.addingTimeInterval(1)
+            ) == nil
+            && gestureTracker.bestAnchorPoint(
+                for: "com.pesty.synthetic.source",
+                now: gestureTime.addingTimeInterval(
+                    SelectionGestureTracker.maximumAnchorAge + 1
+                )
+            ) == nil
+        gestureTracker.recordMouseDown(
+            at: NSPoint(x: 200, y: 200),
+            sourceBundleIdentifier: "com.pesty.synthetic.source"
+        )
+        gestureTracker.recordMouseUp(
+            at: NSPoint(x: 201, y: 200),
+            sourceBundleIdentifier: "com.pesty.synthetic.source",
+            occurredAt: gestureTime
+        )
+        let ordinaryClickIsNotASelectionAnchor =
+            gestureTracker.bestAnchorPoint(
+                for: "com.pesty.synthetic.source",
+                now: gestureTime.addingTimeInterval(1)
+            ) == nil
+        guard selectionGestureAnchorIsRecentAndSourceScoped,
+              ordinaryClickIsNotASelectionAnchor else {
+            throw Failure(
+                description: "Selection gesture anchoring is incorrect"
+            )
         }
 
         let explanationRequest = try ExplanationClient.makeRequest(
@@ -376,6 +521,15 @@ enum TranslationVerifier {
         let result = Result(
             shortcutMatchesDefault: defaultShortcutMatches,
             shortcutRejectsDifferentKey: shortcutRejectsDifferentKey,
+            shortcutMigratesPreviousDefault: shortcutMigratesPreviousDefault,
+            shortcutPreservesUserChoice: shortcutPreservesUserChoice,
+            selectedTextScreenGeometryIsCorrect:
+                selectedTextScreenGeometryIsCorrect,
+            selectionGestureAnchorPolicyIsCorrect:
+                selectionGestureAnchorIsRecentAndSourceScoped
+                    && ordinaryClickIsNotASelectionAnchor,
+            pasteboardSnapshotRoundTripsAllTypes:
+                pasteboardSnapshotRoundTripsAllTypes,
             languageSwapShortcutMatchesBareT:
                 languageSwapShortcutMatchesBareT,
             languageSwapShortcutRejectsModifiers:

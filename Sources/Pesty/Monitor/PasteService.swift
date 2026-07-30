@@ -149,15 +149,35 @@ enum PasteService {
     }
 
     private static func sendCommandV() {
+        sendCommandKey(CGKeyCode(kVK_ANSI_V), action: "Command-V")
+    }
+
+    static func sendCommandC() {
+        sendCommandKey(CGKeyCode(kVK_ANSI_C), action: "Command-C")
+    }
+
+    private static func sendCommandKey(
+        _ keyCode: CGKeyCode,
+        action: String
+    ) {
         let src = CGEventSource(stateID: .combinedSessionState)
-        let v = CGKeyCode(kVK_ANSI_V)
-        guard let down = CGEvent(keyboardEventSource: src, virtualKey: v, keyDown: true),
-              let up = CGEvent(keyboardEventSource: src, virtualKey: v, keyDown: false) else { return }
+        guard let down = CGEvent(
+            keyboardEventSource: src,
+            virtualKey: keyCode,
+            keyDown: true
+        ),
+        let up = CGEvent(
+            keyboardEventSource: src,
+            virtualKey: keyCode,
+            keyDown: false
+        ) else {
+            return
+        }
         down.flags = .maskCommand
         up.flags = .maskCommand
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
-        logger.info("Posted Command-V")
+        logger.info("Posted \(action, privacy: .public)")
     }
 
     @discardableResult

@@ -351,6 +351,7 @@ private struct TranslationHotkeyRecorderView: View {
 
     private func start() {
         recording = true
+        HotKeyCenter.shared.suspendTranslationRegistration()
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
             guard event.type == .keyDown else { return event }
             let modifiers = carbonModifiers(from: event.modifierFlags)
@@ -366,10 +367,14 @@ private struct TranslationHotkeyRecorderView: View {
     }
 
     private func stop() {
+        let wasRecording = recording || monitor != nil
         recording = false
         if let monitor {
             NSEvent.removeMonitor(monitor)
             self.monitor = nil
+        }
+        if wasRecording {
+            HotKeyCenter.shared.resumeTranslationRegistration()
         }
     }
 
@@ -412,7 +417,9 @@ private struct ExplanationHotkeyRecorderView: View {
 
     private func start() {
         recording = true
-        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
+        HotKeyCenter.shared.suspendExplanationRegistration()
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
+            guard event.type == .keyDown else { return event }
             let modifiers = carbonModifiers(from: event.modifierFlags)
             guard modifiers & (cmdKey | controlKey | optionKey) != 0 else {
                 NSSound.beep()
@@ -426,10 +433,14 @@ private struct ExplanationHotkeyRecorderView: View {
     }
 
     private func stop() {
+        let wasRecording = recording || monitor != nil
         recording = false
         if let monitor {
             NSEvent.removeMonitor(monitor)
             self.monitor = nil
+        }
+        if wasRecording {
+            HotKeyCenter.shared.resumeExplanationRegistration()
         }
     }
 

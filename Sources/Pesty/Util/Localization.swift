@@ -217,6 +217,42 @@ enum L10n {
     static var noTranslatableText: String {
         text("Select a text clip to translate.", "请选择一条文本剪贴内容进行翻译。")
     }
+    static var selectTextToTranslate: String {
+        text(
+            "Select some text, then use the global translation shortcut.",
+            "请先选中需要翻译的文字，然后使用全局翻译快捷键。"
+        )
+    }
+    static var selectTextToExplain: String {
+        text(
+            "Select some text, then use the global explanation shortcut.",
+            "请先选中需要解释的文字，然后使用全局解释快捷键。"
+        )
+    }
+    static var globalTranslationAccessibilityRequired: String {
+        text(
+            "Accessibility access is required to read selected text. Enable Pesty in System Settings.",
+            "读取选中文字需要辅助功能权限，请在系统设置中为 Pesty 开启权限。"
+        )
+    }
+    static var secureTextCannotBeTranslated: String {
+        text(
+            "Pesty does not read or translate text selected in secure fields.",
+            "Pesty 不会读取或翻译安全输入框中选中的内容。"
+        )
+    }
+    static var secureTextCannotBeExplained: String {
+        text(
+            "Pesty does not read or explain text selected in secure fields.",
+            "Pesty 不会读取或解释安全输入框中选中的内容。"
+        )
+    }
+    static var selectedTextLocationUnavailable: String {
+        text(
+            "This app exposes the selected text but not its screen position, so Pesty cannot anchor the translation window accurately.",
+            "当前应用提供了选中文字，但没有提供它的屏幕位置，因此 Pesty 无法准确定位翻译窗口。"
+        )
+    }
     static var targetLanguageRequired: String {
         text("Choose a target language before translating.", "请先选择目标语言。")
     }
@@ -352,10 +388,14 @@ enum L10n {
              "自动模式会优先使用 macOS 15 及以上的 Apple 翻译，其次使用你配置的豆包服务。")
     }
     static var translationShortcut: String { text("Translation shortcut", "翻译快捷键") }
-    static var showTranslationBoard: String { text("Show translation board", "打开翻译看板") }
+    static var showTranslationBoard: String {
+        text("Translate selected text", "翻译选中文字")
+    }
     static var translationShortcutDescription: String {
-        text("Works while the Pesty panel is open. Default: ⌘T.",
-             "在 Pesty 面板打开时生效。默认：⌘T。")
+        text(
+            "Works globally in any app that exposes its text selection. Default: ⇧⌘T.",
+            "可在支持读取文本选区的任意应用中全局使用。默认：⇧⌘T。"
+        )
     }
     static var explanation: String { text("Explain", "解释") }
     static var usageTips: String { text("Quick tips", "使用小技巧") }
@@ -380,8 +420,8 @@ enum L10n {
     static var explanationShortcut: String { text("Explanation shortcut", "解释快捷键") }
     static var showExplanationBoard: String { text("Explain selected content", "解释选中内容") }
     static var explanationShortcutDescription: String {
-        text("Explains the selected text while the Pesty panel is open. Requires a configured AI model. Default: ⌘D.",
-             "在 Pesty 面板打开时解释选中的文本；需要配置大模型。默认：⌘D。")
+        text("Works globally with selected text in any app. Requires a configured AI model. Default: ⇧⌘D.",
+             "可在任意应用中全局解释选中文字；需要配置大模型。默认：⇧⌘D。")
     }
     static var explaining: String { text("Explaining…", "正在解释…") }
     static var closeExplanation: String { text("Close explanation", "关闭解释") }

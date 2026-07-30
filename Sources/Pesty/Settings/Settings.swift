@@ -108,6 +108,8 @@ final class Settings {
         static let translationTargetLanguage = "translationTargetLanguage"
         static let translationHotkeyKeyCode = "translationHotkeyKeyCode"
         static let translationHotkeyModifiers = "translationHotkeyModifiers"
+        static let translationHotkeyDefaultMigrationVersion =
+            "translationHotkeyDefaultMigrationVersion"
         static let explanationHotkeyKeyCode = "explanationHotkeyKeyCode"
         static let explanationHotkeyModifiers = "explanationHotkeyModifiers"
         static let explanationHotkeyDefaultMigrationVersion =
@@ -215,6 +217,7 @@ final class Settings {
         didSet {
             guard isLoaded else { return }
             d.set(translationHotkeyKeyCode, forKey: Keys.translationHotkeyKeyCode)
+            HotKeyCenter.shared.reload()
         }
     }
 
@@ -222,6 +225,7 @@ final class Settings {
         didSet {
             guard isLoaded else { return }
             d.set(translationHotkeyModifiers, forKey: Keys.translationHotkeyModifiers)
+            HotKeyCenter.shared.reload()
         }
     }
 
@@ -229,6 +233,7 @@ final class Settings {
         didSet {
             guard isLoaded else { return }
             d.set(explanationHotkeyKeyCode, forKey: Keys.explanationHotkeyKeyCode)
+            HotKeyCenter.shared.reload()
         }
     }
 
@@ -236,6 +241,7 @@ final class Settings {
         didSet {
             guard isLoaded else { return }
             d.set(explanationHotkeyModifiers, forKey: Keys.explanationHotkeyModifiers)
+            HotKeyCenter.shared.reload()
         }
     }
 
@@ -331,8 +337,13 @@ final class Settings {
         translationTargetLanguage = loadedTranslationTargetLanguage == .automatic
             ? .simplifiedChinese
             : loadedTranslationTargetLanguage
-        translationHotkeyKeyCode = d.integer(forKey: Keys.translationHotkeyKeyCode)
-        translationHotkeyModifiers = d.integer(forKey: Keys.translationHotkeyModifiers)
+        Settings.migrateTranslationShortcutDefaultIfNeeded(defaults: d)
+        translationHotkeyKeyCode = d.integer(
+            forKey: Keys.translationHotkeyKeyCode
+        )
+        translationHotkeyModifiers = d.integer(
+            forKey: Keys.translationHotkeyModifiers
+        )
         Settings.migrateExplanationShortcutDefaultIfNeeded(defaults: d)
         explanationHotkeyKeyCode = d.integer(forKey: Keys.explanationHotkeyKeyCode)
         explanationHotkeyModifiers = d.integer(forKey: Keys.explanationHotkeyModifiers)
@@ -390,8 +401,41 @@ final class Settings {
         )
     }
 
-    /// Beta.38 shipped the first explanation shortcut as Command-E. Move only
-    /// that exact previous default to Command-D; all other user choices remain intact.
+    /// Move only the previous shipped default from Command-T to the new global
+    /// Command-Shift-T shortcut. User-customized shortcuts remain untouched.
+    private static func migrateTranslationShortcutDefaultIfNeeded(
+        defaults: UserDefaults
+    ) {
+        let migrationVersion = defaults.integer(
+            forKey: Keys.translationHotkeyDefaultMigrationVersion
+        )
+        let keyCode = defaults.integer(forKey: Keys.translationHotkeyKeyCode)
+        let modifiers = defaults.integer(
+            forKey: Keys.translationHotkeyModifiers
+        )
+        guard TranslationShortcut.shouldMigratePreviousDefault(
+            migrationVersion: migrationVersion,
+            keyCode: keyCode,
+            modifiers: modifiers
+        ) else {
+            return
+        }
+        defaults.set(
+            TranslationShortcut.defaultKeyCode,
+            forKey: Keys.translationHotkeyKeyCode
+        )
+        defaults.set(
+            TranslationShortcut.defaultModifiers,
+            forKey: Keys.translationHotkeyModifiers
+        )
+        defaults.set(
+            1,
+            forKey: Keys.translationHotkeyDefaultMigrationVersion
+        )
+    }
+
+    /// Move only shipped explanation defaults to the current global shortcut.
+    /// All other user choices remain intact.
     private static func migrateExplanationShortcutDefaultIfNeeded(defaults: UserDefaults) {
         let migrationVersion = defaults.integer(forKey: Keys.explanationHotkeyDefaultMigrationVersion)
         let keyCode = defaults.integer(forKey: Keys.explanationHotkeyKeyCode)
@@ -405,7 +449,7 @@ final class Settings {
         }
         defaults.set(ExplanationShortcut.defaultKeyCode, forKey: Keys.explanationHotkeyKeyCode)
         defaults.set(ExplanationShortcut.defaultModifiers, forKey: Keys.explanationHotkeyModifiers)
-        defaults.set(1, forKey: Keys.explanationHotkeyDefaultMigrationVersion)
+        defaults.set(ExplanationShortcut.migrationVersion, forKey: Keys.explanationHotkeyDefaultMigrationVersion)
     }
 
     static func shouldMigrateExplanationShortcutDefault(
@@ -413,12 +457,12 @@ final class Settings {
         keyCode: Int,
         modifiers: Int
     ) -> Bool {
-        guard migrationVersion < 1 else { return false }
-        guard keyCode == ExplanationShortcut.previousDefaultKeyCode,
-              modifiers == ExplanationShortcut.previousDefaultModifiers else {
+        guard migrationVersion < ExplanationShortcut.migrationVersion else {
             return false
         }
-        return true
+        return ExplanationShortcut.shippedDefaults.contains {
+            keyCode == $0.keyCode && modifiers == $0.modifiers
+        }
     }
 
     func doubaoTranslationAPIKey() -> String? {

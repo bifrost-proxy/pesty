@@ -3,6 +3,18 @@ import SwiftUI
 import Carbon.HIToolbox
 import Darwin
 
+private enum GlobalAssistantAction {
+    case translation
+    case explanation
+
+    var popoverKind: AssistantPopoverKind {
+        switch self {
+        case .translation: return .translation
+        case .explanation: return .explanation
+        }
+    }
+}
+
 @MainActor
 final class AppController: NSObject, NSApplicationDelegate {
     static let shared = AppController()
@@ -19,6 +31,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var languageObserver: NSObjectProtocol?
     private var updateObserver: NSObjectProtocol?
     private var presentedUpdateError: String?
+    private var pendingGlobalTranslationCaptureID: UUID?
 
     private(set) var previousApp: NSRunningApplication?
     private(set) var lastActiveApp: NSRunningApplication?
@@ -49,7 +62,14 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
 
         HotKeyCenter.shared.onTrigger = { [weak self] in self?.toggleBar() }
+        HotKeyCenter.shared.onTranslationTrigger = { [weak self] in
+            self?.handleGlobalTranslationShortcut()
+        }
+        HotKeyCenter.shared.onExplanationTrigger = { [weak self] in
+            self?.handleGlobalExplanationShortcut()
+        }
         HotKeyCenter.shared.start()
+        SelectionGestureTracker.shared.start()
         startKeyMonitor()
 
         updateStatusItemVisibility()
@@ -172,6 +192,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 #if !MAS
         AccessibilitySettingsGuideController.shared.dismiss()
 #endif
+        SelectionGestureTracker.shared.stop()
         store.saveNow()
         stopKeyMonitor()
     }
@@ -567,6 +588,265 @@ final class AppController: NSObject, NSApplicationDelegate {
             }
         }
     }
+
+    private func handleGlobalTranslationShortcut() {
+        handleGlobalAssistantShortcut(.translation)
+    }
+
+    private func handleGlobalExplanationShortcut() {
+        handleGlobalAssistantShortcut(.explanation)
+    }
+
+    private func handleGlobalAssistantShortcut(
+        _ action: GlobalAssistantAction
+    ) {
+        if barController?.window?.isVisible == true {
+            switch action {
+            case .translation:
+                toggleTranslationBoard()
+            case .explanation:
+                toggleExplanationBoard()
+            }
+            return
+        }
+        if pendingGlobalTranslationCaptureID != nil {
+            pendingGlobalTranslationCaptureID = nil
+            return
+        }
+        if AssistantPopoverController.shared.isScreenAnchored {
+            switch action {
+            case .translation where TranslationCenter.shared.isPresented:
+                TranslationCenter.shared.dismiss()
+                return
+            case .explanation where ExplanationCenter.shared.isPresented:
+                ExplanationCenter.shared.dismiss()
+                return
+            default:
+                break
+            }
+        }
+
+        TranslationCenter.shared.dismiss()
+        ExplanationCenter.shared.dismiss()
+        ClipPreviewWindowController.shared.dismiss()
+
+        #if MAS
+        NSSound.beep()
+        #else
+        let sourceApplication = NSWorkspace.shared.frontmostApplication
+        switch SelectedTextCaptureService.capture(in: sourceApplication) {
+        case .success(let context):
+            previousApp = sourceApplication
+            previousFocusedElement = sourceApplication.flatMap {
+                PasteService.captureFocusedElement(in: $0)
+            }
+            presentGlobalAssistant(
+                action,
+                text: context.text,
+                anchorRect: context.screenRect
+            )
+        case .failure(let failure):
+            let anchorPoint = selectionAnchorPoint(
+                for: sourceApplication
+            )
+            switch failure {
+            case .noSelection, .selectionLocationUnavailable:
+                beginCopiedSelectionFallback(
+                    action: action,
+                    from: sourceApplication,
+                    anchorPoint: anchorPoint
+                )
+            case .accessibilityPermissionRequired, .secureText:
+                presentGlobalAssistantFailure(
+                    action: action,
+                    failure,
+                    anchorPoint: anchorPoint
+                )
+            }
+        }
+        #endif
+    }
+
+    #if !MAS
+    private func beginCopiedSelectionFallback(
+        action: GlobalAssistantAction,
+        from sourceApplication: NSRunningApplication?,
+        anchorPoint: NSPoint
+    ) {
+        let requestID = UUID()
+        pendingGlobalTranslationCaptureID = requestID
+        let pasteboard = NSPasteboard.general
+        let originalSnapshot = PasteboardSnapshot(pasteboard: pasteboard)
+        let initialChangeCount = pasteboard.changeCount
+
+        monitor.stop()
+        PasteService.sendCommandC()
+        pollCopiedSelection(
+            requestID: requestID,
+            action: action,
+            sourceApplication: sourceApplication,
+            anchorPoint: anchorPoint,
+            pasteboard: pasteboard,
+            originalSnapshot: originalSnapshot,
+            initialChangeCount: initialChangeCount,
+            attemptsRemaining: 12
+        )
+    }
+
+    private func pollCopiedSelection(
+        requestID: UUID,
+        action: GlobalAssistantAction,
+        sourceApplication: NSRunningApplication?,
+        anchorPoint: NSPoint,
+        pasteboard: NSPasteboard,
+        originalSnapshot: PasteboardSnapshot,
+        initialChangeCount: Int,
+        attemptsRemaining: Int
+    ) {
+        let requestIsCurrent =
+            pendingGlobalTranslationCaptureID == requestID
+        if pasteboard.changeCount != initialChangeCount {
+            let copiedText = pasteboard.string(forType: .string)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let restoredChangeCount = originalSnapshot.restore(to: pasteboard)
+            monitor.suppressUntilChangeCount = restoredChangeCount
+            monitor.start()
+            if requestIsCurrent {
+                pendingGlobalTranslationCaptureID = nil
+                if let copiedText, !copiedText.isEmpty {
+                    previousApp = sourceApplication
+                    previousFocusedElement = sourceApplication.flatMap {
+                        PasteService.captureFocusedElement(in: $0)
+                    }
+                    presentGlobalAssistant(
+                        action,
+                        text: copiedText,
+                        anchorRect: selectionFallbackAnchorRect(
+                            at: anchorPoint
+                        )
+                    )
+                } else {
+                    presentGlobalAssistantFailure(
+                        action: action,
+                        .noSelection,
+                        anchorPoint: anchorPoint
+                    )
+                }
+            }
+            return
+        }
+
+        guard attemptsRemaining > 0, requestIsCurrent else {
+            if !requestIsCurrent {
+                let restoredChangeCount = originalSnapshot.restore(
+                    to: pasteboard
+                )
+                monitor.suppressUntilChangeCount = restoredChangeCount
+            }
+            monitor.start()
+            if requestIsCurrent {
+                pendingGlobalTranslationCaptureID = nil
+                presentGlobalAssistantFailure(
+                    action: action,
+                    .noSelection,
+                    anchorPoint: anchorPoint
+                )
+            }
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) {
+            self.pollCopiedSelection(
+                requestID: requestID,
+                action: action,
+                sourceApplication: sourceApplication,
+                anchorPoint: anchorPoint,
+                pasteboard: pasteboard,
+                originalSnapshot: originalSnapshot,
+                initialChangeCount: initialChangeCount,
+                attemptsRemaining: attemptsRemaining - 1
+            )
+        }
+    }
+
+    private func presentGlobalAssistant(
+        _ action: GlobalAssistantAction,
+        text: String,
+        anchorRect: NSRect
+    ) {
+        switch action {
+        case .translation:
+            TranslationCenter.shared.present(text: text)
+        case .explanation:
+            ExplanationCenter.shared.present(text: text)
+        }
+        AssistantPopoverController.shared.present(
+            kind: action.popoverKind,
+            anchor: .screenRect(anchorRect)
+        )
+    }
+
+    private func presentGlobalAssistantFailure(
+        action: GlobalAssistantAction,
+        _ failure: SelectedTextCaptureFailure,
+        anchorPoint: NSPoint
+    ) {
+        let message = globalAssistantFailureMessage(
+            failure,
+            action: action
+        )
+        switch action {
+        case .translation:
+            TranslationCenter.shared.presentUnavailable(message)
+        case .explanation:
+            ExplanationCenter.shared.presentUnavailable(message)
+        }
+        AssistantPopoverController.shared.present(
+            kind: action.popoverKind,
+            anchor: .screenRect(
+                selectionFallbackAnchorRect(at: anchorPoint)
+            )
+        )
+    }
+
+    private func globalAssistantFailureMessage(
+        _ failure: SelectedTextCaptureFailure,
+        action: GlobalAssistantAction
+    ) -> String {
+        switch (failure, action) {
+        case (.accessibilityPermissionRequired, _):
+            return L10n.globalTranslationAccessibilityRequired
+        case (.noSelection, .translation),
+             (.selectionLocationUnavailable, .translation):
+            return L10n.selectTextToTranslate
+        case (.noSelection, .explanation),
+             (.selectionLocationUnavailable, .explanation):
+            return L10n.selectTextToExplain
+        case (.secureText, .translation):
+            return L10n.secureTextCannotBeTranslated
+        case (.secureText, .explanation):
+            return L10n.secureTextCannotBeExplained
+        }
+    }
+
+    private func selectionAnchorPoint(
+        for sourceApplication: NSRunningApplication?
+    ) -> NSPoint {
+        SelectionGestureTracker.shared.bestAnchorPoint(
+            for: sourceApplication?.bundleIdentifier
+        ) ?? NSEvent.mouseLocation
+    }
+
+    private func selectionFallbackAnchorRect(
+        at point: NSPoint
+    ) -> NSRect {
+        NSRect(
+            x: point.x - 1,
+            y: point.y - 1,
+            width: 2,
+            height: 2
+        )
+    }
+    #endif
 
     func showTranslationBoard(for item: ClipItem) {
         ExplanationCenter.shared.dismiss()

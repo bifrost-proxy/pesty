@@ -6,9 +6,19 @@ final class HotKeyCenter {
     static let shared = HotKeyCenter()
 
     var onTrigger: (() -> Void)?
+    var onTranslationTrigger: (() -> Void)?
+    var onExplanationTrigger: (() -> Void)?
 
-    private var hotKeyRef: EventHotKeyRef?
+    private enum HotKeyID: UInt32 {
+        case clipboardBar = 1
+        case translation = 2
+        case explanation = 3
+    }
+
+    private var hotKeyRefs: [UInt32: EventHotKeyRef] = [:]
     private var handlerRef: EventHandlerRef?
+    private var translationRegistrationSuspended = false
+    private var explanationRegistrationSuspended = false
     private let signature: OSType = 0x50535459
 
     private init() {}
@@ -22,25 +32,124 @@ final class HotKeyCenter {
         guard handlerRef == nil else { return }
         var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
                                  eventKind: OSType(kEventHotKeyPressed))
-        InstallEventHandler(GetApplicationEventTarget(), { _, _, _ -> OSStatus in
-            DispatchQueue.main.async { HotKeyCenter.shared.onTrigger?() }
+        InstallEventHandler(GetApplicationEventTarget(), { _, event, _ -> OSStatus in
+            guard let event else { return OSStatus(eventNotHandledErr) }
+            var hotKeyID = EventHotKeyID()
+            let status = GetEventParameter(
+                event,
+                EventParamName(kEventParamDirectObject),
+                EventParamType(typeEventHotKeyID),
+                nil,
+                MemoryLayout<EventHotKeyID>.size,
+                nil,
+                &hotKeyID
+            )
+            guard status == noErr,
+                  hotKeyID.signature == HotKeyCenter.shared.signature else {
+                return OSStatus(eventNotHandledErr)
+            }
+            DispatchQueue.main.async {
+                HotKeyCenter.shared.handle(id: hotKeyID.id)
+            }
             return noErr
         }, 1, &spec, nil, &handlerRef)
     }
 
     func reload() {
-        unregister()
-        let keyCode = UInt32(Settings.shared.hotkeyKeyCode)
-        let modifiers = UInt32(Settings.shared.hotkeyModifiers)
-        guard keyCode != 0 else { return }
-        let id = EventHotKeyID(signature: signature, id: 1)
-        var ref: EventHotKeyRef?
-        let status = RegisterEventHotKey(keyCode, modifiers, id, GetApplicationEventTarget(), 0, &ref)
-        if status == noErr { hotKeyRef = ref }
+        unregisterAll()
+        register(
+            id: .clipboardBar,
+            keyCode: Settings.shared.hotkeyKeyCode,
+            modifiers: Settings.shared.hotkeyModifiers
+        )
+        if !translationRegistrationSuspended {
+            register(
+                id: .translation,
+                keyCode: Settings.shared.translationHotkeyKeyCode,
+                modifiers: Settings.shared.translationHotkeyModifiers
+            )
+        }
+        if !explanationRegistrationSuspended {
+            register(
+                id: .explanation,
+                keyCode: Settings.shared.explanationHotkeyKeyCode,
+                modifiers: Settings.shared.explanationHotkeyModifiers
+            )
+        }
     }
 
-    private func unregister() {
-        if let ref = hotKeyRef { UnregisterEventHotKey(ref); hotKeyRef = nil }
+    func suspendTranslationRegistration() {
+        translationRegistrationSuspended = true
+        unregister(id: .translation)
+    }
+
+    func resumeTranslationRegistration() {
+        translationRegistrationSuspended = false
+        reload()
+    }
+
+    func suspendExplanationRegistration() {
+        explanationRegistrationSuspended = true
+        unregister(id: .explanation)
+    }
+
+    func resumeExplanationRegistration() {
+        explanationRegistrationSuspended = false
+        reload()
+    }
+
+    private func register(
+        id: HotKeyID,
+        keyCode: Int,
+        modifiers: Int
+    ) {
+        guard keyCode >= 0 else { return }
+        let eventID = EventHotKeyID(signature: signature, id: id.rawValue)
+        var ref: EventHotKeyRef?
+        let status = RegisterEventHotKey(
+            UInt32(keyCode),
+            UInt32(modifiers),
+            eventID,
+            GetApplicationEventTarget(),
+            0,
+            &ref
+        )
+        if status == noErr, let ref {
+            hotKeyRefs[id.rawValue] = ref
+        } else {
+            NSLog(
+                "Pesty global hotkey registration failed id=%u status=%d",
+                id.rawValue,
+                status
+            )
+        }
+    }
+
+    private func unregister(id: HotKeyID) {
+        guard let ref = hotKeyRefs.removeValue(forKey: id.rawValue) else {
+            return
+        }
+        UnregisterEventHotKey(ref)
+    }
+
+    private func unregisterAll() {
+        for ref in hotKeyRefs.values {
+            UnregisterEventHotKey(ref)
+        }
+        hotKeyRefs.removeAll()
+    }
+
+    private func handle(id: UInt32) {
+        switch HotKeyID(rawValue: id) {
+        case .clipboardBar:
+            onTrigger?()
+        case .translation:
+            onTranslationTrigger?()
+        case .explanation:
+            onExplanationTrigger?()
+        case nil:
+            break
+        }
     }
 
     static func describe(keyCode: Int, modifiers: Int) -> String {

@@ -105,11 +105,40 @@ final class TranslationCenter {
     }
 
     func present(for item: ClipItem?) {
+        itemID = item?.id
+        present(text: item?.text, preservesItemID: true)
+    }
+
+    func present(text: String?) {
+        itemID = nil
+        present(text: text, preservesItemID: false)
+    }
+
+    func presentUnavailable(_ message: String) {
         cancelAppleTasks()
         appleTranslationRequest = nil
         activeRequestID = nil
-        itemID = item?.id
-        guard let text = item?.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+        itemID = nil
+        isPresented = true
+        sourceText = ""
+        translatedText = ""
+        detectedSourceLanguage = nil
+        providerName = ""
+        failureDiagnostic = nil
+        status = .unavailable(message)
+    }
+
+    private func present(
+        text: String?,
+        preservesItemID: Bool
+    ) {
+        cancelAppleTasks()
+        appleTranslationRequest = nil
+        activeRequestID = nil
+        if !preservesItemID {
+            itemID = nil
+        }
+        guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines),
               !text.isEmpty else {
             isPresented = true
             sourceText = ""

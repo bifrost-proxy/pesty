@@ -236,6 +236,7 @@ enum AutomatedUITestRunner {
         let success: Bool
         let shortcutOpenedBoard: Bool
         let shortcutClosedBoard: Bool
+        let shortcutClosedPopoverWindow: Bool
         let boardRendered: Bool
         let previewContentRendered: Bool
         let popoverPresented: Bool
@@ -249,6 +250,30 @@ enum AutomatedUITestRunner {
         let languageSwapPersisted: Bool
         let resultCopied: Bool
         let translationShortcut: String
+    }
+
+    private struct GlobalTranslationBoardResult: Codable {
+        let phase: String
+        let success: Bool
+        let boardRendered: Bool
+        let previewContentRendered: Bool
+        let popoverPresented: Bool
+        let screenAnchorUsed: Bool
+        let anchorPointsToSelection: Bool
+        let popoverAvoidsSelection: Bool
+        let translationShortcut: String
+    }
+
+    private struct GlobalExplanationBoardResult: Codable {
+        let phase: String
+        let success: Bool
+        let boardRendered: Bool
+        let previewContentRendered: Bool
+        let popoverPresented: Bool
+        let screenAnchorUsed: Bool
+        let anchorPointsToSelection: Bool
+        let popoverAvoidsSelection: Bool
+        let explanationShortcut: String
     }
 
     private struct TranslationSettingsResult: Codable {
@@ -275,6 +300,7 @@ enum AutomatedUITestRunner {
         let success: Bool
         let shortcutOpenedBoard: Bool
         let shortcutClosedBoard: Bool
+        let shortcutClosedPopoverWindow: Bool
         let boardRendered: Bool
         let previewContentRendered: Bool
         let popoverPresented: Bool
@@ -449,6 +475,14 @@ enum AutomatedUITestRunner {
         }
         if phase == "translation-board" {
             runTranslationBoardTest(controller: controller)
+            return
+        }
+        if phase == "global-translation-board" {
+            runGlobalTranslationBoardTest()
+            return
+        }
+        if phase == "global-explanation-board" {
+            runGlobalExplanationBoardTest()
             return
         }
         if phase == "explanation-board" {
@@ -653,7 +687,7 @@ enum AutomatedUITestRunner {
             let translationEvent = makeKeyEvent(
                 keyCode: UInt16(TranslationShortcut.defaultKeyCode),
                 characters: "t",
-                modifierFlags: [.command]
+                modifierFlags: [.command, .shift]
             )
             let shortcutWasConsumed = translationEvent.map {
                 controller.handleKey($0) == nil
@@ -664,11 +698,13 @@ enum AutomatedUITestRunner {
             let secondTranslationEvent = makeKeyEvent(
                 keyCode: UInt16(TranslationShortcut.defaultKeyCode),
                 characters: "t",
-                modifierFlags: [.command]
+                modifierFlags: [.command, .shift]
             )
             let shortcutClosedBoard = (secondTranslationEvent.map {
                 controller.handleKey($0) == nil
             } ?? false) && !TranslationCenter.shared.isPresented
+            let shortcutClosedPopoverWindow =
+                !AssistantPopoverController.shared.isWindowVisible
 
             controller.store.selectedID = item.id
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
@@ -755,6 +791,7 @@ enum AutomatedUITestRunner {
                             phase: "translation-board",
                             success: shortcutOpenedBoard
                                 && shortcutClosedBoard
+                                && shortcutClosedPopoverWindow
                                 && selectedSecondCard
                                 && processingIndicatorRendered
                                 && processingIndicatorCleared
@@ -769,6 +806,8 @@ enum AutomatedUITestRunner {
                                 && resultCopied,
                             shortcutOpenedBoard: shortcutOpenedBoard,
                             shortcutClosedBoard: shortcutClosedBoard,
+                            shortcutClosedPopoverWindow:
+                                shortcutClosedPopoverWindow,
                             boardRendered: boardRendered,
                             previewContentRendered: previewContentRendered,
                             popoverPresented: popoverPresented,
@@ -811,6 +850,130 @@ enum AutomatedUITestRunner {
                     }
                 }
             }
+        }
+    }
+
+    private static func runGlobalTranslationBoardTest() {
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else {
+            exit(EXIT_FAILURE)
+        }
+        let visibleFrame = screen.visibleFrame
+        let selectionRect = NSRect(
+            x: visibleFrame.midX - 90,
+            y: visibleFrame.midY - 12,
+            width: 180,
+            height: 24
+        )
+        AutomatedUITestProbe.reset()
+        TranslationCenter.shared.showAutomatedPreview(
+            source: "Pesty synthetic globally selected text",
+            translation: "Pesty synthetic global translation result."
+        )
+        AssistantPopoverController.shared.present(
+            kind: .translation,
+            anchor: .screenRect(selectionRect)
+        )
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            let popoverFrame = AssistantPopoverController.shared.screenFrame
+            let anchorFrame =
+                AssistantPopoverController.shared.screenAnchorFrame
+            let anchorPointsToSelection = anchorFrame.map {
+                abs($0.midX - selectionRect.midX) <= 2
+                    && (
+                        abs($0.midY - selectionRect.maxY) <= 2
+                        || abs($0.midY - selectionRect.minY) <= 2
+                    )
+            } ?? false
+            let popoverAvoidsSelection = popoverFrame.map {
+                !$0.intersects(selectionRect)
+            } ?? false
+            let result = GlobalTranslationBoardResult(
+                phase: "global-translation-board",
+                success: AutomatedUITestProbe.translationBoardRendered
+                    && AutomatedUITestProbe.translationPreviewRendered
+                    && AssistantPopoverController.shared.isPresented
+                    && AssistantPopoverController.shared.isScreenAnchored
+                    && anchorPointsToSelection
+                    && popoverAvoidsSelection,
+                boardRendered:
+                    AutomatedUITestProbe.translationBoardRendered,
+                previewContentRendered:
+                    AutomatedUITestProbe.translationPreviewRendered,
+                popoverPresented:
+                    AssistantPopoverController.shared.isPresented,
+                screenAnchorUsed:
+                    AssistantPopoverController.shared.isScreenAnchored,
+                anchorPointsToSelection: anchorPointsToSelection,
+                popoverAvoidsSelection: popoverAvoidsSelection,
+                translationShortcut:
+                    Settings.shared.translationHotkeyDisplay
+            )
+            writeGlobalTranslationBoard(result)
+            TranslationCenter.shared.dismiss()
+            exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+        }
+    }
+
+    private static func runGlobalExplanationBoardTest() {
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else {
+            exit(EXIT_FAILURE)
+        }
+        let visibleFrame = screen.visibleFrame
+        let selectionRect = NSRect(
+            x: visibleFrame.midX - 110,
+            y: visibleFrame.midY - 12,
+            width: 220,
+            height: 24
+        )
+        AutomatedUITestProbe.reset()
+        ExplanationCenter.shared.showAutomatedPreview(
+            source: "Pesty synthetic globally selected text",
+            explanation: "**Synthetic explanation.**"
+        )
+        AssistantPopoverController.shared.present(
+            kind: .explanation,
+            anchor: .screenRect(selectionRect)
+        )
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            let popoverFrame = AssistantPopoverController.shared.screenFrame
+            let anchorFrame =
+                AssistantPopoverController.shared.screenAnchorFrame
+            let anchorPointsToSelection = anchorFrame.map {
+                abs($0.midX - selectionRect.midX) <= 2
+                    && (
+                        abs($0.midY - selectionRect.maxY) <= 2
+                        || abs($0.midY - selectionRect.minY) <= 2
+                    )
+            } ?? false
+            let popoverAvoidsSelection = popoverFrame.map {
+                !$0.intersects(selectionRect)
+            } ?? false
+            let result = GlobalExplanationBoardResult(
+                phase: "global-explanation-board",
+                success: AutomatedUITestProbe.explanationBoardRendered
+                    && AutomatedUITestProbe.explanationPreviewRendered
+                    && AssistantPopoverController.shared.isPresented
+                    && AssistantPopoverController.shared.isScreenAnchored
+                    && anchorPointsToSelection
+                    && popoverAvoidsSelection,
+                boardRendered:
+                    AutomatedUITestProbe.explanationBoardRendered,
+                previewContentRendered:
+                    AutomatedUITestProbe.explanationPreviewRendered,
+                popoverPresented:
+                    AssistantPopoverController.shared.isPresented,
+                screenAnchorUsed:
+                    AssistantPopoverController.shared.isScreenAnchored,
+                anchorPointsToSelection: anchorPointsToSelection,
+                popoverAvoidsSelection: popoverAvoidsSelection,
+                explanationShortcut:
+                    Settings.shared.explanationHotkeyDisplay
+            )
+            writeGlobalExplanationBoard(result)
+            ExplanationCenter.shared.dismiss()
+            exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
         }
     }
 
@@ -1415,7 +1578,7 @@ enum AutomatedUITestRunner {
             let explanationEvent = makeKeyEvent(
                 keyCode: UInt16(ExplanationShortcut.defaultKeyCode),
                 characters: "d",
-                modifierFlags: [.command]
+                modifierFlags: [.command, .shift]
             )
             let shortcutOpenedBoard = (explanationEvent.map {
                 controller.handleKey($0) == nil
@@ -1424,11 +1587,13 @@ enum AutomatedUITestRunner {
             let secondExplanationEvent = makeKeyEvent(
                 keyCode: UInt16(ExplanationShortcut.defaultKeyCode),
                 characters: "d",
-                modifierFlags: [.command]
+                modifierFlags: [.command, .shift]
             )
             let shortcutClosedBoard = (secondExplanationEvent.map {
                 controller.handleKey($0) == nil
             } ?? false) && !ExplanationCenter.shared.isPresented
+            let shortcutClosedPopoverWindow =
+                !AssistantPopoverController.shared.isWindowVisible
 
             controller.store.selectedID = item.id
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
@@ -1482,6 +1647,7 @@ enum AutomatedUITestRunner {
                             phase: "explanation-board",
                             success: shortcutOpenedBoard
                                 && shortcutClosedBoard
+                                && shortcutClosedPopoverWindow
                                 && selectedSecondCard
                                 && processingIndicatorRendered
                                 && processingIndicatorCleared
@@ -1492,6 +1658,8 @@ enum AutomatedUITestRunner {
                                 && resultCopied,
                             shortcutOpenedBoard: shortcutOpenedBoard,
                             shortcutClosedBoard: shortcutClosedBoard,
+                            shortcutClosedPopoverWindow:
+                                shortcutClosedPopoverWindow,
                             boardRendered: boardRendered,
                             previewContentRendered: previewContentRendered,
                             popoverPresented: popoverPresented,
@@ -3352,6 +3520,32 @@ enum AutomatedUITestRunner {
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(result) else { return }
         FileHandle.standardOutput.write(Data("AUTOMATED_TRANSLATION_BOARD_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeGlobalTranslationBoard(
+        _ result: GlobalTranslationBoardResult
+    ) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(
+            Data("AUTOMATED_GLOBAL_TRANSLATION_BOARD_RESULT ".utf8)
+        )
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeGlobalExplanationBoard(
+        _ result: GlobalExplanationBoardResult
+    ) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(
+            Data("AUTOMATED_GLOBAL_EXPLANATION_BOARD_RESULT ".utf8)
+        )
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data("\n".utf8))
     }

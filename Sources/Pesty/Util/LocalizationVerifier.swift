@@ -88,7 +88,18 @@ enum LocalizationVerifier {
                     L10n.swapTranslationLanguagesShortcut,
                     "Swap source and target languages (T)"
                 ),
-                (L10n.translationShortcutDescription, "Works while the Pesty panel is open. Default: ⌘T."),
+                (
+                    L10n.translationShortcutDescription,
+                    "Works globally in any app that exposes its text selection. Default: ⇧⌘T."
+                ),
+                (
+                    L10n.selectTextToTranslate,
+                    "Select some text, then use the global translation shortcut."
+                ),
+                (
+                    L10n.selectTextToExplain,
+                    "Select some text, then use the global explanation shortcut."
+                ),
                 (L10n.doubaoTranslation, "Doubao (Volcengine Ark)"),
                 (
                     L10n.credentialStoredInKeychain,
@@ -128,7 +139,7 @@ enum LocalizationVerifier {
                 (L10n.usageTipTranslation("⌘T", "⌘D"), "Select a text card, then press ⌘T to translate or ⌘D to explain."),
                 (L10n.usageTipPinboard, "Right-click a card to save it to a new or existing Pinboard—for fields you reuse, such as UID."),
                 (L10n.explanationShortcut, "Explanation shortcut"),
-                (L10n.explanationShortcutDescription, "Explains the selected text while the Pesty panel is open. Requires a configured AI model. Default: ⌘D."),
+                (L10n.explanationShortcutDescription, "Works globally with selected text in any app. Requires a configured AI model. Default: ⇧⌘D."),
                 (L10n.explanationNeedsConfiguration, "Configure an AI model before using explanation. Add a Doubao model or an AI provider in Translation Settings."),
             ]
         }
@@ -207,7 +218,18 @@ enum LocalizationVerifier {
                     L10n.swapTranslationLanguagesShortcut,
                     "交换原文和目标语言（T）"
                 ),
-                (L10n.translationShortcutDescription, "在 Pesty 面板打开时生效。默认：⌘T。"),
+                (
+                    L10n.translationShortcutDescription,
+                    "可在支持读取文本选区的任意应用中全局使用。默认：⇧⌘T。"
+                ),
+                (
+                    L10n.selectTextToTranslate,
+                    "请先选中需要翻译的文字，然后使用全局翻译快捷键。"
+                ),
+                (
+                    L10n.selectTextToExplain,
+                    "请先选中需要解释的文字，然后使用全局解释快捷键。"
+                ),
                 (L10n.doubaoTranslation, "豆包（火山方舟）"),
                 (
                     L10n.credentialStoredInKeychain,
@@ -247,7 +269,7 @@ enum LocalizationVerifier {
                 (L10n.usageTipTranslation("⌘T", "⌘D"), "选中文本卡片后，按 ⌘T 翻译、按 ⌘D 解释。"),
                 (L10n.usageTipPinboard, "右键卡片可新建或保存到 Pinboard，适合归类 UID 等常用字段。"),
                 (L10n.explanationShortcut, "解释快捷键"),
-                (L10n.explanationShortcutDescription, "在 Pesty 面板打开时解释选中的文本；需要配置大模型。默认：⌘D。"),
+                (L10n.explanationShortcutDescription, "可在任意应用中全局解释选中文字；需要配置大模型。默认：⇧⌘D。"),
                 (L10n.explanationNeedsConfiguration, "使用解释前请先配置大模型：可配置豆包模型，或在“翻译设置”中添加 AI 服务商。"),
             ]
         }
