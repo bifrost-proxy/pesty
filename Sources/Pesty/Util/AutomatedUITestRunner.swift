@@ -250,6 +250,13 @@ enum AutomatedUITestRunner {
         let pasteShortcutWorked: Bool
         let cutShortcutWorked: Bool
         let commandWClosedWindow: Bool
+        let apiKeyCopyMarkedConcealed: Bool
+        let apiKeyExcludedFromHistory: Bool
+        let apiKeyPasteMarkedConcealed: Bool
+        let apiKeyPasteExcludedFromHistory: Bool
+        let modelIDCopyWorked: Bool
+        let modelIDPasteWorked: Bool
+        let pasteboardRestored: Bool
     }
 
     private struct ExplanationBoardResult: Codable {
@@ -743,73 +750,39 @@ enum AutomatedUITestRunner {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
             let settingsWindow = visibleContentWindow()
             let settingsWindowPresented = settingsWindow != nil
-            let field = descendantViews(of: settingsWindow?.contentView)
+            let fields = descendantViews(of: settingsWindow?.contentView)
                 .compactMap { $0 as? NSTextField }
-                .first(where: \.isEditable)
-            let sourceText = "pesty-settings-edit-source"
-            let pasteText = "pesty-settings-edit-paste"
-            field?.stringValue = sourceText
+                .filter(\.isEditable)
+            let apiKeyField = fields.first(where: {
+                $0 is NSSecureTextField
+            })
+            let modelIDField = fields.first(where: {
+                !($0 is NSSecureTextField)
+            })
+            let apiKeySource = "pesty-settings-api-key"
+            let apiKeyPaste = "pesty-settings-api-key-paste"
+            let modelIDSource = "pesty-settings-model-id"
+            let modelIDPaste = "pesty-settings-model-id-paste"
             settingsWindow?.makeKeyAndOrderFront(nil)
-            if let field {
-                settingsWindow?.makeFirstResponder(field)
-            }
-            field?.selectText(nil)
-            let editor = field?.currentEditor() as? NSTextView
-            editor?.setSelectedRange(
-                NSRange(location: sourceText.utf16.count, length: 0)
+
+            let apiKeyEditing = verifySettingsFieldEditing(
+                field: apiKeyField,
+                sourceText: apiKeySource,
+                pasteText: apiKeyPaste,
+                window: settingsWindow,
+                controller: controller,
+                shouldPollClipboardMonitor: true
             )
-
-            let selectAllHandled = makeKeyEvent(
-                keyCode: UInt16(kVK_ANSI_A),
-                characters: "a",
-                modifierFlags: [.command],
-                windowNumber: settingsWindow?.windowNumber ?? 0
-            ).map {
-                controller.handleKey($0) == nil
-            } ?? false
-            let selectAllShortcutWorked = selectAllHandled
-                && editor?.selectedRange()
-                    == NSRange(location: 0, length: sourceText.utf16.count)
-
-            let copyHandled = makeKeyEvent(
-                keyCode: UInt16(kVK_ANSI_C),
-                characters: "c",
-                modifierFlags: [.command],
-                windowNumber: settingsWindow?.windowNumber ?? 0
-            ).map {
-                controller.handleKey($0) == nil
-            } ?? false
-            let copyShortcutWorked = copyHandled
-                && NSPasteboard.general.string(forType: .string) == sourceText
-
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(pasteText, forType: .string)
-            let pasteHandled = makeKeyEvent(
-                keyCode: UInt16(kVK_ANSI_V),
-                characters: "v",
-                modifierFlags: [.command],
-                windowNumber: settingsWindow?.windowNumber ?? 0
-            ).map {
-                controller.handleKey($0) == nil
-            } ?? false
-            let pasteShortcutWorked = pasteHandled
-                && field?.stringValue == pasteText
-
-            editor?.setSelectedRange(
-                NSRange(location: 0, length: pasteText.utf16.count)
+            let modelIDEditing = verifySettingsFieldEditing(
+                field: modelIDField,
+                sourceText: modelIDSource,
+                pasteText: modelIDPaste,
+                window: settingsWindow,
+                controller: controller,
+                shouldPollClipboardMonitor: false
             )
-            let cutHandled = makeKeyEvent(
-                keyCode: UInt16(kVK_ANSI_X),
-                characters: "x",
-                modifierFlags: [.command],
-                windowNumber: settingsWindow?.windowNumber ?? 0
-            ).map {
-                controller.handleKey($0) == nil
-            } ?? false
-            let cutShortcutWorked = cutHandled
-                && field?.stringValue.isEmpty == true
-                && NSPasteboard.general.string(forType: .string) == pasteText
             restore(pasteboardItems, to: .general)
+            let pasteboardRestored = snapshot(.general) == pasteboardItems
 
             captureKeyWindowScreenshotIfRequested()
             let closeHandled = makeKeyEvent(
@@ -825,22 +798,181 @@ enum AutomatedUITestRunner {
             let result = TranslationSettingsResult(
                 phase: "translation-settings",
                 success: settingsWindowPresented
-                    && selectAllShortcutWorked
-                    && copyShortcutWorked
-                    && pasteShortcutWorked
-                    && cutShortcutWorked
-                    && commandWClosedWindow,
+                    && apiKeyEditing.selectAll
+                    && apiKeyEditing.copy
+                    && apiKeyEditing.paste
+                    && apiKeyEditing.copyMarkedConcealed
+                    && apiKeyEditing.excludedFromHistory
+                    && apiKeyEditing.pasteMarkedConcealed
+                    && apiKeyEditing.pasteExcludedFromHistory
+                    && modelIDEditing.copy
+                    && modelIDEditing.paste
+                    && modelIDEditing.cut
+                    && commandWClosedWindow
+                    && pasteboardRestored,
                 settingsWindowPresented: settingsWindowPresented,
-                selectAllShortcutWorked: selectAllShortcutWorked,
-                copyShortcutWorked: copyShortcutWorked,
-                pasteShortcutWorked: pasteShortcutWorked,
-                cutShortcutWorked: cutShortcutWorked,
-                commandWClosedWindow: commandWClosedWindow
+                selectAllShortcutWorked: apiKeyEditing.selectAll,
+                copyShortcutWorked: apiKeyEditing.copy,
+                pasteShortcutWorked: apiKeyEditing.paste,
+                cutShortcutWorked: modelIDEditing.cut,
+                commandWClosedWindow: commandWClosedWindow,
+                apiKeyCopyMarkedConcealed:
+                    apiKeyEditing.copyMarkedConcealed,
+                apiKeyExcludedFromHistory:
+                    apiKeyEditing.excludedFromHistory,
+                apiKeyPasteMarkedConcealed:
+                    apiKeyEditing.pasteMarkedConcealed,
+                apiKeyPasteExcludedFromHistory:
+                    apiKeyEditing.pasteExcludedFromHistory,
+                modelIDCopyWorked: modelIDEditing.copy,
+                modelIDPasteWorked: modelIDEditing.paste,
+                pasteboardRestored: pasteboardRestored
             )
             writeTranslationSettings(result)
             settingsWindow?.orderOut(nil)
             exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
         }
+    }
+
+    private static func verifySettingsFieldEditing(
+        field: NSTextField?,
+        sourceText: String,
+        pasteText: String,
+        window: NSWindow?,
+        controller: AppController,
+        shouldPollClipboardMonitor: Bool
+    ) -> (
+        selectAll: Bool,
+        copy: Bool,
+        paste: Bool,
+        cut: Bool,
+        copyMarkedConcealed: Bool,
+        excludedFromHistory: Bool,
+        pasteMarkedConcealed: Bool,
+        pasteExcludedFromHistory: Bool
+    ) {
+        guard let field, let window else {
+            return (
+                false, false, false, false,
+                false, false, false, false
+            )
+        }
+        field.stringValue = sourceText
+        guard window.makeFirstResponder(field),
+              let editor = field.currentEditor() as? NSTextView else {
+            return (
+                false, false, false, false,
+                false, false, false, false
+            )
+        }
+        editor.setSelectedRange(
+            NSRange(location: sourceText.utf16.count, length: 0)
+        )
+
+        let selectAllHandled = performSettingsShortcut(
+            keyCode: UInt16(kVK_ANSI_A),
+            characters: "a",
+            window: window,
+            controller: controller
+        )
+        let selectAllWorked = selectAllHandled
+            && editor.selectedRange()
+                == NSRange(location: 0, length: sourceText.utf16.count)
+        let historyCountBeforeCopy = controller.store.history.count
+        let copyHandled = performSettingsShortcut(
+            keyCode: UInt16(kVK_ANSI_C),
+            characters: "c",
+            window: window,
+            controller: controller
+        )
+        let copyWorked = copyHandled
+            && NSPasteboard.general.string(forType: .string) == sourceText
+        let copyMarkedConcealed = !shouldPollClipboardMonitor
+            || NSPasteboard.general.types?.contains(
+                ClipboardMonitor.concealedPasteboardType
+            ) == true
+        if shouldPollClipboardMonitor {
+            controller.monitor.pollNowForAutomatedTest()
+        }
+        let excludedFromHistory = !shouldPollClipboardMonitor
+            || (
+                controller.store.history.count == historyCountBeforeCopy
+                && !controller.store.history.contains {
+                    $0.text == sourceText
+                }
+            )
+
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(pasteText, forType: .string)
+        editor.setSelectedRange(
+            NSRange(location: 0, length: editor.string.utf16.count)
+        )
+        let pasteHandled = performSettingsShortcut(
+            keyCode: UInt16(kVK_ANSI_V),
+            characters: "v",
+            window: window,
+            controller: controller
+        )
+        let editedText = field.currentEditor()?.string ?? field.stringValue
+        let pasteWorked = pasteHandled
+            && editedText == pasteText
+            && NSPasteboard.general.string(forType: .string) == pasteText
+        let pasteMarkedConcealed = !shouldPollClipboardMonitor
+            || NSPasteboard.general.types?.contains(
+                ClipboardMonitor.concealedPasteboardType
+            ) == true
+        if shouldPollClipboardMonitor {
+            controller.monitor.pollNowForAutomatedTest()
+        }
+        let pasteExcludedFromHistory = !shouldPollClipboardMonitor
+            || (
+                controller.store.history.count == historyCountBeforeCopy
+                && !controller.store.history.contains {
+                    $0.text == pasteText
+                }
+            )
+
+        editor.setSelectedRange(
+            NSRange(location: 0, length: pasteText.utf16.count)
+        )
+        let cutHandled = performSettingsShortcut(
+            keyCode: UInt16(kVK_ANSI_X),
+            characters: "x",
+            window: window,
+            controller: controller
+        )
+        let cutWorked = shouldPollClipboardMonitor
+            ? cutHandled && (field.currentEditor()?.string ?? field.stringValue)
+                == pasteText
+            : cutHandled
+                && (field.currentEditor()?.string ?? field.stringValue).isEmpty
+                && NSPasteboard.general.string(forType: .string) == pasteText
+        return (
+            selectAllWorked,
+            copyWorked,
+            pasteWorked,
+            cutWorked,
+            copyMarkedConcealed,
+            excludedFromHistory,
+            pasteMarkedConcealed,
+            pasteExcludedFromHistory
+        )
+    }
+
+    private static func performSettingsShortcut(
+        keyCode: UInt16,
+        characters: String,
+        window: NSWindow,
+        controller: AppController
+    ) -> Bool {
+        makeKeyEvent(
+            keyCode: keyCode,
+            characters: characters,
+            modifierFlags: [.command],
+            windowNumber: window.windowNumber
+        ).map {
+            controller.handleKey($0) == nil
+        } ?? false
     }
 
     private static func runPreviewTest(
