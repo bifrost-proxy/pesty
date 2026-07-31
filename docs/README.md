@@ -6,6 +6,7 @@ Pesty 不维护独立宣传站点。产品介绍、使用说明和项目文档�
 ## 用户文档
 
 - [使用指南](USER_GUIDE.md)
+- [翻译功能使用指南](TRANSLATION.md)
 - [常见问题与故障排查](SUPPORT.md)
 - [隐私说明](PRIVACY.md)
 
