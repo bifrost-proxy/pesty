@@ -1,3 +1,5 @@
+[中文文档](README.md) | [English Docs](en/README.md) | [English version](en/TRANSLATION.md)
+
 # Pesty 翻译功能使用指南
 
 Pesty 可以直接翻译任意应用中选中的文字，也可以翻译剪贴板历史中的文本，不需要先

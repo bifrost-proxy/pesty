@@ -1,3 +1,5 @@
+[中文文档](README.md) | [English Docs](en/README.md) | [English version](en/USER_GUIDE.md)
+
 # Pesty 使用指南
 
 Pesty 会自动跟随 macOS 系统外观切换亮色或暗色主题，无需单独配置。

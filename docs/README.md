@@ -1,3 +1,5 @@
+[中文文档](README.md) | [English Docs](en/README.md) | [中文 README](../README.md) | [English README](../README_EN.md)
+
 # Pesty 文档
 
 Pesty 不维护独立宣传站点。产品介绍、使用说明和项目文档均保存在本仓库中，

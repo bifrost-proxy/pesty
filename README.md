@@ -1,3 +1,5 @@
+[中文 README](README.md) | [English README](README_EN.md) | [中文文档](docs/README.md) | [English Docs](docs/en/README.md)
+
 # Pesty
 
 一款原生、轻量、开源的 macOS 剪贴板历史工具。

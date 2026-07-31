@@ -1,3 +1,5 @@
+[中文文档](README.md) | [English Docs](en/README.md) | [English version](en/SUPPORT.md)
+
 # Pesty 常见问题与故障排查
 
 ## 如何反馈问题
