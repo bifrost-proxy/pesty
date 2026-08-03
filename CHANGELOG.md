@@ -6,6 +6,26 @@ All notable changes to Pesty are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.6.21] - 2026-08-03
+
+### Fixed
+
+- Show the clipboard panel from its in-memory history immediately instead of
+  waiting for the complete local or iCloud snapshot to be read, decoded,
+  merged, and deduplicated.
+- Reconcile file-watcher updates on a background worker and retry safely when
+  clipboard data or retention settings change during the merge.
+- Avoid rebuilding the collection view when reconciliation produces no data
+  changes.
+
+### Performance
+
+- Added a deterministic panel regression that injects a 600-millisecond disk
+  reconciliation delay, requires the panel to appear within 300 milliseconds,
+  preserves a concurrently captured item, and rejects no-op UI refreshes.
+
+[1.6.21]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.6.21
+
 ## [1.6.20] - 2026-07-30
 
 ### Added

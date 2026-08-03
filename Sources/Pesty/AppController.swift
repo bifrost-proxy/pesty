@@ -428,7 +428,6 @@ final class AppController: NSObject, NSApplicationDelegate {
             }
             #endif
         }
-        store.reconcileFromDisk()
         store.searchText = ""
         store.source = .history
         store.selectFirst()
@@ -437,6 +436,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             barController = BarWindowController()
         }
         barController?.show()
+        store.reconcileFromDiskInBackground()
     }
 
     func hideBar(completion: (() -> Void)? = nil) {

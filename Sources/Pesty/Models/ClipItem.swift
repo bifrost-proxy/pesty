@@ -1,6 +1,6 @@
 import AppKit
 
-struct ClipItem: Identifiable, Codable, Equatable {
+struct ClipItem: Identifiable, Codable, Equatable, Sendable {
     let id: UUID
     var type: ClipType
     var text: String?

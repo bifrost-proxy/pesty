@@ -136,6 +136,17 @@ enum AutomatedUITestRunner {
         let elapsedMilliseconds: Int
     }
 
+    private struct PanelReconciliationResult: Codable {
+        let phase: String
+        let success: Bool
+        let showElapsedMilliseconds: Int
+        let maximumShowElapsedMilliseconds: Int
+        let windowVisibleImmediately: Bool
+        let memoryHistoryAvailableImmediately: Bool
+        let asynchronousMergeCompleted: Bool
+        let unchangedSnapshotPreservedRevision: Bool
+    }
+
     private struct MouseSelectionResult: Codable {
         let phase: String
         let success: Bool
@@ -428,6 +439,10 @@ enum AutomatedUITestRunner {
             runPerformanceTest(controller: controller, runID: runID)
             return
         }
+        if phase == "panel-reconciliation" {
+            runPanelReconciliationTest(controller: controller, runID: runID)
+            return
+        }
         if phase == "settings-record-count" {
             runSettingsRecordCountTest(controller: controller, runID: runID)
             return
@@ -591,6 +606,104 @@ enum AutomatedUITestRunner {
                 targetBundleID: targetBundleID
             ))
             exit(success ? EXIT_SUCCESS : EXIT_FAILURE)
+        }
+    }
+
+    private static func runPanelReconciliationTest(
+        controller: AppController,
+        runID: String
+    ) {
+        let memoryItem = ClipItem(
+            type: .text,
+            text: "pesty-panel-memory-\(runID)",
+            createdAt: Date()
+        )
+        let externalItem = ClipItem(
+            type: .text,
+            text: "pesty-panel-external-\(runID)",
+            createdAt: Date().addingTimeInterval(1)
+        )
+        let concurrentItem = ClipItem(
+            type: .text,
+            text: "pesty-panel-concurrent-\(runID)",
+            createdAt: Date().addingTimeInterval(0.5)
+        )
+        controller.monitor.stop()
+        controller.store.replaceHistoryForAutomatedPanelReconciliationTest(
+            [memoryItem]
+        )
+
+        guard let base = ClipboardStore.automatedTestBase else {
+            exit(EXIT_FAILURE)
+        }
+        let storeURL = base.appendingPathComponent("store.json")
+        do {
+            let data = try Data(contentsOf: storeURL)
+            var snapshot = try JSONDecoder().decode(
+                ClipboardStoreSnapshot.self,
+                from: data
+            )
+            snapshot.history.insert(externalItem, at: 0)
+            try JSONEncoder().encode(snapshot).write(
+                to: storeURL,
+                options: .atomic
+            )
+        } catch {
+            exit(EXIT_FAILURE)
+        }
+
+        let revisionBeforeShow = controller.store.stripContentRevision
+        setenv("PESTY_AUTOMATED_RECONCILIATION_DELAY_MS", "600", 1)
+        let startedAt = Date()
+        controller.showBar()
+        let showElapsedMilliseconds = Int(
+            Date().timeIntervalSince(startedAt) * 1_000
+        )
+        let windowVisibleImmediately = NSApp.windows.contains {
+            $0 is BarPanel && $0.isVisible
+        }
+        let memoryHistoryAvailableImmediately =
+            controller.store.history.map(\.id) == [memoryItem.id]
+                && controller.store.stripContentRevision == revisionBeforeShow
+
+        Task {
+            try? await Task.sleep(for: .milliseconds(100))
+            controller.store
+                .addConcurrentItemForAutomatedPanelReconciliationTest(
+                    concurrentItem
+                )
+            await controller.store.waitForDiskReconciliationForAutomatedTest()
+            unsetenv("PESTY_AUTOMATED_RECONCILIATION_DELAY_MS")
+            let mergedIDs = Set(controller.store.history.map(\.id))
+            let asynchronousMergeCompleted = controller.store.history.count == 3
+                && mergedIDs
+                    == Set([externalItem.id, concurrentItem.id, memoryItem.id])
+            let mergedRevision = controller.store.stripContentRevision
+
+            controller.store.reconcileFromDiskInBackground()
+            await controller.store.waitForDiskReconciliationForAutomatedTest()
+            let unchangedSnapshotPreservedRevision =
+                controller.store.stripContentRevision == mergedRevision
+            let maximumShowElapsedMilliseconds = 300
+            let result = PanelReconciliationResult(
+                phase: "panel-reconciliation",
+                success: showElapsedMilliseconds
+                    < maximumShowElapsedMilliseconds
+                    && windowVisibleImmediately
+                    && memoryHistoryAvailableImmediately
+                    && asynchronousMergeCompleted
+                    && unchangedSnapshotPreservedRevision,
+                showElapsedMilliseconds: showElapsedMilliseconds,
+                maximumShowElapsedMilliseconds: maximumShowElapsedMilliseconds,
+                windowVisibleImmediately: windowVisibleImmediately,
+                memoryHistoryAvailableImmediately:
+                    memoryHistoryAvailableImmediately,
+                asynchronousMergeCompleted: asynchronousMergeCompleted,
+                unchangedSnapshotPreservedRevision:
+                    unchangedSnapshotPreservedRevision
+            )
+            writePanelReconciliation(result)
+            exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
         }
     }
 
@@ -3710,6 +3823,19 @@ enum AutomatedUITestRunner {
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(result) else { return }
         FileHandle.standardOutput.write(Data("AUTOMATED_PERFORMANCE_TEST_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writePanelReconciliation(
+        _ result: PanelReconciliationResult
+    ) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(
+            Data("AUTOMATED_PANEL_RECONCILIATION_RESULT ".utf8)
+        )
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data("\n".utf8))
     }
