@@ -29,17 +29,293 @@ enum BarSource: Equatable {
     case pinboard(UUID)
 }
 
-struct ClipDeletionTombstone: Codable, Equatable {
+struct ClipDeletionTombstone: Codable, Equatable, Sendable {
     let contentDigest: String
     let historyDeletedAt: Date
     let pinboardDeletedAt: Date?
 }
 
-struct ClipboardStoreSnapshot: Codable {
+struct ClipboardStoreSnapshot: Codable, Sendable {
     var history: [ClipItem]
     var pinboards: [Pinboard]
     var configuration: SyncedConfiguration?
     var deletions: [ClipDeletionTombstone]? = nil
+}
+
+private struct ClipboardMergeContext: Sendable {
+    var history: [ClipItem]
+    var pinboards: [Pinboard]
+    var deletionTombstones: [String: ClipDeletionTombstone]
+    var configuration: SyncedHistoryRetentionConfiguration?
+    var historyLimitTrimAfter: Date?
+    var retainedHistoryLimit: Int?
+    let usesSharedConfiguration: Bool
+}
+
+private struct ClipboardMergeResult: Sendable {
+    let history: [ClipItem]
+    let pinboards: [Pinboard]
+    let deletionTombstones: [String: ClipDeletionTombstone]
+    let adoptedConfiguration: SyncedHistoryRetentionConfiguration?
+    let configurationChanged: Bool
+    let configurationNeedsWrite: Bool
+}
+
+private struct ClipboardDiskReconciliationResult: Sendable {
+    let mergeResult: ClipboardMergeResult
+    let conflictCount: Int
+    let readErrors: [String]
+}
+
+private enum ClipboardStoreReconciler {
+    static func mergeForSnapshot(
+        context: ClipboardMergeContext,
+        snapshot: ClipboardStoreSnapshot
+    ) -> ClipboardMergeResult {
+        merge(context: context, snapshots: [snapshot])
+    }
+
+    static func reconcile(
+        context: ClipboardMergeContext,
+        storeURL: URL,
+        automatedDelayMilliseconds: UInt64 = 0
+    ) -> ClipboardDiskReconciliationResult {
+        var snapshots: [ClipboardStoreSnapshot] = []
+        var readErrors: [String] = []
+        if let snapshot = readSnapshot(at: storeURL, errors: &readErrors) {
+            snapshots.append(snapshot)
+        }
+
+        let conflicts = NSFileVersion.unresolvedConflictVersionsOfItem(
+            at: storeURL
+        ) ?? []
+        for version in conflicts {
+            if let snapshot = readSnapshot(
+                at: version.url,
+                errors: &readErrors
+            ) {
+                snapshots.append(snapshot)
+            }
+        }
+
+        if automatedDelayMilliseconds > 0 {
+            Thread.sleep(
+                forTimeInterval: Double(automatedDelayMilliseconds) / 1_000
+            )
+        }
+
+        return ClipboardDiskReconciliationResult(
+            mergeResult: merge(context: context, snapshots: snapshots),
+            conflictCount: conflicts.count,
+            readErrors: readErrors
+        )
+    }
+
+    private static func readSnapshot(
+        at url: URL,
+        errors: inout [String]
+    ) -> ClipboardStoreSnapshot? {
+        do {
+            let data = try Data(contentsOf: url)
+            return try JSONDecoder().decode(
+                ClipboardStoreSnapshot.self,
+                from: data
+            )
+        } catch {
+            if FileManager.default.fileExists(atPath: url.path) {
+                errors.append(error.localizedDescription)
+            }
+            return nil
+        }
+    }
+
+    private static func merge(
+        context: ClipboardMergeContext,
+        snapshots: [ClipboardStoreSnapshot]
+    ) -> ClipboardMergeResult {
+        var history = context.history
+        var pinboards = context.pinboards
+        var tombstones = context.deletionTombstones
+        var configuration = context.configuration
+        var trimAfter = context.historyLimitTrimAfter
+        var retainedHistoryLimit = context.retainedHistoryLimit
+        var adoptedConfiguration: SyncedHistoryRetentionConfiguration?
+        var configurationChanged = false
+        var configurationNeedsWrite = false
+        let now = Date()
+
+        for snapshot in snapshots {
+            mergeDeletionTombstones(
+                snapshot.deletions ?? [],
+                into: &tombstones
+            )
+
+            if let incoming = snapshot.configuration?.historyRetention
+                .normalized(),
+               configuration.map({ incoming.supersedes($0) }) ?? true {
+                configuration = incoming
+                adoptedConfiguration = incoming
+                configurationChanged = true
+                retainedHistoryLimit = incoming.unlimited
+                    ? nil
+                    : incoming.limit
+                trimAfter = incoming.unlimited
+                    ? nil
+                    : incoming.effectiveAt.flatMap {
+                        $0 > now ? $0 : nil
+                    }
+            }
+            configurationNeedsWrite = configurationNeedsWrite
+                || configuration
+                    != snapshot.configuration?.historyRetention.normalized()
+
+            var combined = (history + snapshot.history)
+                .filter {
+                    !isDeletedFromHistory(
+                        $0,
+                        tombstones: tombstones
+                    )
+                }
+                .sorted { $0.createdAt > $1.createdAt }
+            var seen = Set<String>()
+            var merged: [ClipItem] = []
+            for item in combined
+                where seen.insert(contentKey(item)).inserted {
+                merged.append(item)
+            }
+
+            let mergeLimit: Int?
+            if context.usesSharedConfiguration && configuration == nil {
+                mergeLimit = nil
+            } else {
+                mergeLimit = trimAfter == nil ? retainedHistoryLimit : nil
+            }
+            history = HistoryRetentionPolicy.retainedPrefix(
+                of: merged,
+                limit: mergeLimit
+            )
+
+            pinboards = filteringDeletedPinboardItems(
+                from: pinboards,
+                tombstones: tombstones
+            )
+            var byID = Dictionary(
+                uniqueKeysWithValues: pinboards.map { ($0.id, $0) }
+            )
+            for board in filteringDeletedPinboardItems(
+                from: snapshot.pinboards,
+                tombstones: tombstones
+            ) {
+                if var existing = byID[board.id] {
+                    for item in board.items
+                        where !existing.items.contains(where: {
+                            $0.sameContent(as: item)
+                        }) {
+                        existing.items.append(item)
+                    }
+                    byID[board.id] = existing
+                } else {
+                    byID[board.id] = board
+                }
+            }
+            pinboards = pinboards.map { byID[$0.id] ?? $0 }
+                + byID.values.filter { board in
+                    !pinboards.contains(where: { $0.id == board.id })
+                }
+            combined.removeAll()
+        }
+
+        return ClipboardMergeResult(
+            history: history,
+            pinboards: pinboards,
+            deletionTombstones: tombstones,
+            adoptedConfiguration: adoptedConfiguration,
+            configurationChanged: configurationChanged,
+            configurationNeedsWrite: configurationNeedsWrite
+        )
+    }
+
+    private static func mergeDeletionTombstones(
+        _ incoming: [ClipDeletionTombstone],
+        into tombstones: inout [String: ClipDeletionTombstone]
+    ) {
+        for tombstone in incoming {
+            let existing = tombstones[tombstone.contentDigest]
+            tombstones[tombstone.contentDigest] = ClipDeletionTombstone(
+                contentDigest: tombstone.contentDigest,
+                historyDeletedAt: max(
+                    existing?.historyDeletedAt ?? .distantPast,
+                    tombstone.historyDeletedAt
+                ),
+                pinboardDeletedAt: maxDeletionDate(
+                    existing?.pinboardDeletedAt,
+                    tombstone.pinboardDeletedAt
+                )
+            )
+        }
+    }
+
+    private static func filteringDeletedPinboardItems(
+        from boards: [Pinboard],
+        tombstones: [String: ClipDeletionTombstone]
+    ) -> [Pinboard] {
+        boards.map { board in
+            var filtered = board
+            filtered.items.removeAll {
+                guard let deletedAt = tombstones[
+                    contentDigest($0)
+                ]?.pinboardDeletedAt else {
+                    return false
+                }
+                return deletedAt >= $0.createdAt
+            }
+            return filtered
+        }
+    }
+
+    private static func isDeletedFromHistory(
+        _ item: ClipItem,
+        tombstones: [String: ClipDeletionTombstone]
+    ) -> Bool {
+        guard let tombstone = tombstones[contentDigest(item)] else {
+            return false
+        }
+        return tombstone.historyDeletedAt >= item.createdAt
+    }
+
+    private static func contentDigest(_ item: ClipItem) -> String {
+        SHA256.hash(data: Data(contentKey(item).utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
+    private static func contentKey(_ item: ClipItem) -> String {
+        switch item.type {
+        case .image:
+            return "img:"
+                + (item.imageHash ?? item.imageFileName ?? item.id.uuidString)
+        case .color:
+            return "col:" + (item.colorHex ?? "")
+        case .file:
+            return "file:" + item.fileURLs.joined(separator: "|")
+        default:
+            return "txt:" + (item.text ?? "")
+        }
+    }
+
+    private static func maxDeletionDate(
+        _ lhs: Date?,
+        _ rhs: Date?
+    ) -> Date? {
+        switch (lhs, rhs) {
+        case let (lhs?, rhs?):
+            return max(lhs, rhs)
+        case let (date?, nil), let (nil, date?):
+            return date
+        case (nil, nil):
+            return nil
+        }
+    }
 }
 
 @Observable
@@ -49,10 +325,16 @@ final class ClipboardStore {
 
     private(set) var stripContentRevision: UInt64 = 0
     private(set) var history: [ClipItem] = [] {
-        didSet { stripContentRevision &+= 1 }
+        didSet {
+            stripContentRevision &+= 1
+            dataRevision &+= 1
+        }
     }
     private(set) var pinboards: [Pinboard] = [] {
-        didSet { stripContentRevision &+= 1 }
+        didSet {
+            stripContentRevision &+= 1
+            dataRevision &+= 1
+        }
     }
     private(set) var storageUsageBytes: Int64 = 0
 
@@ -75,7 +357,11 @@ final class ClipboardStore {
     private var saveWorkItem: DispatchWorkItem?
     private var historyLimitWorkItem: DispatchWorkItem?
     private var deletionTombstones: [String: ClipDeletionTombstone] = [:]
+    @ObservationIgnored private var dataRevision: UInt64 = 0
     @ObservationIgnored private var storageUsageTask: Task<Void, Never>?
+    @ObservationIgnored private var diskReconciliationTask: Task<Void, Never>?
+    @ObservationIgnored private var diskReconciliationRequested = false
+    @ObservationIgnored private var pendingConflictResolution = false
 
     private var fileWatch: DispatchSourceFileSystemObject?
     private var ignoreWatchUntil: Date = .distantPast
@@ -375,6 +661,37 @@ final class ClipboardStore {
         selectedID = items.first?.id
     }
 
+    func replaceHistoryForAutomatedPanelReconciliationTest(
+        _ items: [ClipItem]
+    ) {
+        guard ClipboardStore.automatedTestBase != nil,
+              ProcessInfo.processInfo.environment[
+                "PESTY_AUTOMATED_UI_TEST"
+              ] == "panel-reconciliation" else {
+            return
+        }
+        history = items
+        pinboards = []
+        deletionTombstones = [:]
+        source = .history
+        searchText = ""
+        selectedID = items.first?.id
+        saveNow()
+    }
+
+    func addConcurrentItemForAutomatedPanelReconciliationTest(
+        _ item: ClipItem
+    ) {
+        guard ClipboardStore.automatedTestBase != nil,
+              ProcessInfo.processInfo.environment[
+                "PESTY_AUTOMATED_UI_TEST"
+              ] == "panel-reconciliation" else {
+            return
+        }
+        history.insert(item, at: 0)
+        selectedID = item.id
+    }
+
     func reverseHistoryForAutomatedSettingsCountTest() {
         guard ClipboardStore.automatedTestBase != nil,
               ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"]
@@ -635,8 +952,34 @@ final class ClipboardStore {
             logger.error("Failed to save clipboard history: \(error.localizedDescription, privacy: .public)")
             return false
         }
+        resolvePendingConflictVersionsIfNeeded()
         refreshStorageUsage()
         return true
+    }
+
+    private func resolvePendingConflictVersionsIfNeeded() {
+        guard pendingConflictResolution else { return }
+        let conflicts = NSFileVersion.unresolvedConflictVersionsOfItem(
+            at: storeURL
+        ) ?? []
+        for version in conflicts {
+            version.isResolved = true
+        }
+        do {
+            if !conflicts.isEmpty {
+                try NSFileVersion.removeOtherVersionsOfItem(at: storeURL)
+            }
+            pendingConflictResolution = false
+            if !conflicts.isEmpty {
+                logger.info(
+                    "Merged and resolved \(conflicts.count, privacy: .public) clipboard history conflict version(s)"
+                )
+            }
+        } catch {
+            logger.error(
+                "Failed to remove resolved history versions: \(error.localizedDescription, privacy: .public)"
+            )
+        }
     }
 
     func setICloudSync(_ enabled: Bool) {
@@ -794,62 +1137,13 @@ final class ClipboardStore {
 
     @discardableResult
     private func mergeExternal(_ snap: ClipboardStoreSnapshot) -> Bool {
-        let previousHistory = history
-        let previousPinboards = pinboards
-        let deletionsChanged = mergeDeletionTombstones(snap.deletions ?? [])
-        var configurationChanged = false
-        if let incoming = snap.configuration?.historyRetention,
-           Settings.shared.adoptSyncedHistoryRetention(incoming) {
-            configurationChanged = true
-            historyRetentionDidChange(
-                effectiveAt: Settings.shared.syncedHistoryRetention?.effectiveAt,
-                configurationChanged: false
-            )
-        }
-        let configurationNeedsWrite =
-            Settings.shared.syncedHistoryRetention
-                != snap.configuration?.historyRetention.normalized()
-
-        var combined = (history + snap.history)
-            .filter { !isDeletedFromHistory($0) }
-            .sorted { $0.createdAt > $1.createdAt }
-        var seen = Set<String>()
-        var merged: [ClipItem] = []
-        for it in combined where seen.insert(contentKey(it)).inserted { merged.append(it) }
-        let mergeLimit: Int?
-        if usesSharedConfiguration && Settings.shared.syncedHistoryRetention == nil {
-            mergeLimit = nil
-        } else {
-            mergeLimit = Settings.shared.historyLimitTrimAfter == nil
-                ? Settings.shared.retainedHistoryLimit
-                : nil
-        }
-        history = HistoryRetentionPolicy.retainedPrefix(of: merged, limit: mergeLimit)
-
-        pinboards = filteringDeletedPinboardItems(from: pinboards)
-        var byID: [UUID: Pinboard] = Dictionary(
-            uniqueKeysWithValues: pinboards.map { ($0.id, $0) }
+        let suppliedResult = ClipboardStoreReconciler.mergeForSnapshot(
+            context: mergeContext,
+            snapshot: snap
         )
-        for b in filteringDeletedPinboardItems(from: snap.pinboards) {
-            if var existing = byID[b.id] {
-                for it in b.items where !existing.items.contains(where: { $0.sameContent(as: it) }) {
-                    existing.items.append(it)
-                }
-                byID[b.id] = existing
-            } else {
-                byID[b.id] = b
-            }
-        }
-        pinboards = pinboards.map { byID[$0.id] ?? $0 }
-            + byID.values.filter { b in !pinboards.contains(where: { $0.id == b.id }) }
-
-        combined.removeAll()
+        let changed = applyMergeResult(suppliedResult)
         selectFirst()
-        return history != previousHistory
-            || pinboards != previousPinboards
-            || deletionsChanged
-            || configurationChanged
-            || configurationNeedsWrite
+        return changed
     }
 
     private func readSnapshot(at url: URL) -> ClipboardStoreSnapshot? {
@@ -868,30 +1162,140 @@ final class ClipboardStore {
     /// conflict versions. The merged snapshot is written before conflicts are
     /// marked resolved, so no clipboard entries are discarded.
     func reconcileFromDisk() {
-        var changed = false
-        if let snap = readSnapshot(at: storeURL) {
-            changed = mergeExternal(snap)
+        let result = ClipboardStoreReconciler.reconcile(
+            context: mergeContext,
+            storeURL: storeURL
+        )
+        logReadErrors(result.readErrors)
+        let changed = applyMergeResult(result.mergeResult)
+        pendingConflictResolution = result.conflictCount > 0
+        guard changed || result.conflictCount > 0 else { return }
+        saveNow()
+    }
+
+    /// Reconciles iCloud and local snapshots without delaying panel
+    /// presentation or blocking interactions with disk decoding and merging.
+    /// A revision guard discards stale results if clipboard data or retention
+    /// settings change while the worker is running, then immediately retries
+    /// against the newest in-memory state.
+    func reconcileFromDiskInBackground() {
+        guard diskReconciliationTask == nil else {
+            diskReconciliationRequested = true
+            return
         }
 
-        let conflicts = NSFileVersion.unresolvedConflictVersionsOfItem(at: storeURL) ?? []
-        for version in conflicts {
-            guard let snap = readSnapshot(at: version.url) else { continue }
-            changed = mergeExternal(snap) || changed
+        let context = mergeContext
+        let requestedStoreURL = storeURL
+        let requestedDataRevision = dataRevision
+        let requestedConfiguration = Settings.shared.syncedHistoryRetention
+        let requestedTrimAfter = Settings.shared.historyLimitTrimAfter
+        let requestedRetainedLimit = Settings.shared.retainedHistoryLimit
+        let automatedDelayMilliseconds: UInt64
+        if ClipboardStore.automatedTestBase != nil {
+            automatedDelayMilliseconds = UInt64(
+                ProcessInfo.processInfo.environment[
+                    "PESTY_AUTOMATED_RECONCILIATION_DELAY_MS"
+                ] ?? ""
+            ) ?? 0
+        } else {
+            automatedDelayMilliseconds = 0
         }
 
-        guard changed || !conflicts.isEmpty else { return }
-        guard writeSnapshot() else { return }
+        diskReconciliationTask = Task { [weak self] in
+            let result = await Task.detached(priority: .utility) {
+                ClipboardStoreReconciler.reconcile(
+                    context: context,
+                    storeURL: requestedStoreURL,
+                    automatedDelayMilliseconds: automatedDelayMilliseconds
+                )
+            }.value
+            guard let self else { return }
 
-        for version in conflicts {
-            version.isResolved = true
-        }
-        if !conflicts.isEmpty {
-            do {
-                try NSFileVersion.removeOtherVersionsOfItem(at: storeURL)
-                logger.info("Merged and resolved \(conflicts.count, privacy: .public) clipboard history conflict version(s)")
-            } catch {
-                logger.error("Failed to remove resolved history versions: \(error.localizedDescription, privacy: .public)")
+            self.diskReconciliationTask = nil
+            self.logReadErrors(result.readErrors)
+            let stateIsCurrent = self.storeURL == requestedStoreURL
+                && self.dataRevision == requestedDataRevision
+                && Settings.shared.syncedHistoryRetention
+                    == requestedConfiguration
+                && Settings.shared.historyLimitTrimAfter == requestedTrimAfter
+                && Settings.shared.retainedHistoryLimit
+                    == requestedRetainedLimit
+
+            if stateIsCurrent {
+                let changed = self.applyMergeResult(result.mergeResult)
+                if result.conflictCount > 0 {
+                    self.pendingConflictResolution = true
+                }
+                if changed || result.conflictCount > 0 {
+                    self.scheduleSave()
+                }
+            } else {
+                self.diskReconciliationRequested = true
             }
+
+            if self.diskReconciliationRequested {
+                self.diskReconciliationRequested = false
+                self.reconcileFromDiskInBackground()
+            }
+        }
+    }
+
+    func waitForDiskReconciliationForAutomatedTest() async {
+        guard ClipboardStore.automatedTestBase != nil else { return }
+        while let task = diskReconciliationTask {
+            await task.value
+        }
+    }
+
+    private var mergeContext: ClipboardMergeContext {
+        ClipboardMergeContext(
+            history: history,
+            pinboards: pinboards,
+            deletionTombstones: deletionTombstones,
+            configuration: Settings.shared.syncedHistoryRetention,
+            historyLimitTrimAfter: Settings.shared.historyLimitTrimAfter,
+            retainedHistoryLimit: Settings.shared.retainedHistoryLimit,
+            usesSharedConfiguration: usesSharedConfiguration
+        )
+    }
+
+    @discardableResult
+    private func applyMergeResult(_ result: ClipboardMergeResult) -> Bool {
+        var changed = false
+        if let configuration = result.adoptedConfiguration,
+           Settings.shared.adoptSyncedHistoryRetention(configuration) {
+            changed = true
+            historyRetentionDidChange(
+                effectiveAt: configuration.effectiveAt,
+                configurationChanged: false
+            )
+        }
+        if deletionTombstones != result.deletionTombstones {
+            deletionTombstones = result.deletionTombstones
+            dataRevision &+= 1
+            changed = true
+        }
+        if history != result.history {
+            history = result.history
+            changed = true
+        }
+        if pinboards != result.pinboards {
+            pinboards = result.pinboards
+            changed = true
+        }
+        if changed {
+            selectFirst()
+        }
+        return changed
+            || result.configurationChanged
+            || result.configurationNeedsWrite
+    }
+
+    private func logReadErrors(_ errors: [String]) {
+        for error in errors {
+            logger.error(
+                "Failed to read clipboard history: \(error, privacy: .public)"
+            )
         }
     }
 
@@ -906,10 +1310,8 @@ final class ClipboardStore {
             let event = src.data
             let needsReattach = event.contains(.rename) || event.contains(.delete)
 
-            if Date() >= self.ignoreWatchUntil,
-               let snap = self.readSnapshot(at: self.storeURL),
-               self.mergeExternal(snap) {
-                self.saveNow()
+            if Date() >= self.ignoreWatchUntil {
+                self.reconcileFromDiskInBackground()
             } else {
                 self.refreshStorageUsage()
             }

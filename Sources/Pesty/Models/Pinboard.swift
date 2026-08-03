@@ -1,6 +1,6 @@
 import SwiftUI
 
-struct Pinboard: Identifiable, Codable, Equatable {
+struct Pinboard: Identifiable, Codable, Equatable, Sendable {
     let id: UUID
     var name: String
     var colorHex: String

@@ -1,6 +1,6 @@
 import SwiftUI
 
-enum ClipType: String, Codable, CaseIterable {
+enum ClipType: String, Codable, CaseIterable, Sendable {
     case text
     case richText
     case link
