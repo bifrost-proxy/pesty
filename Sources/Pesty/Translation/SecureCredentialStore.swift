@@ -5,13 +5,7 @@ enum SecureCredentialStore {
     private static let service = "com.bifrostproxy.pesty"
 
     static func read(account: String) throws -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
+        let query = secretReadQuery(account: account)
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
@@ -23,6 +17,32 @@ enum SecureCredentialStore {
         return value
     }
 
+    /// Checks for a credential without asking Keychain to decrypt or return it.
+    static func contains(account: String) throws -> Bool {
+        let query = presenceQuery(account: account)
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound { return false }
+        guard status == errSecSuccess else {
+            throw CredentialStoreError(status: status)
+        }
+        return true
+    }
+
+    static func presenceQuery(account: String) -> [String: Any] {
+        var query = baseQuery(account: account)
+        query[kSecReturnAttributes as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        return query
+    }
+
+    static func secretReadQuery(account: String) -> [String: Any] {
+        var query = baseQuery(account: account)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        return query
+    }
+
     static func save(_ value: String, account: String) throws {
         if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             try delete(account: account)
@@ -32,11 +52,7 @@ enum SecureCredentialStore {
         let attributes: [String: Any] = [
             kSecValueData as String: data,
         ]
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
+        let query = baseQuery(account: account)
         let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         if updateStatus == errSecSuccess { return }
         guard updateStatus == errSecItemNotFound else {
@@ -51,15 +67,19 @@ enum SecureCredentialStore {
     }
 
     static func delete(account: String) throws {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
+        let query = baseQuery(account: account)
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw CredentialStoreError(status: status)
         }
+    }
+
+    private static func baseQuery(account: String) -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
     }
 
     struct CredentialStoreError: LocalizedError {

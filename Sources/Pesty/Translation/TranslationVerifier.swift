@@ -1,6 +1,7 @@
 import AppKit
 import Carbon.HIToolbox
 import Foundation
+import Security
 
 @MainActor
 enum TranslationVerifier {
@@ -42,6 +43,8 @@ enum TranslationVerifier {
         let translationPopoverGrowsAndCapsHeight: Bool
         let explanationPopoverGrowsAndCapsHeight: Bool
         let openAIEndpointNormalizesToChatCompletions: Bool
+        let keychainPresenceLookupExcludesSecretData: Bool
+        let keychainSecretLookupReturnsData: Bool
     }
 
     struct Failure: Error, CustomStringConvertible {
@@ -518,6 +521,23 @@ enum TranslationVerifier {
             throw Failure(description: "AI provider metadata contains credential material")
         }
 
+        let presenceQuery = SecureCredentialStore.presenceQuery(
+            account: "translation-verifier"
+        )
+        let secretReadQuery = SecureCredentialStore.secretReadQuery(
+            account: "translation-verifier"
+        )
+        let keychainPresenceLookupExcludesSecretData =
+            presenceQuery[kSecReturnAttributes as String] as? Bool == true
+            && presenceQuery[kSecReturnData as String] == nil
+        let keychainSecretLookupReturnsData =
+            secretReadQuery[kSecReturnData as String] as? Bool == true
+            && secretReadQuery[kSecReturnAttributes as String] == nil
+        guard keychainPresenceLookupExcludesSecretData,
+              keychainSecretLookupReturnsData else {
+            throw Failure(description: "Keychain lookup modes are not separated")
+        }
+
         let result = Result(
             shortcutMatchesDefault: defaultShortcutMatches,
             shortcutRejectsDifferentKey: shortcutRejectsDifferentKey,
@@ -581,7 +601,10 @@ enum TranslationVerifier {
                 translationPopoverGrowsAndCapsHeight,
             explanationPopoverGrowsAndCapsHeight: explanationPopoverGrowsAndCapsHeight,
             openAIEndpointNormalizesToChatCompletions: normalizedEndpoint?.absoluteString
-                == "https://example.invalid/v1/chat/completions"
+                == "https://example.invalid/v1/chat/completions",
+            keychainPresenceLookupExcludesSecretData:
+                keychainPresenceLookupExcludesSecretData,
+            keychainSecretLookupReturnsData: keychainSecretLookupReturnsData
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
