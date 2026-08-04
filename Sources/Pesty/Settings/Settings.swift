@@ -248,6 +248,7 @@ final class Settings {
     private(set) var doubaoTranslationModelID: String
     private(set) var doubaoTranslationConfigured: Bool
     private(set) var aiProviderProfiles: [AIProviderProfile]
+    @ObservationIgnored private var hasDoubaoCredential: Bool
 
     private init() {
         if let suiteName = ProcessInfo.processInfo.environment[
@@ -363,20 +364,18 @@ final class Settings {
             loadedDoubaoModelID = legacyDoubaoEndpointID
         }
         doubaoTranslationModelID = loadedDoubaoModelID
-        // Isolated UI regressions don't call an AI provider. Avoid triggering a
-        // Keychain access prompt from an unsigned temporary test binary, which
-        // would prevent its AppKit run loop from ever starting. The three tests
-        // that deliberately exercise a provider still read the real credential.
-        let savedDoubaoAPIKey = Self.skipsCredentialReadForAutomatedUITest
-            ? nil
-            : (try? SecureCredentialStore.read(account: "doubao-ark-api-key"))
-        doubaoTranslationConfigured = !(savedDoubaoAPIKey ?? "").isEmpty
+        // Startup needs only the configuration state. Query Keychain metadata
+        // without requesting or decrypting the credential itself.
+        hasDoubaoCredential = Self.skipsCredentialLookupForAutomatedUITest
+            ? false
+            : ((try? SecureCredentialStore.contains(account: "doubao-ark-api-key")) == true)
+        doubaoTranslationConfigured = hasDoubaoCredential
             && !loadedDoubaoModelID.isEmpty
         aiProviderProfiles = Self.loadAIProviderProfiles(from: d)
         isLoaded = true
     }
 
-    private static var skipsCredentialReadForAutomatedUITest: Bool {
+    private static var skipsCredentialLookupForAutomatedUITest: Bool {
         guard let phase = ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"] else {
             return false
         }
@@ -496,6 +495,9 @@ final class Settings {
 
     func saveDoubaoTranslationAPIKey(_ apiKey: String) throws {
         try SecureCredentialStore.save(apiKey, account: "doubao-ark-api-key")
+        hasDoubaoCredential = !apiKey.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        ).isEmpty
         updateDoubaoTranslationConfigurationState()
     }
 
@@ -508,8 +510,7 @@ final class Settings {
     }
 
     private func updateDoubaoTranslationConfigurationState() {
-        let apiKey = (try? SecureCredentialStore.read(account: "doubao-ark-api-key")) ?? nil
-        doubaoTranslationConfigured = !(apiKey ?? "").isEmpty
+        doubaoTranslationConfigured = hasDoubaoCredential
             && !doubaoTranslationModelID.isEmpty
     }
 
