@@ -436,6 +436,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             barController = BarWindowController()
         }
         barController?.show()
+        store.prepareSearchIndexForPanel()
         store.reconcileFromDiskInBackground()
     }
 
@@ -516,6 +517,14 @@ final class AppController: NSObject, NSApplicationDelegate {
         #if !MAS
         previousFocusedElement = PasteService.captureFocusedElement(in: app)
         #endif
+    }
+
+    func prepareBarForAutomatedPanelReconciliationTest() {
+        guard ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"]
+                == "panel-reconciliation" else { return }
+        if barController == nil {
+            barController = BarWindowController()
+        }
     }
 
     /// Importing through the launched app gives the Keychain the same access context that

@@ -24,7 +24,7 @@ enum HistoryStorageUsage {
     }
 }
 
-enum BarSource: Equatable {
+enum BarSource: Equatable, Sendable {
     case history
     case pinboard(UUID)
 }
@@ -328,14 +328,20 @@ final class ClipboardStore {
         didSet {
             stripContentRevision &+= 1
             dataRevision &+= 1
-            invalidateSearchIndexAndRefreshResults()
+            historySearchRevision &+= 1
+            if source == .history {
+                invalidateSearchIndexAndRefreshResults()
+            }
         }
     }
     private(set) var pinboards: [Pinboard] = [] {
         didSet {
             stripContentRevision &+= 1
             dataRevision &+= 1
-            invalidateSearchIndexAndRefreshResults()
+            pinboardSearchRevision &+= 1
+            if case .pinboard = source {
+                invalidateSearchIndexAndRefreshResults()
+            }
         }
     }
     private(set) var storageUsageBytes: Int64 = 0
@@ -344,7 +350,7 @@ final class ClipboardStore {
         didSet {
             if source != oldValue {
                 stripContentRevision &+= 1
-                scheduleSearchResultsUpdate(debounce: false)
+                invalidateSearchIndexAndRefreshResults()
             }
         }
     }
@@ -374,12 +380,23 @@ final class ClipboardStore {
     private var historyLimitWorkItem: DispatchWorkItem?
     private var deletionTombstones: [String: ClipDeletionTombstone] = [:]
     @ObservationIgnored private var dataRevision: UInt64 = 0
+    @ObservationIgnored private var historySearchRevision: UInt64 = 0
+    @ObservationIgnored private var pinboardSearchRevision: UInt64 = 0
     @ObservationIgnored private var filteredSearchItems: [ClipItem] = []
+    @ObservationIgnored private var filteredSearchIndices: [Int] = []
     @ObservationIgnored private var appliedSearchSource: BarSource?
-    @ObservationIgnored private var appliedSearchDataRevision: UInt64 = 0
-    @ObservationIgnored private var searchIndex: [UUID: String] = [:]
+    @ObservationIgnored private var appliedSearchContentRevision: UInt64 = 0
+    @ObservationIgnored private var searchIndex: ClipboardSearchIndex?
+    @ObservationIgnored private var searchIndexTask: Task<ClipboardSearchIndex?, Never>?
+    @ObservationIgnored private var searchIndexGeneration: UInt64 = 0
+    @ObservationIgnored private var searchIndexBuildIsDeferred = false
+    @ObservationIgnored private var searchIndexPrewarmingEnabled = false
+    @ObservationIgnored private var searchCandidateCache: [String: [Int]] = [:]
+    @ObservationIgnored private var searchCandidateCacheOrder: [String] = []
     @ObservationIgnored private var searchTask: Task<Void, Never>?
     @ObservationIgnored private var searchGeneration: UInt64 = 0
+    @ObservationIgnored private var completedSearchIndexBuildCount = 0
+    @ObservationIgnored private var lastSearchScannedItemCount = 0
     @ObservationIgnored private var storageUsageTask: Task<Void, Never>?
     @ObservationIgnored private var diskReconciliationTask: Task<Void, Never>?
     @ObservationIgnored private var diskReconciliationRequested = false
@@ -445,7 +462,9 @@ final class ClipboardStore {
         let base = items(for: source)
         guard !normalizedSearchQuery(searchText).isEmpty else { return base }
         guard appliedSearchSource == source,
-              appliedSearchDataRevision == dataRevision else { return base }
+              appliedSearchContentRevision == searchContentRevision(for: source) else {
+            return base
+        }
         return filteredSearchItems
     }
 
@@ -462,10 +481,50 @@ final class ClipboardStore {
         text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
+    private func searchContentRevision(for source: BarSource) -> UInt64 {
+        switch source {
+        case .history:
+            historySearchRevision
+        case .pinboard:
+            pinboardSearchRevision
+        }
+    }
+
     private func invalidateSearchIndexAndRefreshResults() {
-        searchIndex = [:]
-        guard !normalizedSearchQuery(searchText).isEmpty else { return }
-        scheduleSearchResultsUpdate(debounce: false)
+        searchIndexTask?.cancel()
+        searchIndexTask = nil
+        searchIndexGeneration &+= 1
+        searchIndexBuildIsDeferred = false
+        discardSearchIndexOffMainActor()
+        searchCandidateCache.removeAll(keepingCapacity: true)
+        searchCandidateCacheOrder.removeAll(keepingCapacity: true)
+        filteredSearchIndices.removeAll(keepingCapacity: true)
+
+        if normalizedSearchQuery(searchText).isEmpty {
+            if searchIndexPrewarmingEnabled {
+                scheduleSearchIndexBuild(deferred: true)
+            }
+        } else {
+            scheduleSearchResultsUpdate(debounce: false)
+        }
+    }
+
+    private func discardSearchIndexOffMainActor() {
+        let discardedIndex = searchIndex
+        searchIndex = nil
+        guard let discardedIndex else { return }
+        Task.detached(priority: .utility) {
+            withExtendedLifetime(discardedIndex) {}
+        }
+    }
+
+    func prepareSearchIndexForPanel() {
+        searchIndexPrewarmingEnabled = true
+        let expectedRevision = searchContentRevision(for: source)
+        guard searchIndex?.source != source
+                || searchIndex?.contentRevision != expectedRevision else { return }
+        guard searchIndexTask == nil else { return }
+        scheduleSearchIndexBuild(deferred: true)
     }
 
     private func scheduleSearchResultsUpdate(debounce: Bool) {
@@ -480,15 +539,14 @@ final class ClipboardStore {
 
         let generation = searchGeneration
         let expectedSource = source
-        let expectedDataRevision = dataRevision
-        let base = items(for: expectedSource)
-        let existingIndex = searchIndex
+        let expectedContentRevision = searchContentRevision(for: expectedSource)
+        let shouldDebounce = debounce && !hasSmallCachedCandidate(for: query)
 
         searchTask = Task { [weak self] in
             // Keep native text editing responsive while a user is still
             // composing a query. Until the newest result is ready, the strip
             // continues to display its last coherent snapshot.
-            if debounce {
+            if shouldDebounce {
                 do {
                     try await Task.sleep(for: .milliseconds(60))
                 } catch {
@@ -497,30 +555,29 @@ final class ClipboardStore {
             }
             guard !Task.isCancelled else { return }
 
-            // Building searchable text can dominate filtering for large or
-            // long clipboard entries, so both indexing and matching stay off
-            // the main actor. The generation checks below discard stale work.
-            let worker = Task.detached(priority: .userInitiated) {
-                var index = existingIndex
-                var matches: [ClipItem] = []
-                matches.reserveCapacity(min(base.count, 256))
+            guard let self,
+                  let index = await self.ensureSearchIndex(),
+                  !Task.isCancelled,
+                  index.source == expectedSource,
+                  index.contentRevision == expectedContentRevision else { return }
 
-                for (offset, item) in base.enumerated() {
-                    if offset.isMultiple(of: 32), Task.isCancelled {
-                        return Optional<(items: [ClipItem], index: [UUID: String])>.none
-                    }
-                    let searchableText: String
-                    if let indexed = index[item.id] {
-                        searchableText = indexed
-                    } else {
-                        searchableText = item.searchableText
-                        index[item.id] = searchableText
-                    }
-                    if searchableText.contains(query) {
-                        matches.append(item)
-                    }
+            let exactCandidates = self.searchCandidateCache[query]
+            let candidates = exactCandidates
+                ?? self.searchCandidates(for: query, in: index)
+            let worker = Task.detached(priority: .userInitiated) { () -> ClipboardSearchResult? in
+                if exactCandidates != nil {
+                    guard !Task.isCancelled else { return nil }
+                    return ClipboardSearchResult(
+                        indices: candidates,
+                        items: candidates.map { index.items[$0] },
+                        scannedCount: 0
+                    )
                 }
-                return (items: matches, index: index)
+                return ClipboardSearchEngine.filter(
+                    index,
+                    query: query,
+                    candidates: candidates
+                )
             }
             let result = await withTaskCancellationHandler {
                 await worker.value
@@ -529,19 +586,134 @@ final class ClipboardStore {
             }
             guard !Task.isCancelled,
                   let result,
-                  let self,
                   self.searchGeneration == generation,
                   self.source == expectedSource,
-                  self.dataRevision == expectedDataRevision,
+                  self.searchContentRevision(for: self.source)
+                    == expectedContentRevision,
                   self.normalizedSearchQuery(self.searchText) == query else { return }
 
-            self.searchIndex = result.index
-            self.filteredSearchItems = result.items
+            self.cacheSearchCandidates(result.indices, for: query)
+            self.lastSearchScannedItemCount = result.scannedCount
+            let contentChanged = self.appliedSearchSource != expectedSource
+                || self.appliedSearchContentRevision != expectedContentRevision
+                || self.filteredSearchIndices != result.indices
+            if contentChanged {
+                self.filteredSearchItems = result.items
+                self.filteredSearchIndices = result.indices
+            }
             self.appliedSearchSource = expectedSource
-            self.appliedSearchDataRevision = expectedDataRevision
+            self.appliedSearchContentRevision = expectedContentRevision
             self.selectedID = result.items.first?.id
-            self.stripContentRevision &+= 1
+            if contentChanged {
+                self.stripContentRevision &+= 1
+            }
             self.searchTask = nil
+        }
+    }
+
+    private func scheduleSearchIndexBuild(deferred: Bool) {
+        searchIndexTask?.cancel()
+        searchIndexGeneration &+= 1
+
+        let generation = searchIndexGeneration
+        let expectedSource = source
+        let expectedContentRevision = searchContentRevision(for: expectedSource)
+        let base = items(for: expectedSource)
+        searchIndexBuildIsDeferred = deferred
+
+        let task = Task<ClipboardSearchIndex?, Never> { [weak self] in
+            if deferred {
+                do {
+                    // Do not compete with application launch or panel
+                    // presentation. A real query promotes this build below.
+                    try await Task.sleep(for: .seconds(1))
+                } catch {
+                    return nil
+                }
+            }
+            guard !Task.isCancelled else { return nil }
+
+            let priority: TaskPriority = deferred ? .utility : .userInitiated
+            let worker = Task.detached(priority: priority) {
+                ClipboardSearchEngine.build(
+                    items: base,
+                    source: expectedSource,
+                    contentRevision: expectedContentRevision
+                )
+            }
+            let builtIndex = await withTaskCancellationHandler {
+                await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
+            guard !Task.isCancelled,
+                  let builtIndex,
+                  let self,
+                  self.searchIndexGeneration == generation,
+                  self.source == expectedSource,
+                  self.searchContentRevision(for: self.source)
+                    == expectedContentRevision else { return nil }
+
+            self.searchIndex = builtIndex
+            self.searchCandidateCache.removeAll(keepingCapacity: true)
+            self.searchCandidateCacheOrder.removeAll(keepingCapacity: true)
+            self.completedSearchIndexBuildCount += 1
+            self.searchIndexTask = nil
+            self.searchIndexBuildIsDeferred = false
+            return builtIndex
+        }
+        searchIndexTask = task
+    }
+
+    private func ensureSearchIndex() async -> ClipboardSearchIndex? {
+        let expectedSource = source
+        let expectedContentRevision = searchContentRevision(for: expectedSource)
+        if let searchIndex,
+           searchIndex.source == expectedSource,
+           searchIndex.contentRevision == expectedContentRevision {
+            return searchIndex
+        }
+
+        if searchIndexTask == nil || searchIndexBuildIsDeferred {
+            searchIndexTask?.cancel()
+            scheduleSearchIndexBuild(deferred: false)
+        }
+        guard let task = searchIndexTask,
+              let index = await task.value,
+              index.source == expectedSource,
+              index.contentRevision == expectedContentRevision else { return nil }
+        return index
+    }
+
+    private func searchCandidates(
+        for query: String,
+        in index: ClipboardSearchIndex
+    ) -> [Int] {
+        if let exact = searchCandidateCache[query] { return exact }
+        let prefix = searchCandidateCacheOrder
+            .filter { query.hasPrefix($0) }
+            .max { $0.count < $1.count }
+        if let prefix, let cached = searchCandidateCache[prefix] {
+            return cached
+        }
+        return Array(index.items.indices)
+    }
+
+    private func hasSmallCachedCandidate(for query: String) -> Bool {
+        searchCandidateCacheOrder.contains { cachedQuery in
+            query.hasPrefix(cachedQuery)
+                && (searchCandidateCache[cachedQuery]?.count ?? .max) <= 256
+        }
+    }
+
+    private func cacheSearchCandidates(_ indices: [Int], for query: String) {
+        if searchCandidateCache[query] == nil {
+            searchCandidateCacheOrder.append(query)
+        }
+        searchCandidateCache[query] = indices
+        while searchCandidateCacheOrder.count > 8 {
+            let evicted = searchCandidateCacheOrder.removeFirst()
+            searchCandidateCache.removeValue(forKey: evicted)
         }
     }
 
@@ -550,6 +722,19 @@ final class ClipboardStore {
         while let task = searchTask {
             await task.value
         }
+    }
+
+    func searchDiagnosticsForAutomatedTest() -> (
+        indexCount: Int,
+        buildCount: Int,
+        lastScannedCount: Int
+    ) {
+        guard ClipboardStore.automatedTestBase != nil else { return (0, 0, 0) }
+        return (
+            searchIndex?.items.count ?? 0,
+            completedSearchIndexBuildCount,
+            lastSearchScannedItemCount
+        )
     }
 
     var selectedItem: ClipItem? {

@@ -19,19 +19,24 @@ run_id="panel-reconciliation-$(date +%s)-$$"
 suite="com.bifrostproxy.pesty.$run_id"
 output="$test_dir/output.log"
 
+set +e
 PESTY_AUTOMATED_TEST_DATA_DIR="$test_dir/data" \
 PESTY_AUTOMATED_TEST_DEFAULTS_SUITE="$suite" \
 PESTY_AUTOMATED_UI_TEST=panel-reconciliation \
 PESTY_AUTOMATED_TEST_ID="$run_id" \
   "$binary" >"$output"
+binary_status=$?
+set -e
 
 result_line="$(sed -n '/^AUTOMATED_PANEL_RECONCILIATION_RESULT /p' "$output" | tail -1)"
 if [[ -z "$result_line" ]]; then
+  cat "$output" >&2
   echo "Panel reconciliation test did not emit a result." >&2
   exit 1
 fi
 result_json="${result_line#AUTOMATED_PANEL_RECONCILIATION_RESULT }"
-if [[ "$(jq -r '.success' <<<"$result_json")" != "true" ]]; then
+if [[ "$binary_status" -ne 0 ]] \
+    || [[ "$(jq -r '.success' <<<"$result_json")" != "true" ]]; then
   echo "$result_line"
   exit 1
 fi
