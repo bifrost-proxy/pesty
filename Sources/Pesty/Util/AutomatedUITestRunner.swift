@@ -253,6 +253,10 @@ enum AutomatedUITestRunner {
         let compositionEventPassedThrough: Bool
         let adaptiveWidthExpanded: Bool
         let longChineseQueryFits: Bool
+        let largeHistoryCount: Int
+        let rapidQueryUpdateMilliseconds: Int
+        let maximumRapidQueryUpdateMilliseconds: Int
+        let latestQueryResultCorrect: Bool
     }
 
     private struct TranslationBoardResult: Codable {
@@ -763,26 +767,65 @@ enum AutomatedUITestRunner {
                 let adaptiveWidthExpanded = longWidth > shortWidth
                 let longChineseQueryFits =
                     longWidth >= SearchFieldLayout.requiredWidth(for: longChineseQuery)
+                let largeHistoryCount = 5_000
+                let payload = String(repeating: "clipboard-search-payload ", count: 48)
+                let items = (0..<largeHistoryCount).map { index in
+                    ClipItem(
+                        type: .text,
+                        text: "\(payload)pesty-search-performance-\(index)",
+                        createdAt: Date(timeIntervalSinceNow: -Double(index))
+                    )
+                }
+                controller.store.replaceHistoryForAutomatedSearchTest(items)
 
-                let result = SearchInputResult(
-                    phase: "search-input",
-                    success: editor != nil
-                        && firstKeyboardEventReplayed
-                        && markedTextActive
-                        && compositionEventPassedThrough
-                        && adaptiveWidthExpanded
-                        && longChineseQueryFits,
-                    searchFieldActivated: controller.store.isSearchFieldActive,
-                    nativeTextFieldCount: textFieldCount,
-                    nativeTextEditorFocused: editor != nil,
-                    firstKeyboardEventReplayed: firstKeyboardEventReplayed,
-                    markedTextActive: markedTextActive,
-                    compositionEventPassedThrough: compositionEventPassedThrough,
-                    adaptiveWidthExpanded: adaptiveWidthExpanded,
-                    longChineseQueryFits: longChineseQueryFits
+                let queryUpdateStarted = CFAbsoluteTimeGetCurrent()
+                for query in [
+                    "pesty",
+                    "pesty-search-performance",
+                    "pesty-search-performance-4999"
+                ] {
+                    controller.store.searchText = query
+                    _ = controller.store.visibleItems.count
+                }
+                let rapidQueryUpdateMilliseconds = Int(
+                    (CFAbsoluteTimeGetCurrent() - queryUpdateStarted) * 1_000
                 )
-                writeSearchInput(result)
-                exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+                let maximumRapidQueryUpdateMilliseconds = 100
+
+                Task { @MainActor in
+                    await controller.store.waitForSearchForAutomatedTest()
+                    let latestQueryResultCorrect =
+                        controller.store.visibleItems.count == 1
+                        && controller.store.visibleItems.first?.text?
+                            .hasSuffix("pesty-search-performance-4999") == true
+                    let result = SearchInputResult(
+                        phase: "search-input",
+                        success: editor != nil
+                            && firstKeyboardEventReplayed
+                            && markedTextActive
+                            && compositionEventPassedThrough
+                            && adaptiveWidthExpanded
+                            && longChineseQueryFits
+                            && rapidQueryUpdateMilliseconds
+                                <= maximumRapidQueryUpdateMilliseconds
+                            && latestQueryResultCorrect,
+                        searchFieldActivated: controller.store.isSearchFieldActive,
+                        nativeTextFieldCount: textFieldCount,
+                        nativeTextEditorFocused: editor != nil,
+                        firstKeyboardEventReplayed: firstKeyboardEventReplayed,
+                        markedTextActive: markedTextActive,
+                        compositionEventPassedThrough: compositionEventPassedThrough,
+                        adaptiveWidthExpanded: adaptiveWidthExpanded,
+                        longChineseQueryFits: longChineseQueryFits,
+                        largeHistoryCount: largeHistoryCount,
+                        rapidQueryUpdateMilliseconds: rapidQueryUpdateMilliseconds,
+                        maximumRapidQueryUpdateMilliseconds:
+                            maximumRapidQueryUpdateMilliseconds,
+                        latestQueryResultCorrect: latestQueryResultCorrect
+                    )
+                    writeSearchInput(result)
+                    exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+                }
             }
         }
     }
