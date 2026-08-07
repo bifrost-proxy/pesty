@@ -257,6 +257,23 @@ enum AutomatedUITestRunner {
         let rapidQueryUpdateMilliseconds: Int
         let maximumRapidQueryUpdateMilliseconds: Int
         let latestQueryResultCorrect: Bool
+        let searchIndexCount: Int
+        let searchIndexBuildCount: Int
+        let fullSearchScannedCount: Int
+        let narrowedSearchScannedCount: Int
+        let furtherNarrowedSearchScannedCount: Int
+        let finalNarrowedSearchScannedCount: Int
+        let prefixNarrowingWorked: Bool
+        let maximumIncrementalSearchMilliseconds: Int
+        let incrementalSearchLimitMilliseconds: Int
+        let maximumSmallCandidateSearchMilliseconds: Int
+        let smallCandidateSearchLimitMilliseconds: Int
+        let cachedBackspaceScannedCount: Int
+        let maximumInputCadenceDelayMilliseconds: Int
+        let inputCadenceDelayLimitMilliseconds: Int
+        let liveMutationSearchUpdated: Bool
+        let unicodeSearchCorrect: Bool
+        let caseInsensitiveSearchCorrect: Bool
     }
 
     private struct TranslationBoardResult: Codable {
@@ -636,6 +653,10 @@ enum AutomatedUITestRunner {
         controller.store.replaceHistoryForAutomatedPanelReconciliationTest(
             [memoryItem]
         )
+        // Production constructs the panel controller during application
+        // launch. Keep the timing boundary focused on presentation and disk
+        // reconciliation instead of one-time SwiftUI host construction.
+        controller.prepareBarForAutomatedPanelReconciliationTest()
 
         guard let base = ClipboardStore.automatedTestBase else {
             exit(EXIT_FAILURE)
@@ -768,6 +789,8 @@ enum AutomatedUITestRunner {
                 let longChineseQueryFits =
                     longWidth >= SearchFieldLayout.requiredWidth(for: longChineseQuery)
                 let largeHistoryCount = 5_000
+                let searchIndexBuildCountBeforeLargeHistory =
+                    controller.store.searchDiagnosticsForAutomatedTest().buildCount
                 let payload = String(repeating: "clipboard-search-payload ", count: 48)
                 let items = (0..<largeHistoryCount).map { index in
                     ClipItem(
@@ -778,26 +801,132 @@ enum AutomatedUITestRunner {
                 }
                 controller.store.replaceHistoryForAutomatedSearchTest(items)
 
-                let queryUpdateStarted = CFAbsoluteTimeGetCurrent()
-                for query in [
-                    "pesty",
-                    "pesty-search-performance",
-                    "pesty-search-performance-4999"
-                ] {
-                    controller.store.searchText = query
-                    _ = controller.store.visibleItems.count
-                }
-                let rapidQueryUpdateMilliseconds = Int(
-                    (CFAbsoluteTimeGetCurrent() - queryUpdateStarted) * 1_000
-                )
-                let maximumRapidQueryUpdateMilliseconds = 100
-
                 Task { @MainActor in
+                    var rapidQueryUpdateMilliseconds = 0
+                    var maximumInputCadenceDelayMilliseconds = 0
+                    let inputCadenceMilliseconds = 15
+                    for query in [
+                        "p",
+                        "pe",
+                        "pes",
+                        "pest",
+                        "pesty",
+                        "pesty-search",
+                        "pesty-search-performance",
+                        "pesty-search-performance-3",
+                        "pesty-search-performance-38",
+                        "pesty-search-performance-388",
+                        "pesty-search-performance-3888"
+                    ] {
+                        let updateStarted = CFAbsoluteTimeGetCurrent()
+                        controller.store.searchText = query
+                        _ = controller.store.visibleItems.count
+                        rapidQueryUpdateMilliseconds = max(
+                            rapidQueryUpdateMilliseconds,
+                            Int(
+                                (CFAbsoluteTimeGetCurrent() - updateStarted)
+                                    * 1_000
+                            )
+                        )
+                        let expectedResume = CFAbsoluteTimeGetCurrent()
+                            + Double(inputCadenceMilliseconds) / 1_000
+                        try? await Task.sleep(
+                            for: .milliseconds(inputCadenceMilliseconds)
+                        )
+                        maximumInputCadenceDelayMilliseconds = max(
+                            maximumInputCadenceDelayMilliseconds,
+                            Int(
+                                max(0, CFAbsoluteTimeGetCurrent() - expectedResume)
+                                    * 1_000
+                            )
+                        )
+                    }
+                    let maximumRapidQueryUpdateMilliseconds = 16
+                    let inputCadenceDelayLimitMilliseconds = 50
                     await controller.store.waitForSearchForAutomatedTest()
                     let latestQueryResultCorrect =
                         controller.store.visibleItems.count == 1
                         && controller.store.visibleItems.first?.text?
+                            .hasSuffix("pesty-search-performance-3888") == true
+
+                    var incrementalSearchDurations: [Int] = []
+                    var scannedCounts: [Int] = []
+                    for query in [
+                        "pesty-search-performance-4",
+                        "pesty-search-performance-49",
+                        "pesty-search-performance-499",
+                        "pesty-search-performance-4999"
+                    ] {
+                        let started = CFAbsoluteTimeGetCurrent()
+                        controller.store.searchText = query
+                        await controller.store.waitForSearchForAutomatedTest()
+                        incrementalSearchDurations.append(
+                            Int((CFAbsoluteTimeGetCurrent() - started) * 1_000)
+                        )
+                        scannedCounts.append(
+                            controller.store.searchDiagnosticsForAutomatedTest()
+                                .lastScannedCount
+                        )
+                    }
+                    let diagnostics =
+                        controller.store.searchDiagnosticsForAutomatedTest()
+                    let largeHistorySearchIndexBuildCount = diagnostics.buildCount
+                        - searchIndexBuildCountBeforeLargeHistory
+                    let fullSearchScannedCount = scannedCounts[0]
+                    let narrowedSearchScannedCount = scannedCounts[1]
+                    let furtherNarrowedSearchScannedCount = scannedCounts[2]
+                    let finalNarrowedSearchScannedCount = scannedCounts[3]
+                    let prefixNarrowingWorked =
+                        fullSearchScannedCount == largeHistoryCount
+                        && narrowedSearchScannedCount < fullSearchScannedCount
+                        && furtherNarrowedSearchScannedCount
+                            < narrowedSearchScannedCount
+                        && finalNarrowedSearchScannedCount
+                            < furtherNarrowedSearchScannedCount
+                    let maximumIncrementalSearchMilliseconds =
+                        incrementalSearchDurations.max() ?? .max
+                    let incrementalSearchLimitMilliseconds = 250
+                    let maximumSmallCandidateSearchMilliseconds =
+                        incrementalSearchDurations.suffix(2).max() ?? .max
+                    let smallCandidateSearchLimitMilliseconds = 50
+                    let finalNarrowedResultCorrect =
+                        controller.store.visibleItems.count == 1
+                        && controller.store.visibleItems.first?.text?
                             .hasSuffix("pesty-search-performance-4999") == true
+                    controller.store.searchText = "pesty-search-performance-499"
+                    await controller.store.waitForSearchForAutomatedTest()
+                    let cachedBackspaceScannedCount =
+                        controller.store.searchDiagnosticsForAutomatedTest()
+                            .lastScannedCount
+                    let buildCountBeforeLiveMutation =
+                        controller.store.searchDiagnosticsForAutomatedTest()
+                            .buildCount
+                    let liveMutationItem = ClipItem(
+                        type: .text,
+                        text: "\(payload)pesty-search-performance-499-live 中文搜索性能",
+                        createdAt: Date()
+                    )
+                    controller.store.addCaptured(liveMutationItem)
+                    await controller.store.waitForSearchForAutomatedTest()
+                    let liveMutationDiagnostics =
+                        controller.store.searchDiagnosticsForAutomatedTest()
+                    let liveMutationSearchUpdated =
+                        liveMutationDiagnostics.indexCount == largeHistoryCount
+                        && liveMutationDiagnostics.buildCount
+                            == buildCountBeforeLiveMutation + 1
+                        && controller.store.visibleItems.first?.id
+                            == liveMutationItem.id
+                    controller.store.searchText = "中文搜索性能"
+                    await controller.store.waitForSearchForAutomatedTest()
+                    let unicodeSearchCorrect =
+                        controller.store.visibleItems.map(\.id)
+                            == [liveMutationItem.id]
+                    controller.store.searchText =
+                        "PESTY-SEARCH-PERFORMANCE-499-LIVE"
+                    await controller.store.waitForSearchForAutomatedTest()
+                    let caseInsensitiveSearchCorrect =
+                        controller.store.visibleItems.map(\.id)
+                            == [liveMutationItem.id]
                     let result = SearchInputResult(
                         phase: "search-input",
                         success: editor != nil
@@ -808,7 +937,21 @@ enum AutomatedUITestRunner {
                             && longChineseQueryFits
                             && rapidQueryUpdateMilliseconds
                                 <= maximumRapidQueryUpdateMilliseconds
-                            && latestQueryResultCorrect,
+                            && maximumInputCadenceDelayMilliseconds
+                                <= inputCadenceDelayLimitMilliseconds
+                            && latestQueryResultCorrect
+                            && diagnostics.indexCount == largeHistoryCount
+                            && largeHistorySearchIndexBuildCount == 1
+                            && prefixNarrowingWorked
+                            && maximumIncrementalSearchMilliseconds
+                                <= incrementalSearchLimitMilliseconds
+                            && maximumSmallCandidateSearchMilliseconds
+                                <= smallCandidateSearchLimitMilliseconds
+                            && finalNarrowedResultCorrect
+                            && cachedBackspaceScannedCount == 0
+                            && liveMutationSearchUpdated
+                            && unicodeSearchCorrect
+                            && caseInsensitiveSearchCorrect,
                         searchFieldActivated: controller.store.isSearchFieldActive,
                         nativeTextFieldCount: textFieldCount,
                         nativeTextEditorFocused: editor != nil,
@@ -821,7 +964,33 @@ enum AutomatedUITestRunner {
                         rapidQueryUpdateMilliseconds: rapidQueryUpdateMilliseconds,
                         maximumRapidQueryUpdateMilliseconds:
                             maximumRapidQueryUpdateMilliseconds,
-                        latestQueryResultCorrect: latestQueryResultCorrect
+                        latestQueryResultCorrect: latestQueryResultCorrect,
+                        searchIndexCount: diagnostics.indexCount,
+                        searchIndexBuildCount: largeHistorySearchIndexBuildCount,
+                        fullSearchScannedCount: fullSearchScannedCount,
+                        narrowedSearchScannedCount: narrowedSearchScannedCount,
+                        furtherNarrowedSearchScannedCount:
+                            furtherNarrowedSearchScannedCount,
+                        finalNarrowedSearchScannedCount:
+                            finalNarrowedSearchScannedCount,
+                        prefixNarrowingWorked: prefixNarrowingWorked,
+                        maximumIncrementalSearchMilliseconds:
+                            maximumIncrementalSearchMilliseconds,
+                        incrementalSearchLimitMilliseconds:
+                            incrementalSearchLimitMilliseconds,
+                        maximumSmallCandidateSearchMilliseconds:
+                            maximumSmallCandidateSearchMilliseconds,
+                        smallCandidateSearchLimitMilliseconds:
+                            smallCandidateSearchLimitMilliseconds,
+                        cachedBackspaceScannedCount: cachedBackspaceScannedCount,
+                        maximumInputCadenceDelayMilliseconds:
+                            maximumInputCadenceDelayMilliseconds,
+                        inputCadenceDelayLimitMilliseconds:
+                            inputCadenceDelayLimitMilliseconds,
+                        liveMutationSearchUpdated: liveMutationSearchUpdated,
+                        unicodeSearchCorrect: unicodeSearchCorrect,
+                        caseInsensitiveSearchCorrect:
+                            caseInsensitiveSearchCorrect
                     )
                     writeSearchInput(result)
                     exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
