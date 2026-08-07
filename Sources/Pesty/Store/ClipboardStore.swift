@@ -328,24 +328,40 @@ final class ClipboardStore {
         didSet {
             stripContentRevision &+= 1
             dataRevision &+= 1
+            invalidateSearchIndexAndRefreshResults()
         }
     }
     private(set) var pinboards: [Pinboard] = [] {
         didSet {
             stripContentRevision &+= 1
             dataRevision &+= 1
+            invalidateSearchIndexAndRefreshResults()
         }
     }
     private(set) var storageUsageBytes: Int64 = 0
 
     var source: BarSource = .history {
         didSet {
-            if source != oldValue { stripContentRevision &+= 1 }
+            if source != oldValue {
+                stripContentRevision &+= 1
+                scheduleSearchResultsUpdate(debounce: false)
+            }
         }
     }
     var searchText: String = "" {
         didSet {
-            if searchText != oldValue { stripContentRevision &+= 1 }
+            guard searchText != oldValue else { return }
+            let oldQuery = normalizedSearchQuery(oldValue)
+            let newQuery = normalizedSearchQuery(searchText)
+            guard oldQuery != newQuery else { return }
+            if newQuery.isEmpty {
+                searchTask?.cancel()
+                searchTask = nil
+                searchGeneration &+= 1
+                stripContentRevision &+= 1
+            } else {
+                scheduleSearchResultsUpdate(debounce: true)
+            }
         }
     }
     var isSearchFieldActive = false
@@ -358,6 +374,12 @@ final class ClipboardStore {
     private var historyLimitWorkItem: DispatchWorkItem?
     private var deletionTombstones: [String: ClipDeletionTombstone] = [:]
     @ObservationIgnored private var dataRevision: UInt64 = 0
+    @ObservationIgnored private var filteredSearchItems: [ClipItem] = []
+    @ObservationIgnored private var appliedSearchSource: BarSource?
+    @ObservationIgnored private var appliedSearchDataRevision: UInt64 = 0
+    @ObservationIgnored private var searchIndex: [UUID: String] = [:]
+    @ObservationIgnored private var searchTask: Task<Void, Never>?
+    @ObservationIgnored private var searchGeneration: UInt64 = 0
     @ObservationIgnored private var storageUsageTask: Task<Void, Never>?
     @ObservationIgnored private var diskReconciliationTask: Task<Void, Never>?
     @ObservationIgnored private var diskReconciliationRequested = false
@@ -420,16 +442,114 @@ final class ClipboardStore {
     }
 
     var visibleItems: [ClipItem] {
-        let base: [ClipItem]
+        let base = items(for: source)
+        guard !normalizedSearchQuery(searchText).isEmpty else { return base }
+        guard appliedSearchSource == source,
+              appliedSearchDataRevision == dataRevision else { return base }
+        return filteredSearchItems
+    }
+
+    private func items(for source: BarSource) -> [ClipItem] {
         switch source {
         case .history:
-            base = history
+            history
         case .pinboard(let id):
-            base = pinboards.first(where: { $0.id == id })?.items ?? []
+            pinboards.first(where: { $0.id == id })?.items ?? []
         }
-        let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return base }
-        return base.filter { $0.searchableText.contains(q) }
+    }
+
+    private func normalizedSearchQuery(_ text: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func invalidateSearchIndexAndRefreshResults() {
+        searchIndex = [:]
+        guard !normalizedSearchQuery(searchText).isEmpty else { return }
+        scheduleSearchResultsUpdate(debounce: false)
+    }
+
+    private func scheduleSearchResultsUpdate(debounce: Bool) {
+        searchTask?.cancel()
+        searchGeneration &+= 1
+
+        let query = normalizedSearchQuery(searchText)
+        guard !query.isEmpty else {
+            searchTask = nil
+            return
+        }
+
+        let generation = searchGeneration
+        let expectedSource = source
+        let expectedDataRevision = dataRevision
+        let base = items(for: expectedSource)
+        let existingIndex = searchIndex
+
+        searchTask = Task { [weak self] in
+            // Keep native text editing responsive while a user is still
+            // composing a query. Until the newest result is ready, the strip
+            // continues to display its last coherent snapshot.
+            if debounce {
+                do {
+                    try await Task.sleep(for: .milliseconds(60))
+                } catch {
+                    return
+                }
+            }
+            guard !Task.isCancelled else { return }
+
+            // Building searchable text can dominate filtering for large or
+            // long clipboard entries, so both indexing and matching stay off
+            // the main actor. The generation checks below discard stale work.
+            let worker = Task.detached(priority: .userInitiated) {
+                var index = existingIndex
+                var matches: [ClipItem] = []
+                matches.reserveCapacity(min(base.count, 256))
+
+                for (offset, item) in base.enumerated() {
+                    if offset.isMultiple(of: 32), Task.isCancelled {
+                        return Optional<(items: [ClipItem], index: [UUID: String])>.none
+                    }
+                    let searchableText: String
+                    if let indexed = index[item.id] {
+                        searchableText = indexed
+                    } else {
+                        searchableText = item.searchableText
+                        index[item.id] = searchableText
+                    }
+                    if searchableText.contains(query) {
+                        matches.append(item)
+                    }
+                }
+                return (items: matches, index: index)
+            }
+            let result = await withTaskCancellationHandler {
+                await worker.value
+            } onCancel: {
+                worker.cancel()
+            }
+            guard !Task.isCancelled,
+                  let result,
+                  let self,
+                  self.searchGeneration == generation,
+                  self.source == expectedSource,
+                  self.dataRevision == expectedDataRevision,
+                  self.normalizedSearchQuery(self.searchText) == query else { return }
+
+            self.searchIndex = result.index
+            self.filteredSearchItems = result.items
+            self.appliedSearchSource = expectedSource
+            self.appliedSearchDataRevision = expectedDataRevision
+            self.selectedID = result.items.first?.id
+            self.stripContentRevision &+= 1
+            self.searchTask = nil
+        }
+    }
+
+    func waitForSearchForAutomatedTest() async {
+        guard ClipboardStore.automatedTestBase != nil else { return }
+        while let task = searchTask {
+            await task.value
+        }
     }
 
     var selectedItem: ClipItem? {
@@ -656,6 +776,19 @@ final class ClipboardStore {
             return
         }
         history = items
+        source = .history
+        searchText = ""
+        selectedID = items.first?.id
+    }
+
+    func replaceHistoryForAutomatedSearchTest(_ items: [ClipItem]) {
+        guard ClipboardStore.automatedTestBase != nil,
+              ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"]
+                == "search-input" else {
+            return
+        }
+        history = items
+        pinboards = []
         source = .history
         searchText = ""
         selectedID = items.first?.id
