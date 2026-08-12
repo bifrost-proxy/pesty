@@ -90,6 +90,8 @@ struct ClipCardView: View {
     private var processingLabel: String? {
         if translationCenter.itemID == item.id {
             switch translationCenter.status {
+            case .recognizingImage:
+                return L10n.recognizingImageText
             case .checkingService:
                 return L10n.checkingTranslationService
             case .translating:
@@ -274,8 +276,7 @@ struct ClipCardView: View {
     private var menu: some View {
         Button(L10n.paste) { AppController.shared.pasteItem(item) }
         Button(L10n.copy) { AppController.shared.copyItem(item) }
-        if let text = item.text?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !text.isEmpty {
+        if item.hasTranslatableContent {
             assistantMenuButton(
                 L10n.translate,
                 keyCode: settings.translationHotkeyKeyCode,
@@ -283,6 +284,8 @@ struct ClipCardView: View {
             ) {
                 AppController.shared.showTranslationBoard(for: item)
             }
+        }
+        if item.hasTextContent {
             assistantMenuButton(
                 L10n.explanation,
                 keyCode: settings.explanationHotkeyKeyCode,

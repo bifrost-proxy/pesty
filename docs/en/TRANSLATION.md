@@ -22,13 +22,14 @@ selected in secure fields or password fields.
 
 ### Translate Clipboard History
 
-1. Press `⌘⇧V` to open Pesty and select a card containing text.
+1. Press `⌘⇧V` to open Pesty and select a text-bearing or image card.
 2. Press `⇧⌘T`, or right-click the card and choose “Translate.”
 3. The translation board appears above the selected card and starts translating automatically.
 
-Translation is available only for cards that contain text, including text,
-rich text, and link cards. Images and files without text cannot be translated
-directly.
+Text, rich-text, and link cards enter translation directly. Image cards first
+use macOS Vision to recognize text locally, then use the same translation
+pipeline; you can retry if no readable text is detected. Ordinary files cannot
+currently be translated directly.
 
 The default `⇧⌘T` shortcut works both globally and inside the Pesty panel. You
 can change it under “Settings → Translate & Explain → Translation shortcut.”
@@ -75,7 +76,7 @@ Apple Translation does not require an API key in Pesty:
 4. Choose the default source and target languages.
 5. Under “Apple Translate language packs,” inspect “Required baseline” and “Current language selection.”
 6. Click “Download” for each pack marked “Not downloaded,” and keep Settings open until it reports “Downloaded and ready.”
-7. Select text in any app, or select a text card in Pesty, then press `⇧⌘T`.
+7. Select text in any app, or select a text or image card in Pesty, then press `⇧⌘T`.
 
 If the selected language pair is unavailable, choose different source or target
 languages or configure Doubao. In Automatic mode, Pesty attempts to fall back
@@ -119,8 +120,8 @@ iCloud.
 ## Privacy
 
 - With Apple Translation, Pesty submits the current text through the system Translation framework.
-- With Doubao, only the text you explicitly ask Pesty to translate is sent to Volcengine Ark.
-- Pesty never bulk-uploads clipboard history, Pinboards, images, or files for translation.
+- With Doubao, only the text you explicitly ask Pesty to translate, including transient locally recognized OCR text, is sent to Volcengine Ark.
+- Image OCR runs entirely on the Mac. Pesty does not upload the original image or persist OCR output to clipboard history or iCloud.
 - Global translation first tries to read selected text through Accessibility. If an app does not expose its selection directly, Pesty may issue a temporary Copy command and then fully restore the original clipboard. The temporary text is not written to history.
 - Pesty does not read or translate content from secure text fields.
 - The Doubao API key is stored in macOS Keychain, not in preferences, clipboard storage, or iCloud.

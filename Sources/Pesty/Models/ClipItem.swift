@@ -44,6 +44,14 @@ struct ClipItem: Identifiable, Codable, Equatable, Sendable {
 
     var charCount: Int { text?.count ?? 0 }
 
+    var hasTextContent: Bool {
+        text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+
+    var hasTranslatableContent: Bool {
+        hasTextContent || (type == .image && imageFileName != nil)
+    }
+
     var displayTitle: String {
         if let t = customTitle, !t.isEmpty { return t }
         switch type {

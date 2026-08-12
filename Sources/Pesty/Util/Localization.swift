@@ -220,11 +220,26 @@ enum L10n {
     static var closeTranslation: String { text("Close translation", "关闭翻译") }
     static var moreTranslationOptions: String { text("More translation options", "更多翻译选项") }
     static var translating: String { text("Translating…", "正在翻译…") }
+    static var recognizingImageText: String {
+        text("Recognizing text in image…", "正在识别图片文字…")
+    }
     static var copyTranslation: String { text("Copy translation", "复制译文") }
     static var retryTranslation: String { text("Retry", "重试") }
     static var translationFailed: String { text("Translation failed. Please try again.", "翻译失败，请重试。") }
     static var noTranslatableText: String {
-        text("Select a text clip to translate.", "请选择一条文本剪贴内容进行翻译。")
+        text("Select a text or image clip to translate.", "请选择一条文本或图片剪贴内容进行翻译。")
+    }
+    static var noTextRecognizedInImage: String {
+        text(
+            "No readable text was found in this image.",
+            "没有在这张图片中识别到可读文字。"
+        )
+    }
+    static var imageTextRecognitionFailed: String {
+        text(
+            "Couldn’t recognize text in this image. Please try again.",
+            "无法识别这张图片中的文字，请重试。"
+        )
     }
     static var selectTextToTranslate: String {
         text(

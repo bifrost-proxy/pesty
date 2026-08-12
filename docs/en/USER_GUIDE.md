@@ -40,7 +40,7 @@ Common shortcuts:
 | Shortcut | Action |
 | --- | --- |
 | `⌘⇧V` | Open or close the panel; customizable in Settings |
-| `⇧⌘T` | Globally translate selected text, or translate the selected text card while the panel is open; customizable in Settings |
+| `⇧⌘T` | Globally translate selected text, or translate the selected text or image card while the panel is open; customizable in Settings |
 | `⇧⌘D` | Globally explain selected text, or explain the selected text card while the panel is open; customizable in Settings |
 | `T` | Swap source and target languages while the translation board is open and the source language is explicit |
 | `←` `→` `↑` `↓` | Move the selection |
@@ -75,9 +75,11 @@ Select text in any app and press `⇧⌘T` to translate it or `⇧⌘D` to recei
 concise explanation. Reading selected text globally requires Accessibility
 permission. Pesty does not read secure text fields.
 
-You can use the same shortcuts after selecting a text card in Pesty, or choose
-“Translate” or “Explain” from the card’s context menu. Results appear near the
-selection or card. Click outside the result board to dismiss it.
+You can use the same shortcuts after selecting a text card in Pesty. Image
+cards can also be translated after macOS Vision recognizes their text locally.
+You can also choose “Translate” or “Explain” from the card’s context menu.
+Results appear near the selection or card. Click outside the result board to
+dismiss it.
 
 - Apple Translation is available on macOS 15 and later.
 - Apple Translation requires the relevant language packs, which you can inspect and download under “Settings → Translate & Explain.”

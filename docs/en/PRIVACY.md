@@ -37,15 +37,19 @@ analytics services. The app accesses the network only for these product
 features:
 
 - When the user explicitly uses Doubao to translate or explain selected text.
+- When the user explicitly translates an image card, Pesty temporarily recognizes
+  text locally with macOS Vision. The original image is not sent to a translation
+  service; Doubao receives only the recognized text when selected.
 - When the user explicitly uses a compatible AI service to explain selected text.
 - At launch, every hour, or during a manual update check, to read the public GitHub Releases Feed.
 - After the user confirms an update, to download the release from GitHub Releases.
 - When the user clicks GitHub or “Report an Issue” links, which open in the system browser.
 - After the user explicitly enables iCloud sync, which is handled by macOS and iCloud Drive.
 
-Cloud translation and explanation send only the text the user explicitly asks
-Pesty to process. They never bulk-upload clipboard history, Pinboard content,
-or user files. API keys are stored in macOS Keychain and are not written to
+Cloud translation and explanation send only text or transient OCR output the
+user explicitly asks Pesty to process. They never bulk-upload clipboard history,
+Pinboard content, original images, or user files. OCR output is not stored in
+history or iCloud. API keys are stored in macOS Keychain and are not written to
 preferences or iCloud. Update requests contain no clipboard history, Pinboard
 content, or user file contents.
 

@@ -197,6 +197,8 @@ struct TranslationBoardView: View {
             alreadyInTargetState(message: message)
         case .checkingService:
             progressState(label: L10n.checkingTranslationService)
+        case .recognizingImage:
+            progressState(label: L10n.recognizingImageText)
         case .translating:
             progressState(label: L10n.translating)
         case .unavailable(let message):
