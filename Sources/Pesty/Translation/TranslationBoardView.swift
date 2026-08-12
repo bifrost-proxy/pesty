@@ -230,10 +230,12 @@ struct TranslationBoardView: View {
     private var translationResult: some View {
         VStack(alignment: .leading, spacing: 8) {
             ScrollView {
-                Text(center.translatedText)
-                    .font(.system(size: 15))
-                    .foregroundStyle(palette.textPrimary.swiftUIColor)
-                    .textSelection(.enabled)
+                ExplanationMarkdownView(
+                    markdown: center.translatedText,
+                    foregroundColor: palette.textPrimary.swiftUIColor,
+                    fontSize: 15,
+                    preservesLineBreaks: true
+                )
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             }
             HStack {

@@ -6,6 +6,21 @@ All notable changes to Pesty are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.6.24] - 2026-08-12
+
+### Added
+
+- Render lightweight Markdown in translation results using the native macOS
+  attributed-string parser, including headings, emphasis, lists, quotes, and
+  code.
+
+### Fixed
+
+- Preserve translated paragraph line breaks while keeping long results inside
+  the adaptive, scrollable translation popover.
+
+[1.6.24]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.6.24
+
 ## [1.6.21] - 2026-08-03
 
 ### Fixed

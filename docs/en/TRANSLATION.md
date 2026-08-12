@@ -109,7 +109,9 @@ iCloud.
 - Changing the source or target language immediately translates again with the new settings.
 - When both source and target languages are explicit, click the swap button or press `T` to exchange them and translate again.
 - Changing the service under “More → Translation service” immediately translates again.
-- You can select text within the result or click “Copy Translation” to copy the complete result.
+- The result preserves line breaks and renders lightweight Markdown such as
+  headings, emphasis, lists, quotes, and code. You can also select text or click
+  “Copy Translation” to copy the complete, unmodified result.
 - Click “Retry” after a failure. If no service is available, open Translation Settings directly from the board.
 - Translation, explanation, and full content preview are mutually exclusive. Opening one closes the other two.
 - Press `Esc`, click outside the board, click its close button, or press the global translation shortcut again to dismiss it.
