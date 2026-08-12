@@ -100,6 +100,18 @@ enum LocalizationVerifier {
                     "Select some text, then use the global translation shortcut."
                 ),
                 (
+                    L10n.recognizingImageText,
+                    "Recognizing text in image…"
+                ),
+                (
+                    L10n.noTextRecognizedInImage,
+                    "No readable text was found in this image."
+                ),
+                (
+                    L10n.imageTextRecognitionFailed,
+                    "Couldn’t recognize text in this image. Please try again."
+                ),
+                (
                     L10n.selectTextToExplain,
                     "Select some text, then use the global explanation shortcut."
                 ),
@@ -230,6 +242,18 @@ enum LocalizationVerifier {
                 (
                     L10n.selectTextToTranslate,
                     "请先选中需要翻译的文字，然后使用全局翻译快捷键。"
+                ),
+                (
+                    L10n.recognizingImageText,
+                    "正在识别图片文字…"
+                ),
+                (
+                    L10n.noTextRecognizedInImage,
+                    "没有在这张图片中识别到可读文字。"
+                ),
+                (
+                    L10n.imageTextRecognitionFailed,
+                    "无法识别这张图片中的文字，请重试。"
                 ),
                 (
                     L10n.selectTextToExplain,

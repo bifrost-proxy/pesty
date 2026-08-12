@@ -2,6 +2,7 @@ import AppKit
 import Carbon.HIToolbox
 import Foundation
 import Security
+@_weakLinked import Vision
 
 @MainActor
 enum TranslationVerifier {
@@ -41,6 +42,9 @@ enum TranslationVerifier {
         let explanationRequestRequiresConciseOutput: Bool
         let explanationMarkdownRenderingSupported: Bool
         let translationMarkdownRenderingSupported: Bool
+        let imageTranslationEligibilityIsCorrect: Bool
+        let imageOCRUsesAccurateLocalRecognition: Bool
+        let imageOCRRecognizesSyntheticText: Bool
         let translationPopoverGrowsAndCapsHeight: Bool
         let explanationPopoverGrowsAndCapsHeight: Bool
         let openAIEndpointNormalizesToChatCompletions: Bool
@@ -466,6 +470,25 @@ enum TranslationVerifier {
                 description: "Translation Markdown or line-break parsing is incorrect"
             )
         }
+        let imageTranslationEligibilityIsCorrect = ClipItem(
+            type: .image,
+            imageFileName: "synthetic.png"
+        ).hasTranslatableContent && !ClipItem(type: .image).hasTranslatableContent
+        guard imageTranslationEligibilityIsCorrect else {
+            throw Failure(description: "Image translation eligibility is incorrect")
+        }
+        let imageOCRUsesAccurateLocalRecognition =
+            ImageTextRecognizer.recognitionLevel == .accurate
+            && ImageTextRecognizer.automaticallyDetectsLanguage
+            && ImageTextRecognizer.usesLanguageCorrection
+            && ImageTextRecognizer.maximumPixelDimension == 2_048
+        guard imageOCRUsesAccurateLocalRecognition else {
+            throw Failure(description: "Image OCR configuration is incorrect")
+        }
+        let imageOCRRecognizesSyntheticText = try verifySyntheticImageOCR()
+        guard imageOCRRecognizesSyntheticText else {
+            throw Failure(description: "Image OCR did not recognize synthetic text")
+        }
         let defaultTranslationHeight =
             AssistantPopoverLayout.preferredTranslationHeight(
                 translation: "Short translation"
@@ -612,6 +635,9 @@ enum TranslationVerifier {
             explanationRequestRequiresConciseOutput: explanationRequestRequiresConciseOutput,
             explanationMarkdownRenderingSupported: explanationMarkdownRenderingSupported,
             translationMarkdownRenderingSupported: translationMarkdownRenderingSupported,
+            imageTranslationEligibilityIsCorrect: imageTranslationEligibilityIsCorrect,
+            imageOCRUsesAccurateLocalRecognition: imageOCRUsesAccurateLocalRecognition,
+            imageOCRRecognizesSyntheticText: imageOCRRecognizesSyntheticText,
             translationPopoverGrowsAndCapsHeight:
                 translationPopoverGrowsAndCapsHeight,
             explanationPopoverGrowsAndCapsHeight: explanationPopoverGrowsAndCapsHeight,
@@ -628,5 +654,55 @@ enum TranslationVerifier {
             throw Failure(description: "Could not encode translation verification result")
         }
         print("TRANSLATION_VERIFICATION_RESULT \(json)")
+    }
+
+    private static func verifySyntheticImageOCR() throws -> Bool {
+        let marker = "PESTY OCR 4827"
+        guard let data = syntheticOCRImageData(text: marker) else {
+            return false
+        }
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pesty-ocr-verifier-\(UUID().uuidString)")
+        let imageURL = directory.appendingPathComponent("fixture.png")
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try data.write(to: imageURL, options: .atomic)
+        let recognized = try ImageTextRecognizer.recognizeTextSynchronously(
+            at: imageURL
+        )
+        return recognized.localizedCaseInsensitiveContains(marker)
+    }
+
+    private static func syntheticOCRImageData(text: String) -> Data? {
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 1_200,
+            pixelsHigh: 320,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ), let context = NSGraphicsContext(bitmapImageRep: bitmap) else {
+            return nil
+        }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        NSColor.white.setFill()
+        NSRect(x: 0, y: 0, width: 1_200, height: 320).fill()
+        (text as NSString).draw(
+            in: NSRect(x: 70, y: 100, width: 1_060, height: 120),
+            withAttributes: [
+                .font: NSFont.systemFont(ofSize: 76, weight: .semibold),
+                .foregroundColor: NSColor.black,
+            ]
+        )
+        NSGraphicsContext.restoreGraphicsState()
+        return bitmap.representation(using: .png, properties: [:])
     }
 }

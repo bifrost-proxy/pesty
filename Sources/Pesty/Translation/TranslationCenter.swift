@@ -11,6 +11,7 @@ import SwiftUI
 
 enum TranslationBoardStatus: Equatable {
     case idle
+    case recognizingImage
     case checkingService
     case translating
     case translated
@@ -64,6 +65,8 @@ final class TranslationCenter {
     private var activeRequestID: UUID?
     @ObservationIgnored private var appleWorkTask: Task<Void, Never>?
     @ObservationIgnored private var appleTimeoutTask: Task<Void, Never>?
+    @ObservationIgnored private var imageRecognitionTask: Task<Void, Never>?
+    @ObservationIgnored private var imageRecognitionURL: URL?
 
     @ObservationIgnored private static let logger = Logger(
         subsystem: "com.bifrostproxy.pesty",
@@ -106,7 +109,15 @@ final class TranslationCenter {
 
     func present(for item: ClipItem?) {
         itemID = item?.id
-        present(text: item?.text, preservesItemID: true)
+        guard let item else {
+            present(text: nil, preservesItemID: true)
+            return
+        }
+        if item.type == .image {
+            presentImage(item)
+        } else {
+            present(text: item.text, preservesItemID: true)
+        }
     }
 
     func present(text: String?) {
@@ -115,7 +126,7 @@ final class TranslationCenter {
     }
 
     func presentUnavailable(_ message: String) {
-        cancelAppleTasks()
+        cancelAllTasks()
         appleTranslationRequest = nil
         activeRequestID = nil
         itemID = nil
@@ -125,6 +136,7 @@ final class TranslationCenter {
         detectedSourceLanguage = nil
         providerName = ""
         failureDiagnostic = nil
+        imageRecognitionURL = nil
         status = .unavailable(message)
     }
 
@@ -132,12 +144,13 @@ final class TranslationCenter {
         text: String?,
         preservesItemID: Bool
     ) {
-        cancelAppleTasks()
+        cancelAllTasks()
         appleTranslationRequest = nil
         activeRequestID = nil
         if !preservesItemID {
             itemID = nil
         }
+        imageRecognitionURL = nil
         guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines),
               !text.isEmpty else {
             isPresented = true
@@ -167,7 +180,8 @@ final class TranslationCenter {
         status = .idle
         appleTranslationRequest = nil
         activeRequestID = nil
-        cancelAppleTasks()
+        imageRecognitionURL = nil
+        cancelAllTasks()
     }
 
     func setSourceLanguage(_ language: TranslationLanguage) {
@@ -201,8 +215,11 @@ final class TranslationCenter {
     }
 
     func retry() {
-        guard !sourceText.isEmpty else { return }
-        translateCurrentText()
+        if sourceText.isEmpty, imageRecognitionURL != nil {
+            startImageRecognition()
+        } else if !sourceText.isEmpty {
+            translateCurrentText()
+        }
     }
 
     func showAutomatedPreview(
@@ -222,25 +239,25 @@ final class TranslationCenter {
         status = .translated
         appleTranslationRequest = nil
         activeRequestID = nil
-        cancelAppleTasks()
+        imageRecognitionURL = nil
+        cancelAllTasks()
     }
 
     func showAutomatedProcessing(for item: ClipItem) {
-        guard ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"] != nil,
-              let text = item.text else {
+        guard ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"] != nil else {
             return
         }
         isPresented = true
         itemID = item.id
-        sourceText = text
+        sourceText = item.text ?? ""
         translatedText = ""
         detectedSourceLanguage = nil
         providerName = "Automated preview"
         failureDiagnostic = nil
-        status = .translating
+        status = item.type == .image ? .recognizingImage : .translating
         appleTranslationRequest = nil
         activeRequestID = nil
-        cancelAppleTasks()
+        cancelAllTasks()
     }
 
     @discardableResult
@@ -363,6 +380,86 @@ final class TranslationCenter {
         appleWorkTask = nil
         appleTimeoutTask?.cancel()
         appleTimeoutTask = nil
+    }
+
+    private func cancelAllTasks() {
+        imageRecognitionTask?.cancel()
+        imageRecognitionTask = nil
+        cancelAppleTasks()
+    }
+
+    private func presentImage(_ item: ClipItem) {
+        cancelAllTasks()
+        appleTranslationRequest = nil
+        activeRequestID = nil
+        isPresented = true
+        sourceText = ""
+        translatedText = ""
+        detectedSourceLanguage = nil
+        providerName = ""
+        failureDiagnostic = nil
+        imageRecognitionURL = ClipboardStore.shared.imageURL(for: item)
+        startImageRecognition()
+    }
+
+    private func startImageRecognition() {
+        cancelAllTasks()
+        guard let imageRecognitionURL else {
+            status = .failed(L10n.imageTextRecognitionFailed)
+            return
+        }
+        let requestID = UUID()
+        activeRequestID = requestID
+        sourceText = ""
+        translatedText = ""
+        detectedSourceLanguage = nil
+        providerName = ""
+        failureDiagnostic = nil
+        status = .recognizingImage
+        imageRecognitionTask = Task { [weak self] in
+            do {
+                let text = try await ImageTextRecognizer.recognizeText(
+                    at: imageRecognitionURL
+                )
+                guard !Task.isCancelled else { return }
+                self?.completeImageRecognition(text, for: requestID)
+            } catch is CancellationError {
+                return
+            } catch {
+                self?.failImageRecognition(error, for: requestID)
+            }
+        }
+    }
+
+    private func completeImageRecognition(
+        _ text: String,
+        for requestID: UUID
+    ) {
+        guard isCurrent(requestID) else { return }
+        imageRecognitionTask = nil
+        sourceText = text
+        Self.logger.notice(
+            "phase=image-recognized request=\(requestID.uuidString, privacy: .public) outputLength=\(text.count)"
+        )
+        translateCurrentText()
+    }
+
+    private func failImageRecognition(
+        _ error: Error,
+        for requestID: UUID
+    ) {
+        guard isCurrent(requestID) else { return }
+        imageRecognitionTask = nil
+        let nsError = error as NSError
+        failureDiagnostic = "ImageOCR:\(nsError.domain):\(nsError.code)"
+        Self.logger.error(
+            "phase=image-recognition-failed request=\(requestID.uuidString, privacy: .public) domain=\(nsError.domain, privacy: .public) code=\(nsError.code)"
+        )
+        if case ImageTextRecognitionError.noTextRecognized = error {
+            status = .failed(L10n.noTextRecognizedInImage)
+        } else {
+            status = .failed(L10n.imageTextRecognitionFailed)
+        }
     }
 
     private static var supportsAppleTranslation: Bool {

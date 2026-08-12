@@ -1022,7 +1022,12 @@ final class ClipboardStore {
     func replaceHistoryForAutomatedKeyboardTest(_ items: [ClipItem]) {
         let environment = ProcessInfo.processInfo.environment
         guard ClipboardStore.automatedTestBase != nil,
-              ["keyboard-delete", "translation-board", "explanation-board"].contains(
+              [
+                  "keyboard-delete",
+                  "translation-board",
+                  "image-translation",
+                  "explanation-board",
+              ].contains(
                 environment["PESTY_AUTOMATED_UI_TEST"]
               ) else { return }
         history = items

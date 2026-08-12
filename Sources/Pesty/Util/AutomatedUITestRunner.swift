@@ -297,6 +297,19 @@ enum AutomatedUITestRunner {
         let translationShortcut: String
     }
 
+    private struct ImageTranslationResult: Codable {
+        let phase: String
+        let success: Bool
+        let recognitionStarted: Bool
+        let recognizedExpectedText: Bool
+        let boardRendered: Bool
+        let popoverPresented: Bool
+        let popoverAnchoredAboveCard: Bool
+        let imageHistoryRemainedTextFree: Bool
+        let recognizedTextWasNotPersisted: Bool
+        let providerWasNotCalledWithoutConfiguration: Bool
+    }
+
     private struct GlobalTranslationBoardResult: Codable {
         let phase: String
         let success: Bool
@@ -528,6 +541,10 @@ enum AutomatedUITestRunner {
         }
         if phase == "translation-board" {
             runTranslationBoardTest(controller: controller)
+            return
+        }
+        if phase == "image-translation" {
+            runImageTranslationTest(controller: controller)
             return
         }
         if phase == "global-translation-board" {
@@ -1199,6 +1216,123 @@ enum AutomatedUITestRunner {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    private static func runImageTranslationTest(controller: AppController) {
+        let marker = "PESTY OCR SAMPLE 4827"
+        guard let imageData = makeOCRImageData(text: marker),
+              let imageFileName = controller.store.storeImageData(imageData) else {
+            writeImageTranslation(ImageTranslationResult(
+                phase: "image-translation",
+                success: false,
+                recognitionStarted: false,
+                recognizedExpectedText: false,
+                boardRendered: false,
+                popoverPresented: false,
+                popoverAnchoredAboveCard: false,
+                imageHistoryRemainedTextFree: false,
+                recognizedTextWasNotPersisted: false,
+                providerWasNotCalledWithoutConfiguration: false
+            ))
+            exit(EXIT_FAILURE)
+        }
+
+        let item = ClipItem(
+            type: .image,
+            imageFileName: imageFileName,
+            imageHash: "automated-image-translation",
+            createdAt: Date()
+        )
+        controller.monitor.stop()
+        controller.store.replaceHistoryForAutomatedKeyboardTest([item])
+        Settings.shared.translationService = .doubao
+        Settings.shared.translationSourceLanguage = .english
+        Settings.shared.translationTargetLanguage = .simplifiedChinese
+        Settings.shared.saveDoubaoTranslationModelID("")
+        AutomatedUITestProbe.reset()
+        controller.showBar()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            controller.store.selectedID = item.id
+            TranslationCenter.shared.present(for: item)
+            controller.presentAssistantPopoverForAutomatedTest(
+                kind: .translation,
+                item: item
+            )
+            let recognitionStarted =
+                TranslationCenter.shared.status == .recognizingImage
+                && TranslationCenter.shared.itemID == item.id
+            let deadline = Date().addingTimeInterval(8)
+
+            @MainActor func finish() {
+                let sourceText = TranslationCenter.shared.sourceText
+                let recognizedExpectedText = sourceText
+                    .localizedCaseInsensitiveContains(marker)
+                let imageHistoryRemainedTextFree =
+                    controller.store.history.first(where: { $0.id == item.id })?
+                        .text == nil
+                let storeText = ClipboardStore.automatedTestBase.flatMap {
+                    try? String(
+                        contentsOf: $0.appendingPathComponent("store.json"),
+                        encoding: .utf8
+                    )
+                } ?? ""
+                let recognizedTextWasNotPersisted = !storeText.contains(marker)
+                let providerWasNotCalledWithoutConfiguration: Bool
+                if case .unavailable(let message) = TranslationCenter.shared.status {
+                    providerWasNotCalledWithoutConfiguration =
+                        message == L10n.doubaoTranslationNeedsConfiguration
+                } else {
+                    providerWasNotCalledWithoutConfiguration = false
+                }
+                let boardRendered = AutomatedUITestProbe.translationBoardRendered
+                let popoverPresented = AssistantPopoverController.shared.isPresented
+                let popoverAnchoredAboveCard = isAssistantPopoverAnchoredAboveCard(
+                    item.id
+                )
+                let result = ImageTranslationResult(
+                    phase: "image-translation",
+                    success: recognitionStarted
+                        && recognizedExpectedText
+                        && boardRendered
+                        && popoverPresented
+                        && popoverAnchoredAboveCard
+                        && imageHistoryRemainedTextFree
+                        && recognizedTextWasNotPersisted
+                        && providerWasNotCalledWithoutConfiguration,
+                    recognitionStarted: recognitionStarted,
+                    recognizedExpectedText: recognizedExpectedText,
+                    boardRendered: boardRendered,
+                    popoverPresented: popoverPresented,
+                    popoverAnchoredAboveCard: popoverAnchoredAboveCard,
+                    imageHistoryRemainedTextFree: imageHistoryRemainedTextFree,
+                    recognizedTextWasNotPersisted: recognizedTextWasNotPersisted,
+                    providerWasNotCalledWithoutConfiguration:
+                        providerWasNotCalledWithoutConfiguration
+                )
+                TranslationCenter.shared.dismiss()
+                controller.hideBar()
+                writeImageTranslation(result)
+                exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+            }
+
+            @MainActor func poll() {
+                guard TranslationCenter.shared.status == .recognizingImage else {
+                    finish()
+                    return
+                }
+                guard Date() < deadline else {
+                    finish()
+                    return
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    poll()
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                poll()
             }
         }
     }
@@ -2141,7 +2275,7 @@ enum AutomatedUITestRunner {
                 )
             case .idle:
                 finish(success: false, state: "idle", translationLength: 0)
-            case .checkingService, .translating:
+            case .recognizingImage, .checkingService, .translating:
                 guard Date() < deadline else {
                     finish(success: false, state: "timeout", translationLength: 0)
                     return
@@ -2248,7 +2382,7 @@ enum AutomatedUITestRunner {
                         state: "same-target-idle",
                         translationLength: translationLength
                     )
-                case .translated, .checkingService, .translating:
+                case .translated, .recognizingImage, .checkingService, .translating:
                     guard Date() < sameTargetDeadline else {
                         finish(
                             translatedSyntheticText: true,
@@ -2306,7 +2440,7 @@ enum AutomatedUITestRunner {
                     state: "idle",
                     translationLength: 0
                 )
-            case .checkingService, .translating:
+            case .recognizingImage, .checkingService, .translating:
                 guard Date() < translationDeadline else {
                     finish(
                         translatedSyntheticText: false,
@@ -3462,6 +3596,38 @@ enum AutomatedUITestRunner {
         }
     }
 
+    private static func makeOCRImageData(text: String) -> Data? {
+        autoreleasepool {
+            guard let bitmap = NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: 1_200,
+                pixelsHigh: 320,
+                bitsPerSample: 8,
+                samplesPerPixel: 4,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: .deviceRGB,
+                bytesPerRow: 0,
+                bitsPerPixel: 0
+            ), let context = NSGraphicsContext(bitmapImageRep: bitmap) else {
+                return nil
+            }
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = context
+            NSColor.white.setFill()
+            NSRect(x: 0, y: 0, width: 1_200, height: 320).fill()
+            (text as NSString).draw(
+                in: NSRect(x: 55, y: 100, width: 1_090, height: 120),
+                withAttributes: [
+                    .font: NSFont.systemFont(ofSize: 70, weight: .semibold),
+                    .foregroundColor: NSColor.black,
+                ]
+            )
+            NSGraphicsContext.restoreGraphicsState()
+            return bitmap.representation(using: .png, properties: [:])
+        }
+    }
+
     private static func runMouseSelectionTest(
         controller: AppController,
         runID: String
@@ -3932,6 +4098,17 @@ enum AutomatedUITestRunner {
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(result) else { return }
         FileHandle.standardOutput.write(Data("AUTOMATED_TRANSLATION_BOARD_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeImageTranslation(_ result: ImageTranslationResult) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(
+            Data("AUTOMATED_IMAGE_TRANSLATION_RESULT ".utf8)
+        )
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data("\n".utf8))
     }

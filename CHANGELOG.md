@@ -6,6 +6,24 @@ All notable changes to Pesty are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.6.25] - 2026-08-13
+
+### Added
+
+- Translate image clipboard cards by recognizing their text locally with the
+  macOS Vision framework before using the existing translation service.
+- Show an explicit image-text recognition state and allow retrying when an
+  image is unreadable or contains no detectable text.
+
+### Privacy
+
+- Image OCR runs only on the Mac and recognized text remains transient. Pesty
+  does not persist OCR output or upload the original image; a configured cloud
+  translation service receives only the recognized text after an explicit
+  translation request.
+
+[1.6.25]: https://github.com/bifrost-proxy/pesty/releases/tag/v1.6.25
+
 ## [1.6.24] - 2026-08-12
 
 ### Added

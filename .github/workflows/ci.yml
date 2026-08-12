@@ -28,6 +28,9 @@ jobs:
       - name: Verify translation and explanation
         run: swift run Pesty --verify-translation
 
+      - name: Verify local image OCR translation
+        run: scripts/test_image_translation.sh .build/debug/Pesty
+
       - name: Verify deletion survives stale sync snapshots
         run: scripts/test_deletion_sync.sh .build/debug/Pesty
 
