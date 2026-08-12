@@ -1013,10 +1013,18 @@ enum AutomatedUITestRunner {
             ),
         ]
         let item = items[1]
-        let translationPreview = String(
+        let translationPreview = """
+        **翻译结果支持多行与 Markdown**
+        第一段的第二行会保留换行，不会与上一行合并。
+
+        - 支持 `行内代码` 与粗体
+        - 长内容达到阅读上限后滚动
+
+        \(String(
             repeating: "自适应高度会优先完整展示翻译结果，达到阅读上限后才滚动。",
             count: 24
-        )
+        ))
+        """
         controller.monitor.stop()
         controller.store.replaceHistoryForAutomatedKeyboardTest(items)
         Settings.shared.translationService = .doubao

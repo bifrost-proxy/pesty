@@ -11,8 +11,13 @@ enum ExplanationMarkdownBlock: Equatable {
 }
 
 enum ExplanationMarkdownParser {
-    static func blocks(from markdown: String) -> [ExplanationMarkdownBlock] {
-        let normalized = markdown.replacingOccurrences(of: "\r\n", with: "\n")
+    static func blocks(
+        from markdown: String,
+        preservesLineBreaks: Bool = false
+    ) -> [ExplanationMarkdownBlock] {
+        let normalized = markdown
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
         var blocks: [ExplanationMarkdownBlock] = []
         var paragraphLines: [String] = []
         var codeLines: [String] = []
@@ -20,7 +25,9 @@ enum ExplanationMarkdownParser {
 
         func flushParagraph() {
             guard !paragraphLines.isEmpty else { return }
-            blocks.append(.paragraph(paragraphLines.joined(separator: " ")))
+            blocks.append(.paragraph(paragraphLines.joined(
+                separator: preservesLineBreaks ? "\n" : " "
+            )))
             paragraphLines.removeAll(keepingCapacity: true)
         }
 
@@ -117,9 +124,14 @@ enum ExplanationMarkdownParser {
 struct ExplanationMarkdownView: View {
     let markdown: String
     let foregroundColor: Color
+    var fontSize: CGFloat = 13
+    var preservesLineBreaks = false
 
     private var blocks: [ExplanationMarkdownBlock] {
-        ExplanationMarkdownParser.blocks(from: markdown)
+        ExplanationMarkdownParser.blocks(
+            from: markdown,
+            preservesLineBreaks: preservesLineBreaks
+        )
     }
 
     var body: some View {
@@ -141,24 +153,27 @@ struct ExplanationMarkdownView: View {
                 .padding(.top, level == 1 ? 2 : 0)
         case .paragraph(let text):
             inlineText(text)
-                .font(.system(size: 13))
+                .font(.system(size: fontSize))
                 .lineSpacing(1.5)
         case .unordered(let text):
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text("•")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.system(size: max(11, fontSize - 2), weight: .bold))
                     .frame(width: 10)
                 inlineText(text)
-                    .font(.system(size: 13))
+                    .font(.system(size: fontSize))
                     .lineSpacing(1.5)
             }
         case .ordered(let number, let text):
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text("\(number).")
-                    .font(.system(size: 11.5, weight: .semibold))
+                    .font(.system(
+                        size: max(11.5, fontSize - 1.5),
+                        weight: .semibold
+                    ))
                     .frame(minWidth: 16, alignment: .trailing)
                 inlineText(text)
-                    .font(.system(size: 13))
+                    .font(.system(size: fontSize))
                     .lineSpacing(1.5)
             }
         case .quote(let text):
@@ -167,13 +182,16 @@ struct ExplanationMarkdownView: View {
                     .fill(Color.accentColor.opacity(0.55))
                     .frame(width: 2)
                 inlineText(text)
-                    .font(.system(size: 12.5))
+                    .font(.system(size: max(12.5, fontSize - 0.5)))
                     .foregroundStyle(foregroundColor.opacity(0.82))
                     .lineSpacing(1.5)
             }
         case .code(let text):
             Text(text)
-                .font(.system(size: 11.5, design: .monospaced))
+                .font(.system(
+                    size: max(11.5, fontSize - 1.5),
+                    design: .monospaced
+                ))
                 .foregroundStyle(foregroundColor)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -192,9 +210,9 @@ struct ExplanationMarkdownView: View {
 
     private func headingFontSize(_ level: Int) -> CGFloat {
         switch level {
-        case 1: 14.5
-        case 2: 14
-        default: 13.5
+        case 1: fontSize + 1.5
+        case 2: fontSize + 1
+        default: fontSize + 0.5
         }
     }
 }

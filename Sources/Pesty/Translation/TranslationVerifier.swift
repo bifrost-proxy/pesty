@@ -40,6 +40,7 @@ enum TranslationVerifier {
         let explanationDisablesDoubaoThinking: Bool
         let explanationRequestRequiresConciseOutput: Bool
         let explanationMarkdownRenderingSupported: Bool
+        let translationMarkdownRenderingSupported: Bool
         let translationPopoverGrowsAndCapsHeight: Bool
         let explanationPopoverGrowsAndCapsHeight: Bool
         let openAIEndpointNormalizesToChatCompletions: Bool
@@ -452,6 +453,19 @@ enum TranslationVerifier {
         guard explanationMarkdownRenderingSupported else {
             throw Failure(description: "Explanation Markdown parsing is incorrect")
         }
+        let translationMarkdownBlocks = ExplanationMarkdownParser.blocks(
+            from: "**第一行**\n第二行\n- `uid` 保持原样",
+            preservesLineBreaks: true
+        )
+        let translationMarkdownRenderingSupported = translationMarkdownBlocks == [
+            .paragraph("**第一行**\n第二行"),
+            .unordered("`uid` 保持原样"),
+        ]
+        guard translationMarkdownRenderingSupported else {
+            throw Failure(
+                description: "Translation Markdown or line-break parsing is incorrect"
+            )
+        }
         let defaultTranslationHeight =
             AssistantPopoverLayout.preferredTranslationHeight(
                 translation: "Short translation"
@@ -597,6 +611,7 @@ enum TranslationVerifier {
             explanationDisablesDoubaoThinking: explanationBody.contains("disabled"),
             explanationRequestRequiresConciseOutput: explanationRequestRequiresConciseOutput,
             explanationMarkdownRenderingSupported: explanationMarkdownRenderingSupported,
+            translationMarkdownRenderingSupported: translationMarkdownRenderingSupported,
             translationPopoverGrowsAndCapsHeight:
                 translationPopoverGrowsAndCapsHeight,
             explanationPopoverGrowsAndCapsHeight: explanationPopoverGrowsAndCapsHeight,
