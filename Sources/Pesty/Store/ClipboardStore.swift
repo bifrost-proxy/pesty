@@ -411,6 +411,7 @@ final class ClipboardStore {
     @ObservationIgnored private var incrementalSyncTask: Task<Void, Never>?
     @ObservationIgnored private var incrementalSyncPollTask: Task<Void, Never>?
     @ObservationIgnored private var incrementalSyncRequested = false
+    @ObservationIgnored private var incrementalCompactionRequested = false
     @ObservationIgnored private var legacyMigrationTask: Task<Void, Never>?
     @ObservationIgnored private var diskReconciliationRequested = false
     @ObservationIgnored private var isApplyingMaterializedStore = false
@@ -907,7 +908,10 @@ final class ClipboardStore {
             )
         }
         history.removeLast(history.count - limit)
-        for item in removed { deleteImageFile(item) }
+        for item in removed {
+            deleteImageFile(item, deferForIncrementalSync: true)
+        }
+        incrementalCompactionRequested = true
     }
 
     private func resumeDeferredHistoryLimitTrim() {
@@ -973,7 +977,7 @@ final class ClipboardStore {
 
         history.removeAll { $0.id == item.id }
         for i in pinboards.indices { pinboards[i].items.removeAll { $0.id == item.id } }
-        deleteImageFile(item)
+        deleteImageFile(item, deferForIncrementalSync: true)
         if selectedID == item.id {
             let remainingIDs = Set(visibleItems.map(\.id))
             selectedID = preferredSelectionID.flatMap {
@@ -1002,7 +1006,10 @@ final class ClipboardStore {
         }
         history.removeAll()
         selectedID = nil
-        for item in old { deleteImageFile(item) }
+        for item in old {
+            deleteImageFile(item, deferForIncrementalSync: true)
+        }
+        incrementalCompactionRequested = true
         saveNow()
     }
 
@@ -1217,7 +1224,9 @@ final class ClipboardStore {
         if case .pinboard(let cur) = source, cur == id { source = .history }
         let removedItems = pinboards[i].items
         pinboards.remove(at: i)
-        for item in removedItems { deleteImageFile(item) }
+        for item in removedItems {
+            deleteImageFile(item, deferForIncrementalSync: true)
+        }
         scheduleSave()
     }
 
@@ -1303,12 +1312,38 @@ final class ClipboardStore {
         }
     }
 
-    private func deleteImageFile(_ item: ClipItem) {
+    private func deleteImageFile(
+        _ item: ClipItem,
+        deferForIncrementalSync: Bool = false
+    ) {
         guard let name = item.imageFileName else { return }
         let stillUsed = history.contains { $0.imageFileName == name }
             || pinboards.contains { $0.items.contains { $0.imageFileName == name } }
         if stillUsed { return }
-        if let url = imageURL(for: item) { try? FileManager.default.removeItem(at: url) }
+        if deferForIncrementalSync && usesIncrementalCloudSync {
+            incrementalCompactionRequested = true
+            return
+        }
+        guard let url = imageURL(for: item),
+              FileManager.default.fileExists(atPath: url.path) else { return }
+        var coordinationError: NSError?
+        var removalError: Error?
+        NSFileCoordinator().coordinate(
+            writingItemAt: url,
+            options: .forDeleting,
+            error: &coordinationError
+        ) { coordinatedURL in
+            do {
+                try FileManager.default.removeItem(at: coordinatedURL)
+            } catch {
+                removalError = error
+            }
+        }
+        if let error = coordinationError ?? removalError as NSError? {
+            logger.error(
+                "Failed to remove unreferenced clipboard image id=\(name, privacy: .public) domain=\(error.domain, privacy: .public) code=\(error.code)"
+            )
+        }
     }
 
     private func load() {
@@ -1637,9 +1672,17 @@ final class ClipboardStore {
                 self.incrementalSyncRequested = false
                 guard let sync = self.incrementalCloudSync else { break }
                 let local = self.currentSnapshot
-                let merged = await sync.synchronize(local)
+                let requestsCompaction = self.incrementalCompactionRequested
+                let result = await sync.synchronize(
+                    local,
+                    requestsCompaction: requestsCompaction
+                )
                 guard !Task.isCancelled else { break }
-                if let merged {
+                if let result {
+                    if result.requestedCompactionCompleted {
+                        self.incrementalCompactionRequested = false
+                    }
+                    let merged = result.snapshot
                     let pinboardsWereUnchanged = self.pinboards
                         == local.pinboards
                     var changed = self.mergeExternal(merged)
@@ -1723,6 +1766,7 @@ final class ClipboardStore {
         incrementalSyncPollTask?.cancel()
         incrementalSyncPollTask = nil
         incrementalSyncRequested = false
+        incrementalCompactionRequested = false
         legacyMigrationTask?.cancel()
         legacyMigrationTask = nil
         incrementalCloudSync = nil

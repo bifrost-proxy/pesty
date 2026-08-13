@@ -50,6 +50,36 @@ struct PestyMain {
             return
         }
 
+        if CommandLine.arguments.contains(
+            "--verify-incremental-sync-compaction"
+        ) {
+            let semaphore = DispatchSemaphore(value: 0)
+            var succeeded = false
+            Task.detached {
+                do {
+                    let result = try await IncrementalSyncCompactionVerifier
+                        .run()
+                    let encoder = JSONEncoder()
+                    encoder.outputFormatting = [.sortedKeys]
+                    let data = try encoder.encode(result)
+                    print(
+                        "INCREMENTAL_COMPACTION_RESULT "
+                            + String(decoding: data, as: UTF8.self)
+                    )
+                    succeeded = result.success
+                } catch {
+                    fputs(
+                        "Incremental compaction verification failed: \(error)\n",
+                        stderr
+                    )
+                }
+                semaphore.signal()
+            }
+            semaphore.wait()
+            if !succeeded { exit(EXIT_FAILURE) }
+            return
+        }
+
         if CommandLine.arguments.contains("--verify-translation") {
             do {
                 try TranslationVerifier.run()
