@@ -15,6 +15,8 @@ trap cleanup EXIT
 
 defaults write "$suite" iCloudSync -bool true
 
+"$binary" --verify-incremental-sync-compaction
+
 # Produce the legacy monolith with the previous storage path.
 PESTY_AUTOMATED_TEST_DATA_DIR="$cloud_dir" \
 PESTY_AUTOMATED_TEST_DEFAULTS_SUITE="$suite" \

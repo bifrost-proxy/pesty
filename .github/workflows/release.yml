@@ -79,6 +79,9 @@ jobs:
       - name: Verify deletion survives stale sync snapshots
         run: scripts/test_deletion_sync.sh .build/debug/Pesty
 
+      - name: Verify incremental sync compaction and image cleanup
+        run: scripts/test_incremental_sync.sh .build/debug/Pesty
+
       - name: Verify panel presentation does not wait for reconciliation
         run: scripts/test_panel_reconciliation.sh .build/debug/Pesty
 
