@@ -1316,9 +1316,10 @@ final class ClipboardStore {
         let needsMaterialization = loadsFromMetadataCache
             && storeNeedsMaterializationBeforeReading
         let initialSnapshot = usesIncrementalCloudSync
-            ? IncrementalCloudSync.localSnapshot(
+            ? readSnapshot(at: metadataCacheURL)
+                ?? IncrementalCloudSync.localSnapshot(
                 in: incrementalLocalDirectory
-            ) ?? readSnapshot(at: metadataCacheURL)
+            )
             : readSnapshot(
                 at: loadsFromMetadataCache ? metadataCacheURL : storeURL
             )

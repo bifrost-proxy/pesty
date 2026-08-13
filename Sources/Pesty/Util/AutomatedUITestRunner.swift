@@ -4142,10 +4142,11 @@ enum AutomatedUITestRunner {
             )
 
             controller.store.saveNow()
+            var cleanupResult: CleanupResult?
             if ProcessInfo.processInfo.environment["PESTY_AUTOMATED_TEST_CLEANUP"] == "1" {
                 let historyCountBeforeCleanup = controller.store.history.count
                 controller.store.removeAutomatedTestItems(withTexts: Set(expected))
-                let cleanupResult = CleanupResult(
+                cleanupResult = CleanupResult(
                     phase: "cleanup",
                     success: expected.allSatisfy {
                         expectedText in
@@ -4157,13 +4158,24 @@ enum AutomatedUITestRunner {
                     removedCount: historyCountBeforeCleanup
                         - controller.store.history.count
                 )
-                writeCleanup(cleanupResult)
             }
             if let originalItems {
                 restore(originalItems, to: .general)
             }
-            write(result)
-            exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+            let finish = {
+                if let cleanupResult { writeCleanup(cleanupResult) }
+                write(result)
+                exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+            }
+            if cleanupResult != nil {
+                Task {
+                    await controller.store
+                        .waitForIncrementalSyncForAutomatedTest()
+                    finish()
+                }
+            } else {
+                finish()
+            }
         }
     }
 
