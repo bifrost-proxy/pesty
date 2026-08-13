@@ -525,7 +525,11 @@ enum AutomatedUITestRunner {
             return
         }
         if phase == "retention-sync-verify" {
-            verifyRetentionSyncTest(controller: controller)
+            Task {
+                await controller.store
+                    .waitForICloudStoreLoadForAutomatedTest()
+                verifyRetentionSyncTest(controller: controller)
+            }
             return
         }
         if phase == "clear-confirmation" {
@@ -537,7 +541,7 @@ enum AutomatedUITestRunner {
             return
         }
         if phase == "deletion-sync-restart-1" {
-            verifyDeletionSyncRestart(
+            runDeletionSyncRestartAfterIncrementalLoad(
                 controller: controller,
                 runID: runID,
                 phase: phase,
@@ -546,7 +550,7 @@ enum AutomatedUITestRunner {
             return
         }
         if phase == "deletion-sync-restart-2" {
-            verifyDeletionSyncRestart(
+            runDeletionSyncRestartAfterIncrementalLoad(
                 controller: controller,
                 runID: runID,
                 phase: phase,
@@ -2975,6 +2979,23 @@ enum AutomatedUITestRunner {
         )
     }
 
+    private static func runDeletionSyncRestartAfterIncrementalLoad(
+        controller: AppController,
+        runID: String,
+        phase: String,
+        allowRecopy: Bool
+    ) {
+        Task {
+            await controller.store.waitForIncrementalSyncForAutomatedTest()
+            verifyDeletionSyncRestart(
+                controller: controller,
+                runID: runID,
+                phase: phase,
+                allowRecopy: allowRecopy
+            )
+        }
+    }
+
     private static func finishDeletionSyncPhase(
         controller: AppController,
         phase: String,
@@ -2984,6 +3005,27 @@ enum AutomatedUITestRunner {
         recopyAllowed: Bool
     ) {
         controller.store.saveNow()
+        Task {
+            await controller.store.waitForIncrementalSyncForAutomatedTest()
+            finishDeletionSyncPhaseAfterPersistence(
+                controller: controller,
+                phase: phase,
+                deletedText: deletedText,
+                expectedHistoryCount: expectedHistoryCount,
+                staleSnapshotRejected: staleSnapshotRejected,
+                recopyAllowed: recopyAllowed
+            )
+        }
+    }
+
+    private static func finishDeletionSyncPhaseAfterPersistence(
+        controller: AppController,
+        phase: String,
+        deletedText: String,
+        expectedHistoryCount: Int,
+        staleSnapshotRejected: Bool,
+        recopyAllowed: Bool
+    ) {
         let snapshot = readDeletionSyncActiveSnapshot()
         let deletedItemAbsent = !controller.store.history.contains {
             $0.text == deletedText
@@ -3042,6 +3084,19 @@ enum AutomatedUITestRunner {
 
     private static func readDeletionSyncActiveSnapshot()
         -> ClipboardStoreSnapshot? {
+        if ProcessInfo.processInfo.environment[
+            "PESTY_AUTOMATED_INCREMENTAL_SYNC"
+        ] == "1",
+           let local = ProcessInfo.processInfo.environment[
+            "PESTY_AUTOMATED_INCREMENTAL_LOCAL_DIR"
+           ], !local.isEmpty,
+           let data = try? Data(contentsOf: URL(fileURLWithPath: local)
+            .appendingPathComponent("icloud-metadata-cache.json")) {
+            return try? JSONDecoder().decode(
+                ClipboardStoreSnapshot.self,
+                from: data
+            )
+        }
         guard let url = ClipboardStore.automatedTestBase?
             .appendingPathComponent("store.json"),
               let data = try? Data(contentsOf: url) else { return nil }
@@ -4087,10 +4142,11 @@ enum AutomatedUITestRunner {
             )
 
             controller.store.saveNow()
+            var cleanupResult: CleanupResult?
             if ProcessInfo.processInfo.environment["PESTY_AUTOMATED_TEST_CLEANUP"] == "1" {
                 let historyCountBeforeCleanup = controller.store.history.count
                 controller.store.removeAutomatedTestItems(withTexts: Set(expected))
-                let cleanupResult = CleanupResult(
+                cleanupResult = CleanupResult(
                     phase: "cleanup",
                     success: expected.allSatisfy {
                         expectedText in
@@ -4102,13 +4158,24 @@ enum AutomatedUITestRunner {
                     removedCount: historyCountBeforeCleanup
                         - controller.store.history.count
                 )
-                writeCleanup(cleanupResult)
             }
             if let originalItems {
                 restore(originalItems, to: .general)
             }
-            write(result)
-            exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+            let finish = {
+                if let cleanupResult { writeCleanup(cleanupResult) }
+                write(result)
+                exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+            }
+            if cleanupResult != nil {
+                Task {
+                    await controller.store
+                        .waitForIncrementalSyncForAutomatedTest()
+                    finish()
+                }
+            } else {
+                finish()
+            }
         }
     }
 
