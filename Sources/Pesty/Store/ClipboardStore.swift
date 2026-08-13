@@ -29,6 +29,12 @@ enum BarSource: Equatable, Sendable {
     case pinboard(UUID)
 }
 
+enum ICloudStoreLoadState: Equatable, Sendable {
+    case ready
+    case downloading
+    case failed
+}
+
 struct ClipDeletionTombstone: Codable, Equatable, Sendable {
     let contentDigest: String
     let historyDeletedAt: Date
@@ -115,6 +121,7 @@ private enum ClipboardStoreReconciler {
         at url: URL,
         errors: inout [String]
     ) -> ClipboardStoreSnapshot? {
+        guard !ClipImageMaterializer.isDataLess(at: url) else { return nil }
         do {
             let data = try Data(contentsOf: url)
             return try JSONDecoder().decode(
@@ -345,6 +352,7 @@ final class ClipboardStore {
         }
     }
     private(set) var storageUsageBytes: Int64 = 0
+    private(set) var iCloudStoreLoadState: ICloudStoreLoadState = .ready
 
     var source: BarSource = .history {
         didSet {
@@ -399,7 +407,10 @@ final class ClipboardStore {
     @ObservationIgnored private var lastSearchScannedItemCount = 0
     @ObservationIgnored private var storageUsageTask: Task<Void, Never>?
     @ObservationIgnored private var diskReconciliationTask: Task<Void, Never>?
+    @ObservationIgnored private var storeMaterializationTask: Task<Void, Never>?
     @ObservationIgnored private var diskReconciliationRequested = false
+    @ObservationIgnored private var isApplyingMaterializedStore = false
+    @ObservationIgnored private var storeMaterializationCompletedForCurrentURL = false
     @ObservationIgnored private var pendingConflictResolution = false
 
     private var fileWatch: DispatchSourceFileSystemObject?
@@ -1010,6 +1021,18 @@ final class ClipboardStore {
         selectedID = item.id
     }
 
+    func addConcurrentItemForAutomatedICloudStoreTest(_ item: ClipItem) {
+        guard ClipboardStore.automatedTestBase != nil,
+              ProcessInfo.processInfo.environment[
+                "PESTY_AUTOMATED_UI_TEST"
+              ] == "icloud-store-loading" else {
+            return
+        }
+        history.insert(item, at: 0)
+        selectedID = item.id
+        saveNow()
+    }
+
     func reverseHistoryForAutomatedSettingsCountTest() {
         guard ClipboardStore.automatedTestBase != nil,
               ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"]
@@ -1208,6 +1231,12 @@ final class ClipboardStore {
     }
 
     private func load() {
+        if storeNeedsMaterializationBeforeReading {
+            beginICloudStoreMaterialization()
+            selectFirst()
+            return
+        }
+
         let initialSnapshot = readSnapshot(at: storeURL)
         if let snap = initialSnapshot {
             _ = mergeDeletionTombstones(snap.deletions ?? [])
@@ -1234,6 +1263,50 @@ final class ClipboardStore {
         selectFirst()
     }
 
+    private var storeNeedsMaterializationBeforeReading: Bool {
+        guard FileManager.default.fileExists(atPath: storeURL.path) else {
+            return false
+        }
+        if ClipboardStore.automatedTestBase != nil,
+           ProcessInfo.processInfo.environment[
+               "PESTY_AUTOMATED_STORE_DOWNLOAD_DELAY_MS"
+           ]?.isEmpty == false {
+            return !storeMaterializationCompletedForCurrentURL
+        }
+        return ClipImageMaterializer.isDataLess(at: storeURL)
+    }
+
+    private func beginICloudStoreMaterialization() {
+        guard storeMaterializationTask == nil else { return }
+        let requestedStoreURL = storeURL
+        iCloudStoreLoadState = .downloading
+        storeMaterializationTask = Task { [weak self] in
+            let prepared = await ClipImageMaterializer.prepare(
+                at: requestedStoreURL,
+                kind: .history,
+                timeout: .seconds(60)
+            ) { _ in }
+            guard let self, self.storeURL == requestedStoreURL else { return }
+            guard prepared else {
+                self.iCloudStoreLoadState = .failed
+                self.storeMaterializationTask = nil
+                return
+            }
+
+            self.storeMaterializationCompletedForCurrentURL = true
+            self.isApplyingMaterializedStore = true
+            self.reconcileFromDiskInBackground()
+            while let task = self.diskReconciliationTask {
+                await task.value
+            }
+            self.isApplyingMaterializedStore = false
+            guard self.storeURL == requestedStoreURL else { return }
+            self.iCloudStoreLoadState = .ready
+            self.storeMaterializationTask = nil
+            self.saveNow()
+        }
+    }
+
     private func scheduleSave() {
         saveWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.saveNow() }
@@ -1249,6 +1322,12 @@ final class ClipboardStore {
 
     @discardableResult
     private func writeSnapshot() -> Bool {
+        guard iCloudStoreLoadState == .ready else {
+            logger.info(
+                "Deferred clipboard history save while iCloud history is unavailable"
+            )
+            return false
+        }
         if usesSharedConfiguration {
             _ = Settings.shared.ensureSyncedHistoryRetention(
                 effectiveAt: Date().addingTimeInterval(HistoryRetentionPolicy.trimDelay)
@@ -1326,6 +1405,10 @@ final class ClipboardStore {
 
     func setICloudSync(_ enabled: Bool) {
         stopWatching()
+        storeMaterializationTask?.cancel()
+        storeMaterializationTask = nil
+        storeMaterializationCompletedForCurrentURL = false
+        iCloudStoreLoadState = .ready
         let target = (enabled ? ClipboardStore.iCloudBase : ClipboardStore.localBase) ?? ClipboardStore.localBase
         let newImages = target.appendingPathComponent("images", isDirectory: true)
         let newStore = target.appendingPathComponent("store.json")
@@ -1333,10 +1416,14 @@ final class ClipboardStore {
         try? fm.createDirectory(at: newImages, withIntermediateDirectories: true,
                                 attributes: [.posixPermissions: 0o700])
 
+        let targetNeedsMaterialization = fm.fileExists(atPath: newStore.path)
+            && ClipImageMaterializer.isDataLess(at: newStore)
         let targetSnapshot = fm.fileExists(atPath: newStore.path)
+            && !targetNeedsMaterialization
             ? readSnapshot(at: newStore)
             : nil
-        if enabled, targetSnapshot?.configuration == nil {
+        if enabled, !targetNeedsMaterialization,
+           targetSnapshot?.configuration == nil {
             let configuration = Settings.shared.publishCurrentHistoryRetention(
                 effectiveAt: Date().addingTimeInterval(HistoryRetentionPolicy.trimDelay)
             )
@@ -1346,14 +1433,14 @@ final class ClipboardStore {
             )
         }
 
-        if let snap = targetSnapshot {
-            copyImages(from: imagesDir, to: newImages)
-            baseDir = target; imagesDir = newImages; storeURL = newStore
+        copyImages(from: imagesDir, to: newImages)
+        baseDir = target; imagesDir = newImages; storeURL = newStore
+        if targetNeedsMaterialization {
+            beginICloudStoreMaterialization()
+        } else if let snap = targetSnapshot {
             _ = mergeExternal(snap)
             saveNow()
         } else {
-            copyImages(from: imagesDir, to: newImages)
-            baseDir = target; imagesDir = newImages; storeURL = newStore
             saveNow()
         }
         prepareDirectories()
@@ -1489,6 +1576,7 @@ final class ClipboardStore {
     }
 
     private func readSnapshot(at url: URL) -> ClipboardStoreSnapshot? {
+        guard !ClipImageMaterializer.isDataLess(at: url) else { return nil }
         do {
             let data = try Data(contentsOf: url)
             return try JSONDecoder().decode(ClipboardStoreSnapshot.self, from: data)
@@ -1504,6 +1592,13 @@ final class ClipboardStore {
     /// conflict versions. The merged snapshot is written before conflicts are
     /// marked resolved, so no clipboard entries are discarded.
     func reconcileFromDisk() {
+        if storeNeedsMaterializationBeforeReading {
+            beginICloudStoreMaterialization()
+            return
+        }
+        if iCloudStoreLoadState == .failed {
+            iCloudStoreLoadState = .ready
+        }
         let result = ClipboardStoreReconciler.reconcile(
             context: mergeContext,
             storeURL: storeURL
@@ -1521,6 +1616,17 @@ final class ClipboardStore {
     /// settings change while the worker is running, then immediately retries
     /// against the newest in-memory state.
     func reconcileFromDiskInBackground() {
+        if storeNeedsMaterializationBeforeReading {
+            beginICloudStoreMaterialization()
+            return
+        }
+        if iCloudStoreLoadState == .failed {
+            iCloudStoreLoadState = .ready
+        }
+        guard iCloudStoreLoadState == .ready
+                || isApplyingMaterializedStore else {
+            return
+        }
         guard diskReconciliationTask == nil else {
             diskReconciliationRequested = true
             return
@@ -1587,6 +1693,16 @@ final class ClipboardStore {
         while let task = diskReconciliationTask {
             await task.value
         }
+    }
+
+    func retryICloudStoreLoad() {
+        guard iCloudStoreLoadState == .failed
+                || storeNeedsMaterializationBeforeReading else { return }
+        beginICloudStoreMaterialization()
+    }
+
+    func waitForICloudStoreLoadForAutomatedTest() async {
+        await storeMaterializationTask?.value
     }
 
     private var mergeContext: ClipboardMergeContext {

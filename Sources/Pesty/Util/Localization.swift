@@ -686,6 +686,18 @@ enum L10n {
             "无法从 iCloud 下载这张图片。"
         )
     }
+    static var downloadingICloudHistory: String {
+        text(
+            "Downloading clipboard history from iCloud…",
+            "正在从 iCloud 下载剪贴板历史记录…"
+        )
+    }
+    static var iCloudHistoryDownloadFailed: String {
+        text(
+            "Clipboard history could not be downloaded from iCloud.",
+            "无法从 iCloud 下载剪贴板历史记录。"
+        )
+    }
     static var retry: String { text("Retry", "重试") }
     static var previewFileUnavailable: String {
         text(
