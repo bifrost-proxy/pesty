@@ -187,10 +187,6 @@ struct BarView: View {
     private var topBar: some View {
         HStack(spacing: 14) {
             syncButton
-            if settings.iCloudSync,
-               store.iCloudStoreLoadState != .ready {
-                iCloudStoreStatus
-            }
             searchIndicator
             PinboardTabs()
                 .layoutPriority(1)
@@ -262,37 +258,6 @@ struct BarView: View {
         }
         .buttonStyle(.plain)
         .help(settings.iCloudSync ? L10n.iCloudSyncOn : L10n.turnOnICloudSync)
-    }
-
-    @ViewBuilder
-    private var iCloudStoreStatus: some View {
-        if store.iCloudStoreLoadState == .downloading {
-            Label("iCloud", systemImage: "icloud.and.arrow.down")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(palette.selection.swiftUIColor)
-                .padding(.horizontal, 8)
-                .frame(height: 24)
-                .background(
-                    palette.selection.swiftUIColor.opacity(0.08),
-                    in: Capsule()
-                )
-                .help(L10n.downloadingICloudHistory)
-                .accessibilityIdentifier("pesty-icloud-history-status")
-        } else if store.iCloudStoreLoadState == .failed {
-            Button {
-                store.retryICloudStoreLoad()
-            } label: {
-                Label(L10n.retry, systemImage: "exclamationmark.icloud")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.orange)
-                    .padding(.horizontal, 8)
-                    .frame(height: 24)
-                    .background(Color.orange.opacity(0.08), in: Capsule())
-            }
-            .buttonStyle(.plain)
-            .help(L10n.iCloudHistoryDownloadFailed)
-            .accessibilityIdentifier("pesty-icloud-history-status-retry")
-        }
     }
 
     private var searchIndicator: some View {
@@ -426,52 +391,16 @@ struct BarView: View {
         max(160, CGFloat(settings.barHeight) - 82)
     }
 
-    @ViewBuilder
     private var emptyState: some View {
-        if settings.iCloudSync,
-           store.iCloudStoreLoadState == .downloading {
-            VStack(spacing: 10) {
-                Image(systemName: "icloud.and.arrow.down")
-                    .font(.system(size: 34, weight: .light))
-                    .foregroundStyle(palette.selection.swiftUIColor)
-                ProgressView()
-                    .controlSize(.small)
-                Text(L10n.downloadingICloudHistory)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(palette.textSecondary.swiftUIColor)
-            }
-            .accessibilityIdentifier("pesty-icloud-history-loading")
-            .onAppear {
-                AutomatedUITestProbe.recordICloudHistoryLoading()
-            }
-        } else if settings.iCloudSync,
-                  store.iCloudStoreLoadState == .failed {
-            VStack(spacing: 10) {
-                Image(systemName: "exclamationmark.icloud")
-                    .font(.system(size: 34, weight: .light))
-                    .foregroundStyle(.orange)
-                Text(L10n.iCloudHistoryDownloadFailed)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(palette.textSecondary.swiftUIColor)
-                Button(L10n.retry) {
-                    store.retryICloudStoreLoad()
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .accessibilityIdentifier("pesty-icloud-history-retry")
-            }
-            .accessibilityIdentifier("pesty-icloud-history-failed")
-        } else {
-            VStack(spacing: 10) {
-                Image(systemName: store.searchText.isEmpty ? "doc.on.clipboard" : "magnifyingglass")
-                    .font(.system(size: 34, weight: .light))
-                    .foregroundStyle(palette.textTertiary.swiftUIColor)
-                Text(store.searchText.isEmpty
-                     ? L10n.nothingCopied
-                     : L10n.noMatches(store.searchText))
-                    .font(.system(size: 13))
-                    .foregroundStyle(palette.textSecondary.swiftUIColor)
-            }
+        VStack(spacing: 10) {
+            Image(systemName: store.searchText.isEmpty ? "doc.on.clipboard" : "magnifyingglass")
+                .font(.system(size: 34, weight: .light))
+                .foregroundStyle(palette.textTertiary.swiftUIColor)
+            Text(store.searchText.isEmpty
+                 ? L10n.nothingCopied
+                 : L10n.noMatches(store.searchText))
+                .font(.system(size: 13))
+                .foregroundStyle(palette.textSecondary.swiftUIColor)
         }
     }
 }

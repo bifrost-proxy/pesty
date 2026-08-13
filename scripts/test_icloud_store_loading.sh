@@ -41,8 +41,8 @@ printf '%s\n' "$loading_output" \
   | jq -e '
       .success == true
       and .panelResponsiveWhileDownloading == true
-      and .loadingStateRendered == true
-      and .historyEmptyWhileDownloading == true
+      and .historyAvailableWhileDownloading == true
+      and .cardsRenderedWhileDownloading == true
       and .recoveredAutomatically == true
       and .concurrentItemPreserved == true
       and .persistedMatches == 4

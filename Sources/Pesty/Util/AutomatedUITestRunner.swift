@@ -11,7 +11,6 @@ enum AutomatedUITestProbe {
     private(set) static var explanationBoardRendered = false
     private(set) static var explanationPreviewRendered = false
     private(set) static var appleLanguagePackSettingsRendered = false
-    private(set) static var iCloudHistoryLoadingRendered = false
     private(set) static var assistantProcessingItemIDs = Set<UUID>()
     private(set) static var renderedItemIDs = Set<UUID>()
 
@@ -26,7 +25,6 @@ enum AutomatedUITestProbe {
         explanationBoardRendered = false
         explanationPreviewRendered = false
         appleLanguagePackSettingsRendered = false
-        iCloudHistoryLoadingRendered = false
         assistantProcessingItemIDs.removeAll()
         renderedItemIDs.removeAll()
     }
@@ -65,11 +63,6 @@ enum AutomatedUITestProbe {
         appleLanguagePackSettingsRendered = true
     }
 
-    static func recordICloudHistoryLoading() {
-        guard isEnabled else { return }
-        iCloudHistoryLoadingRendered = true
-    }
-
     static func recordAssistantProcessing(itemID: UUID, visible: Bool) {
         guard isEnabled else { return }
         if visible {
@@ -106,8 +99,8 @@ enum AutomatedUITestRunner {
         let phase: String
         let success: Bool
         let panelResponsiveWhileDownloading: Bool
-        let loadingStateRendered: Bool
-        let historyEmptyWhileDownloading: Bool
+        let historyAvailableWhileDownloading: Bool
+        let cardsRenderedWhileDownloading: Bool
         let recoveredAutomatically: Bool
         let concurrentItemPreserved: Bool
         let persistedMatches: Int
@@ -484,33 +477,6 @@ enum AutomatedUITestRunner {
     }
 
     static func start(controller: AppController) {
-        let phase = ProcessInfo.processInfo.environment[
-            "PESTY_AUTOMATED_UI_TEST"
-        ] ?? "verify"
-        guard phase != "icloud-store-loading",
-              controller.store.iCloudStoreLoadState != .ready else {
-            startAfterICloudStoreIsReady(controller: controller)
-            return
-        }
-
-        if controller.store.iCloudStoreLoadState == .failed {
-            controller.store.retryICloudStoreLoad()
-        }
-        Task {
-            await controller.store.waitForICloudStoreLoadForAutomatedTest()
-            guard controller.store.iCloudStoreLoadState == .ready else {
-                FileHandle.standardError.write(
-                    Data("Automated test could not load iCloud history\n".utf8)
-                )
-                exit(EXIT_FAILURE)
-            }
-            startAfterICloudStoreIsReady(controller: controller)
-        }
-    }
-
-    private static func startAfterICloudStoreIsReady(
-        controller: AppController
-    ) {
         let environment = ProcessInfo.processInfo.environment
         let phase = environment["PESTY_AUTOMATED_UI_TEST"] ?? "verify"
         let runID = environment["PESTY_AUTOMATED_TEST_ID"] ?? "default"
@@ -713,9 +679,13 @@ enum AutomatedUITestRunner {
             let panelResponsive = NSApp.windows.contains {
                 $0 is BarPanel && $0.isVisible
             }
-            let loadingRendered = AutomatedUITestProbe
-                .iCloudHistoryLoadingRendered
-            let historyEmpty = controller.store.history.isEmpty
+            let initialHistoryTexts = Set(
+                controller.store.history.compactMap(\.text)
+            )
+            let historyAvailable = expected.isSubset(of: initialHistoryTexts)
+            let cardsRendered = expected.isSubset(
+                of: AutomatedUITestProbe.renderedTexts
+            )
             let concurrentText = "pesty-icloud-concurrent-\(runID)"
             controller.store.addConcurrentItemForAutomatedICloudStoreTest(
                 ClipItem(type: .text, text: concurrentText, createdAt: Date())
@@ -750,14 +720,14 @@ enum AutomatedUITestRunner {
                 let result = ICloudStoreLoadingResult(
                     phase: "icloud-store-loading",
                     success: panelResponsive
-                        && loadingRendered
-                        && historyEmpty
+                        && historyAvailable
+                        && cardsRendered
                         && recovered
                         && concurrentItemPreserved
                         && persistedMatches == expected.count,
                     panelResponsiveWhileDownloading: panelResponsive,
-                    loadingStateRendered: loadingRendered,
-                    historyEmptyWhileDownloading: historyEmpty,
+                    historyAvailableWhileDownloading: historyAvailable,
+                    cardsRenderedWhileDownloading: cardsRendered,
                     recoveredAutomatically: recovered,
                     concurrentItemPreserved: concurrentItemPreserved,
                     persistedMatches: persistedMatches,
