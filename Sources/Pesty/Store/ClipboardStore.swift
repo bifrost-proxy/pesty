@@ -408,10 +408,15 @@ final class ClipboardStore {
     @ObservationIgnored private var storageUsageTask: Task<Void, Never>?
     @ObservationIgnored private var diskReconciliationTask: Task<Void, Never>?
     @ObservationIgnored private var storeMaterializationTask: Task<Void, Never>?
+    @ObservationIgnored private var incrementalSyncTask: Task<Void, Never>?
+    @ObservationIgnored private var incrementalSyncPollTask: Task<Void, Never>?
+    @ObservationIgnored private var incrementalSyncRequested = false
+    @ObservationIgnored private var legacyMigrationTask: Task<Void, Never>?
     @ObservationIgnored private var diskReconciliationRequested = false
     @ObservationIgnored private var isApplyingMaterializedStore = false
     @ObservationIgnored private var storeMaterializationCompletedForCurrentURL = false
     @ObservationIgnored private var pendingConflictResolution = false
+    @ObservationIgnored private var incrementalCloudSync: IncrementalCloudSync?
 
     private var fileWatch: DispatchSourceFileSystemObject?
     private var ignoreWatchUntil: Date = .distantPast
@@ -453,6 +458,7 @@ final class ClipboardStore {
         baseDir = base
         imagesDir = base.appendingPathComponent("images", isDirectory: true)
         storeURL = base.appendingPathComponent("store.json")
+        configureIncrementalCloudSync()
         prepareDirectories()
         load()
         resumeDeferredHistoryLimitTrim()
@@ -473,6 +479,66 @@ final class ClipboardStore {
                 withIntermediateDirectories: true,
                 attributes: [.posixPermissions: 0o700]
             )
+        }
+        if usesIncrementalCloudSync {
+            try? fm.createDirectory(
+                at: incrementalCloudDirectory.appendingPathComponent(
+                    "batches",
+                    isDirectory: true
+                ),
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            beginIncrementalSyncPolling()
+        }
+    }
+
+    private var usesIncrementalCloudSync: Bool {
+        guard Settings.shared.iCloudSync else { return false }
+        if ClipboardStore.automatedTestBase != nil {
+            return ProcessInfo.processInfo.environment[
+                "PESTY_AUTOMATED_INCREMENTAL_SYNC"
+            ] == "1"
+        }
+        return ClipboardStore.iCloudBase != nil
+    }
+
+    private var incrementalCloudDirectory: URL {
+        baseDir.appendingPathComponent("sync-v2", isDirectory: true)
+    }
+
+    private var incrementalLocalDirectory: URL {
+        let root: URL
+        if let explicit = ProcessInfo.processInfo.environment[
+            "PESTY_AUTOMATED_INCREMENTAL_LOCAL_DIR"
+        ], !explicit.isEmpty {
+            root = URL(fileURLWithPath: explicit, isDirectory: true)
+        } else {
+            root = ClipboardStore.automatedTestBase ?? ClipboardStore.localBase
+        }
+        return root.appendingPathComponent("sync-v2-local", isDirectory: true)
+    }
+
+    private func configureIncrementalCloudSync() {
+        incrementalCloudSync = usesIncrementalCloudSync
+            ? IncrementalCloudSync(
+                localDirectory: incrementalLocalDirectory,
+                cloudDirectory: incrementalCloudDirectory
+            )
+            : nil
+    }
+
+    private func beginIncrementalSyncPolling() {
+        guard usesIncrementalCloudSync,
+              incrementalSyncPollTask == nil else { return }
+        incrementalSyncPollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                guard !Task.isCancelled, let self,
+                      self.usesIncrementalCloudSync else { break }
+                self.scheduleIncrementalSync()
+            }
+            self?.incrementalSyncPollTask = nil
         }
     }
 
@@ -832,6 +898,14 @@ final class ClipboardStore {
               let limit = Settings.shared.retainedHistoryLimit,
               history.count > limit else { return }
         let removed = Array(history[limit...])
+        let deletedAt = Date()
+        for item in removed {
+            registerDeletion(
+                of: item,
+                at: deletedAt,
+                removesPinboardCopies: false
+            )
+        }
         history.removeLast(history.count - limit)
         for item in removed { deleteImageFile(item) }
     }
@@ -1241,15 +1315,34 @@ final class ClipboardStore {
         let loadsFromMetadataCache = usesICloudMetadataCache
         let needsMaterialization = loadsFromMetadataCache
             && storeNeedsMaterializationBeforeReading
-        let initialSnapshot = readSnapshot(
-            at: loadsFromMetadataCache ? metadataCacheURL : storeURL
-        )
+        let initialSnapshot = usesIncrementalCloudSync
+            ? IncrementalCloudSync.localSnapshot(
+                in: incrementalLocalDirectory
+            ) ?? readSnapshot(at: metadataCacheURL)
+            : readSnapshot(
+                at: loadsFromMetadataCache ? metadataCacheURL : storeURL
+            )
         if let snap = initialSnapshot {
             _ = mergeDeletionTombstones(snap.deletions ?? [])
             history = snap.history.filter { !isDeletedFromHistory($0) }
             pinboards = filteringDeletedPinboardItems(from: snap.pinboards)
+            if usesSharedConfiguration,
+               let configuration = snap.configuration?.historyRetention
+                .normalized() {
+                if Settings.shared.adoptSyncedHistoryRetention(configuration) {
+                    historyRetentionDidChange(
+                        effectiveAt: configuration.effectiveAt,
+                        configurationChanged: false
+                    )
+                }
+            }
         }
-        if loadsFromMetadataCache {
+        if usesIncrementalCloudSync {
+            // The local snapshot is the launch source of truth. Cloud batches
+            // and the legacy monolith are consumed only in background tasks.
+            scheduleIncrementalSync()
+            beginLegacyStoreMigration()
+        } else if loadsFromMetadataCache {
             if FileManager.default.fileExists(atPath: storeURL.path) {
                 beginICloudStoreBackgroundLoad(
                     requiresMaterialization: needsMaterialization
@@ -1284,6 +1377,11 @@ final class ClipboardStore {
     }
 
     private var metadataCacheURL: URL {
+        if usesIncrementalCloudSync {
+            return incrementalLocalDirectory
+                .deletingLastPathComponent()
+                .appendingPathComponent("icloud-metadata-cache.json")
+        }
         let cacheBase = ClipboardStore.automatedTestBase
             ?? ClipboardStore.localBase
         return cacheBase.appendingPathComponent("icloud-metadata-cache.json")
@@ -1344,6 +1442,105 @@ final class ClipboardStore {
         beginICloudStoreBackgroundLoad(requiresMaterialization: true)
     }
 
+    /// Converts the legacy monolithic snapshot opportunistically. This task
+    /// never changes the foreground loading state: the panel remains backed by
+    /// the local materialized snapshot while File Provider works in background.
+    private func beginLegacyStoreMigration() {
+        guard usesIncrementalCloudSync,
+              legacyMigrationTask == nil,
+              FileManager.default.fileExists(atPath: storeURL.path) else {
+            return
+        }
+        let legacyURL = storeURL
+        legacyMigrationTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled,
+                  self.usesIncrementalCloudSync,
+                  self.storeURL == legacyURL,
+                  FileManager.default.fileExists(atPath: legacyURL.path) {
+                let prepared = await ClipImageMaterializer.prepare(
+                    at: legacyURL,
+                    kind: .history,
+                    timeout: .seconds(60)
+                ) { _ in }
+                guard prepared else {
+                    try? await Task.sleep(for: .seconds(300))
+                    continue
+                }
+
+                let initialLegacySHA256 = await Task.detached(
+                    priority: .utility
+                ) {
+                    LegacyStoreMigrationIO.sha256(at: legacyURL)
+                }.value
+                let legacySnapshots = await Task.detached(priority: .utility) {
+                    LegacyStoreMigrationIO.readAllSnapshots(at: legacyURL)
+                }.value
+                let legacySHA256 = await Task.detached(priority: .utility) {
+                    LegacyStoreMigrationIO.sha256(at: legacyURL)
+                }.value
+                guard let legacySnapshots,
+                      !legacySnapshots.snapshots.isEmpty,
+                      let legacySHA256,
+                      legacySHA256 == initialLegacySHA256 else {
+                    try? await Task.sleep(for: .seconds(300))
+                    continue
+                }
+
+                for legacySnapshot in legacySnapshots.snapshots {
+                    let mergedLegacy = ClipboardStoreReconciler
+                        .mergeForSnapshot(
+                            context: self.mergeContext,
+                            snapshot: legacySnapshot
+                        )
+                    _ = self.applyMergeResult(mergedLegacy)
+                }
+                self.saveMetadataCacheNow()
+                guard let sync = self.incrementalCloudSync else { break }
+
+                // Clipboard capture can continue during migration. Repeat the
+                // v2 commit until the revision stays stable across verification.
+                var committed = false
+                while !Task.isCancelled {
+                    let revision = self.dataRevision
+                    let snapshot = self.currentSnapshot
+                    committed = await sync.commitLegacyMigration(
+                        snapshot: snapshot,
+                        legacySHA256: legacySHA256
+                    )
+                    if committed && revision == self.dataRevision { break }
+                }
+                guard committed else {
+                    try? await Task.sleep(for: .seconds(300))
+                    continue
+                }
+
+                let removed = await Task.detached(priority: .utility) {
+                    guard LegacyStoreMigrationIO
+                        .resolveConflictVersionsAfterMigration(
+                            at: legacyURL,
+                            expectedVersionDigests: legacySnapshots
+                                .versionDigests
+                        )
+                    else { return false }
+                    return LegacyStoreMigrationIO.deleteIfUnchanged(
+                        at: legacyURL,
+                        sha256: legacySHA256
+                    )
+                }.value
+                if removed {
+                    self.logger.info(
+                        "Verified incremental migration and removed legacy clipboard store"
+                    )
+                    self.refreshStorageUsage()
+                    break
+                }
+                try? await Task.sleep(for: .seconds(300))
+            }
+            self.legacyMigrationTask = nil
+        }
+    }
+
     private func scheduleSave() {
         saveWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.saveNow() }
@@ -1366,6 +1563,11 @@ final class ClipboardStore {
         }
         guard let data = encodedCurrentSnapshot() else { return false }
         let metadataCacheSaved = writeMetadataCache(data)
+        if usesIncrementalCloudSync {
+            scheduleIncrementalSync()
+            refreshStorageUsage()
+            return metadataCacheSaved
+        }
         guard iCloudStoreLoadState == .ready else {
             logger.info(
                 "Saved clipboard changes locally while iCloud history sync is unavailable"
@@ -1402,22 +1604,59 @@ final class ClipboardStore {
     }
 
     private func encodedCurrentSnapshot() -> Data? {
-        let configuration = Settings.shared.syncedHistoryRetention.map {
-            SyncedConfiguration(historyRetention: $0)
-        }
-        let snapshot = ClipboardStoreSnapshot(
-            history: history,
-            pinboards: pinboards,
-            configuration: configuration,
-            deletions: serializedDeletionTombstones
-        )
         do {
-            return try JSONEncoder().encode(snapshot)
+            return try JSONEncoder().encode(currentSnapshot)
         } catch {
             logger.error(
                 "Failed to encode clipboard history: \(error.localizedDescription, privacy: .public)"
             )
             return nil
+        }
+    }
+
+    private var currentSnapshot: ClipboardStoreSnapshot {
+        let configuration = Settings.shared.syncedHistoryRetention.map {
+            SyncedConfiguration(historyRetention: $0)
+        }
+        return ClipboardStoreSnapshot(
+            history: history,
+            pinboards: pinboards,
+            configuration: configuration,
+            deletions: serializedDeletionTombstones
+        )
+    }
+
+    private func scheduleIncrementalSync() {
+        guard incrementalCloudSync != nil else { return }
+        incrementalSyncRequested = true
+        guard incrementalSyncTask == nil else { return }
+        incrementalSyncTask = Task { [weak self] in
+            guard let self else { return }
+            while self.incrementalSyncRequested {
+                self.incrementalSyncRequested = false
+                guard let sync = self.incrementalCloudSync else { break }
+                let local = self.currentSnapshot
+                let merged = await sync.synchronize(local)
+                guard !Task.isCancelled else { break }
+                if let merged {
+                    let pinboardsWereUnchanged = self.pinboards
+                        == local.pinboards
+                    var changed = self.mergeExternal(merged)
+                    if pinboardsWereUnchanged,
+                       self.pinboards != merged.pinboards {
+                        self.pinboards = merged.pinboards
+                        changed = true
+                    }
+                    if changed {
+                        self.saveMetadataCacheNow()
+                        self.incrementalSyncRequested = true
+                    }
+                }
+            }
+            self.incrementalSyncTask = nil
+            if self.incrementalSyncRequested {
+                self.scheduleIncrementalSync()
+            }
         }
     }
 
@@ -1478,6 +1717,14 @@ final class ClipboardStore {
         stopWatching()
         storeMaterializationTask?.cancel()
         storeMaterializationTask = nil
+        incrementalSyncTask?.cancel()
+        incrementalSyncTask = nil
+        incrementalSyncPollTask?.cancel()
+        incrementalSyncPollTask = nil
+        incrementalSyncRequested = false
+        legacyMigrationTask?.cancel()
+        legacyMigrationTask = nil
+        incrementalCloudSync = nil
         storeMaterializationCompletedForCurrentURL = false
         iCloudStoreLoadState = .ready
         let target = (enabled ? ClipboardStore.iCloudBase : ClipboardStore.localBase) ?? ClipboardStore.localBase
@@ -1496,7 +1743,12 @@ final class ClipboardStore {
 
         copyImages(from: imagesDir, to: newImages)
         baseDir = target; imagesDir = newImages; storeURL = newStore
-        if enabled {
+        configureIncrementalCloudSync()
+        prepareDirectories()
+        if enabled && usesIncrementalCloudSync {
+            saveNow()
+            beginLegacyStoreMigration()
+        } else if enabled {
             beginICloudStoreBackgroundLoad(
                 requiresMaterialization: targetNeedsMaterialization
             )
@@ -1507,7 +1759,6 @@ final class ClipboardStore {
         } else {
             saveNow()
         }
-        prepareDirectories()
         if enabled { startWatching() }
     }
 
@@ -1763,6 +2014,13 @@ final class ClipboardStore {
         await storeMaterializationTask?.value
     }
 
+    func waitForIncrementalSyncForAutomatedTest() async {
+        guard ClipboardStore.automatedTestBase != nil else { return }
+        while let task = incrementalSyncTask {
+            await task.value
+        }
+    }
+
     private var mergeContext: ClipboardMergeContext {
         ClipboardMergeContext(
             history: history,
@@ -1817,7 +2075,13 @@ final class ClipboardStore {
 
     private func startWatching() {
         stopWatching()
-        let fd = open(storeURL.path, O_EVTONLY)
+        let watchedURL = usesIncrementalCloudSync
+            ? incrementalCloudDirectory.appendingPathComponent(
+                "batches",
+                isDirectory: true
+            )
+            : storeURL
+        let fd = open(watchedURL.path, O_EVTONLY)
         guard fd >= 0 else { return }
         let src = DispatchSource.makeFileSystemObjectSource(
             fileDescriptor: fd, eventMask: [.write, .rename, .delete], queue: .main)
@@ -1826,7 +2090,10 @@ final class ClipboardStore {
             let event = src.data
             let needsReattach = event.contains(.rename) || event.contains(.delete)
 
-            if Date() >= self.ignoreWatchUntil {
+            if self.usesIncrementalCloudSync {
+                self.scheduleIncrementalSync()
+                self.refreshStorageUsage()
+            } else if Date() >= self.ignoreWatchUntil {
                 self.reconcileFromDiskInBackground()
             } else {
                 self.refreshStorageUsage()
