@@ -11,6 +11,7 @@ enum AutomatedUITestProbe {
     private(set) static var explanationBoardRendered = false
     private(set) static var explanationPreviewRendered = false
     private(set) static var appleLanguagePackSettingsRendered = false
+    private(set) static var iCloudHistoryLoadingRendered = false
     private(set) static var assistantProcessingItemIDs = Set<UUID>()
     private(set) static var renderedItemIDs = Set<UUID>()
 
@@ -25,6 +26,7 @@ enum AutomatedUITestProbe {
         explanationBoardRendered = false
         explanationPreviewRendered = false
         appleLanguagePackSettingsRendered = false
+        iCloudHistoryLoadingRendered = false
         assistantProcessingItemIDs.removeAll()
         renderedItemIDs.removeAll()
     }
@@ -63,6 +65,11 @@ enum AutomatedUITestProbe {
         appleLanguagePackSettingsRendered = true
     }
 
+    static func recordICloudHistoryLoading() {
+        guard isEnabled else { return }
+        iCloudHistoryLoadingRendered = true
+    }
+
     static func recordAssistantProcessing(itemID: UUID, visible: Bool) {
         guard isEnabled else { return }
         if visible {
@@ -93,6 +100,18 @@ enum AutomatedUITestRunner {
         let success: Bool
         let historyCount: Int
         let removedCount: Int
+    }
+
+    private struct ICloudStoreLoadingResult: Codable {
+        let phase: String
+        let success: Bool
+        let panelResponsiveWhileDownloading: Bool
+        let loadingStateRendered: Bool
+        let historyEmptyWhileDownloading: Bool
+        let recoveredAutomatically: Bool
+        let concurrentItemPreserved: Bool
+        let persistedMatches: Int
+        let historyMatches: Int
     }
 
     private struct PerformanceResult: Codable {
@@ -465,6 +484,33 @@ enum AutomatedUITestRunner {
     }
 
     static func start(controller: AppController) {
+        let phase = ProcessInfo.processInfo.environment[
+            "PESTY_AUTOMATED_UI_TEST"
+        ] ?? "verify"
+        guard phase != "icloud-store-loading",
+              controller.store.iCloudStoreLoadState != .ready else {
+            startAfterICloudStoreIsReady(controller: controller)
+            return
+        }
+
+        if controller.store.iCloudStoreLoadState == .failed {
+            controller.store.retryICloudStoreLoad()
+        }
+        Task {
+            await controller.store.waitForICloudStoreLoadForAutomatedTest()
+            guard controller.store.iCloudStoreLoadState == .ready else {
+                FileHandle.standardError.write(
+                    Data("Automated test could not load iCloud history\n".utf8)
+                )
+                exit(EXIT_FAILURE)
+            }
+            startAfterICloudStoreIsReady(controller: controller)
+        }
+    }
+
+    private static func startAfterICloudStoreIsReady(
+        controller: AppController
+    ) {
         let environment = ProcessInfo.processInfo.environment
         let phase = environment["PESTY_AUTOMATED_UI_TEST"] ?? "verify"
         let runID = environment["PESTY_AUTOMATED_TEST_ID"] ?? "default"
@@ -478,6 +524,10 @@ enum AutomatedUITestRunner {
         }
         if phase == "panel-reconciliation" {
             runPanelReconciliationTest(controller: controller, runID: runID)
+            return
+        }
+        if phase == "icloud-store-loading" {
+            runICloudStoreLoadingTest(controller: controller, runID: runID)
             return
         }
         if phase == "settings-record-count" {
@@ -647,6 +697,75 @@ enum AutomatedUITestRunner {
                 targetBundleID: targetBundleID
             ))
             exit(success ? EXIT_SUCCESS : EXIT_FAILURE)
+        }
+    }
+
+    private static func runICloudStoreLoadingTest(
+        controller: AppController,
+        runID: String
+    ) {
+        let expected = Set((1...4).map { "pesty-auto-\(runID)-\($0)" })
+        AutomatedUITestProbe.reset()
+        controller.monitor.stop()
+        controller.showBar()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            let panelResponsive = NSApp.windows.contains {
+                $0 is BarPanel && $0.isVisible
+            }
+            let loadingRendered = AutomatedUITestProbe
+                .iCloudHistoryLoadingRendered
+            let historyEmpty = controller.store.history.isEmpty
+            let concurrentText = "pesty-icloud-concurrent-\(runID)"
+            controller.store.addConcurrentItemForAutomatedICloudStoreTest(
+                ClipItem(type: .text, text: concurrentText, createdAt: Date())
+            )
+
+            Task {
+                await controller.store
+                    .waitForICloudStoreLoadForAutomatedTest()
+                try? await Task.sleep(for: .milliseconds(350))
+
+                let historyTexts = Set(
+                    controller.store.history.compactMap(\.text)
+                )
+                var persistedTexts = Set<String>()
+                if let base = ClipboardStore.automatedTestBase,
+                   let data = try? Data(
+                       contentsOf: base.appendingPathComponent("store.json")
+                   ),
+                   let snapshot = try? JSONDecoder().decode(
+                       ClipboardStoreSnapshot.self,
+                       from: data
+                   ) {
+                    persistedTexts = Set(snapshot.history.compactMap(\.text))
+                }
+
+                let historyMatches = expected.intersection(historyTexts).count
+                let persistedMatches = expected.intersection(persistedTexts).count
+                let concurrentItemPreserved = historyTexts.contains(concurrentText)
+                    && persistedTexts.contains(concurrentText)
+                let recovered = controller.store.iCloudStoreLoadState == .ready
+                    && historyMatches == expected.count
+                let result = ICloudStoreLoadingResult(
+                    phase: "icloud-store-loading",
+                    success: panelResponsive
+                        && loadingRendered
+                        && historyEmpty
+                        && recovered
+                        && concurrentItemPreserved
+                        && persistedMatches == expected.count,
+                    panelResponsiveWhileDownloading: panelResponsive,
+                    loadingStateRendered: loadingRendered,
+                    historyEmptyWhileDownloading: historyEmpty,
+                    recoveredAutomatically: recovered,
+                    concurrentItemPreserved: concurrentItemPreserved,
+                    persistedMatches: persistedMatches,
+                    historyMatches: historyMatches
+                )
+                writeICloudStoreLoading(result)
+                exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+            }
         }
     }
 
@@ -4065,6 +4184,19 @@ enum AutomatedUITestRunner {
         guard let data = try? encoder.encode(result) else { return }
         FileHandle.standardOutput.write(
             Data("AUTOMATED_UI_TEST_CLEANUP_RESULT ".utf8)
+        )
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeICloudStoreLoading(
+        _ result: ICloudStoreLoadingResult
+    ) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(
+            Data("AUTOMATED_ICLOUD_STORE_LOADING_RESULT ".utf8)
         )
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data("\n".utf8))

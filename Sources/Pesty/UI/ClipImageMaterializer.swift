@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 import OSLog
 
-enum ClipImageLoadPhase: String, Sendable {
+enum ICloudFileLoadPhase: String, Sendable {
     case checkingICloud
     case downloadingICloud
     case reading
@@ -10,23 +10,39 @@ enum ClipImageLoadPhase: String, Sendable {
     case failed
 }
 
+typealias ClipImageLoadPhase = ICloudFileLoadPhase
+
+enum ICloudFileKind: Sendable {
+    case image
+    case history
+
+    var logName: String {
+        switch self {
+        case .image: "image"
+        case .history: "history"
+        }
+    }
+}
+
 enum ClipImageMaterializer {
-    typealias PhaseHandler = @MainActor @Sendable (ClipImageLoadPhase) -> Void
+    typealias PhaseHandler = @MainActor @Sendable (ICloudFileLoadPhase) -> Void
 
     private static let logger = Logger(
         subsystem: "com.bifrostproxy.pesty",
-        category: "image-materializer"
+        category: "icloud-materializer"
     )
     private static let downloadTimeout: Duration = .seconds(30)
     private static let pollInterval: Duration = .milliseconds(200)
 
     static func prepare(
         at url: URL,
+        kind: ICloudFileKind = .image,
+        timeout: Duration = downloadTimeout,
         phase: @escaping PhaseHandler
     ) async -> Bool {
         await phase(.checkingICloud)
 
-        if let delay = automatedDownloadDelay {
+        if let delay = automatedDownloadDelay(for: kind) {
             await phase(.downloadingICloud)
             do {
                 try await Task.sleep(for: .milliseconds(delay))
@@ -41,7 +57,7 @@ enum ClipImageMaterializer {
         let initialState = await fileState(at: url)
         guard initialState.exists else {
             logger.error(
-                "Image file is missing id=\(url.lastPathComponent, privacy: .public)"
+                "iCloud \(kind.logName, privacy: .public) file is missing id=\(url.lastPathComponent, privacy: .public)"
             )
             await phase(.failed)
             return false
@@ -53,14 +69,14 @@ enum ClipImageMaterializer {
                 try FileManager.default.startDownloadingUbiquitousItem(at: url)
             } catch {
                 logger.error(
-                    "Failed to request iCloud image download id=\(url.lastPathComponent, privacy: .public) domain=\((error as NSError).domain, privacy: .public) code=\((error as NSError).code)"
+                    "Failed to request iCloud \(kind.logName, privacy: .public) download id=\(url.lastPathComponent, privacy: .public) domain=\((error as NSError).domain, privacy: .public) code=\((error as NSError).code)"
                 )
                 await phase(.failed)
                 return false
             }
 
             let clock = ContinuousClock()
-            let deadline = clock.now.advanced(by: downloadTimeout)
+            let deadline = clock.now.advanced(by: timeout)
             while clock.now < deadline {
                 guard !Task.isCancelled else { return false }
                 do {
@@ -71,7 +87,7 @@ enum ClipImageMaterializer {
                 let state = await fileState(at: url)
                 if let error = state.downloadError {
                     logger.error(
-                        "iCloud image download failed id=\(url.lastPathComponent, privacy: .public) domain=\(error.domain, privacy: .public) code=\(error.code)"
+                        "iCloud \(kind.logName, privacy: .public) download failed id=\(url.lastPathComponent, privacy: .public) domain=\(error.domain, privacy: .public) code=\(error.code)"
                     )
                     await phase(.failed)
                     return false
@@ -83,7 +99,7 @@ enum ClipImageMaterializer {
             }
 
             logger.error(
-                "Timed out downloading iCloud image id=\(url.lastPathComponent, privacy: .public)"
+                "Timed out downloading iCloud \(kind.logName, privacy: .public) id=\(url.lastPathComponent, privacy: .public)"
             )
             await phase(.failed)
             return false
@@ -127,7 +143,7 @@ enum ClipImageMaterializer {
         }.value
     }
 
-    private static func isDataLess(at url: URL) -> Bool {
+    static func isDataLess(at url: URL) -> Bool {
         url.withUnsafeFileSystemRepresentation { path in
             guard let path else { return false }
             var info = Darwin.stat()
@@ -139,12 +155,16 @@ enum ClipImageMaterializer {
         }
     }
 
-    private static var automatedDownloadDelay: Int? {
+    private static func automatedDownloadDelay(
+        for kind: ICloudFileKind
+    ) -> Int? {
         guard ProcessInfo.processInfo.environment[
                   "PESTY_AUTOMATED_TEST_DATA_DIR"
               ]?.isEmpty == false,
               let raw = ProcessInfo.processInfo.environment[
-                  "PESTY_AUTOMATED_IMAGE_DOWNLOAD_DELAY_MS"
+                  kind == .image
+                      ? "PESTY_AUTOMATED_IMAGE_DOWNLOAD_DELAY_MS"
+                      : "PESTY_AUTOMATED_STORE_DOWNLOAD_DELAY_MS"
               ],
               let delay = Int(raw),
               delay > 0 else {
