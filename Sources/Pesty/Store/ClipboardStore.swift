@@ -467,6 +467,13 @@ final class ClipboardStore {
         try? fm.createDirectory(at: imagesDir, withIntermediateDirectories: true,
                                 attributes: [.posixPermissions: 0o700])
         try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: baseDir.path)
+        if usesICloudMetadataCache {
+            try? fm.createDirectory(
+                at: metadataCacheURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+        }
     }
 
     var visibleItems: [ClipItem] {
@@ -1231,19 +1238,26 @@ final class ClipboardStore {
     }
 
     private func load() {
-        if storeNeedsMaterializationBeforeReading {
-            beginICloudStoreMaterialization()
-            selectFirst()
-            return
-        }
-
-        let initialSnapshot = readSnapshot(at: storeURL)
+        let loadsFromMetadataCache = usesICloudMetadataCache
+        let needsMaterialization = loadsFromMetadataCache
+            && storeNeedsMaterializationBeforeReading
+        let initialSnapshot = readSnapshot(
+            at: loadsFromMetadataCache ? metadataCacheURL : storeURL
+        )
         if let snap = initialSnapshot {
             _ = mergeDeletionTombstones(snap.deletions ?? [])
             history = snap.history.filter { !isDeletedFromHistory($0) }
             pinboards = filteringDeletedPinboardItems(from: snap.pinboards)
         }
-        reconcileFromDisk()
+        if loadsFromMetadataCache {
+            if FileManager.default.fileExists(atPath: storeURL.path) {
+                beginICloudStoreBackgroundLoad(
+                    requiresMaterialization: needsMaterialization
+                )
+            }
+        } else {
+            reconcileFromDisk()
+        }
         let initializedConfiguration = usesSharedConfiguration
             ? Settings.shared.ensureSyncedHistoryRetention(
                 effectiveAt: Date().addingTimeInterval(HistoryRetentionPolicy.trimDelay)
@@ -1259,8 +1273,20 @@ final class ClipboardStore {
         if initializedConfiguration
             || initialSnapshot?.configuration?.historyRetention != currentConfiguration {
             saveNow()
+        } else if usesICloudMetadataCache {
+            saveMetadataCacheNow()
         }
         selectFirst()
+    }
+
+    private var usesICloudMetadataCache: Bool {
+        Settings.shared.iCloudSync || ClipboardStore.automatedTestBase != nil
+    }
+
+    private var metadataCacheURL: URL {
+        let cacheBase = ClipboardStore.automatedTestBase
+            ?? ClipboardStore.localBase
+        return cacheBase.appendingPathComponent("icloud-metadata-cache.json")
     }
 
     private var storeNeedsMaterializationBeforeReading: Bool {
@@ -1276,16 +1302,23 @@ final class ClipboardStore {
         return ClipImageMaterializer.isDataLess(at: storeURL)
     }
 
-    private func beginICloudStoreMaterialization() {
+    private func beginICloudStoreBackgroundLoad(
+        requiresMaterialization: Bool
+    ) {
         guard storeMaterializationTask == nil else { return }
         let requestedStoreURL = storeURL
         iCloudStoreLoadState = .downloading
         storeMaterializationTask = Task { [weak self] in
-            let prepared = await ClipImageMaterializer.prepare(
-                at: requestedStoreURL,
-                kind: .history,
-                timeout: .seconds(60)
-            ) { _ in }
+            let prepared: Bool
+            if requiresMaterialization {
+                prepared = await ClipImageMaterializer.prepare(
+                    at: requestedStoreURL,
+                    kind: .history,
+                    timeout: .seconds(60)
+                ) { _ in }
+            } else {
+                prepared = true
+            }
             guard let self, self.storeURL == requestedStoreURL else { return }
             guard prepared else {
                 self.iCloudStoreLoadState = .failed
@@ -1307,6 +1340,10 @@ final class ClipboardStore {
         }
     }
 
+    private func beginICloudStoreMaterialization() {
+        beginICloudStoreBackgroundLoad(requiresMaterialization: true)
+    }
+
     private func scheduleSave() {
         saveWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.saveNow() }
@@ -1322,32 +1359,18 @@ final class ClipboardStore {
 
     @discardableResult
     private func writeSnapshot() -> Bool {
-        guard iCloudStoreLoadState == .ready else {
-            logger.info(
-                "Deferred clipboard history save while iCloud history is unavailable"
-            )
-            return false
-        }
         if usesSharedConfiguration {
             _ = Settings.shared.ensureSyncedHistoryRetention(
                 effectiveAt: Date().addingTimeInterval(HistoryRetentionPolicy.trimDelay)
             )
         }
-        let configuration = Settings.shared.syncedHistoryRetention.map {
-            SyncedConfiguration(historyRetention: $0)
-        }
-        let snap = ClipboardStoreSnapshot(
-            history: history,
-            pinboards: pinboards,
-            configuration: configuration,
-            deletions: serializedDeletionTombstones
-        )
-        let data: Data
-        do {
-            data = try JSONEncoder().encode(snap)
-        } catch {
-            logger.error("Failed to encode clipboard history: \(error.localizedDescription, privacy: .public)")
-            return false
+        guard let data = encodedCurrentSnapshot() else { return false }
+        let metadataCacheSaved = writeMetadataCache(data)
+        guard iCloudStoreLoadState == .ready else {
+            logger.info(
+                "Saved clipboard changes locally while iCloud history sync is unavailable"
+            )
+            return metadataCacheSaved
         }
 
         ignoreWatchUntil = Date().addingTimeInterval(1.5)
@@ -1376,6 +1399,54 @@ final class ClipboardStore {
         resolvePendingConflictVersionsIfNeeded()
         refreshStorageUsage()
         return true
+    }
+
+    private func encodedCurrentSnapshot() -> Data? {
+        let configuration = Settings.shared.syncedHistoryRetention.map {
+            SyncedConfiguration(historyRetention: $0)
+        }
+        let snapshot = ClipboardStoreSnapshot(
+            history: history,
+            pinboards: pinboards,
+            configuration: configuration,
+            deletions: serializedDeletionTombstones
+        )
+        do {
+            return try JSONEncoder().encode(snapshot)
+        } catch {
+            logger.error(
+                "Failed to encode clipboard history: \(error.localizedDescription, privacy: .public)"
+            )
+            return nil
+        }
+    }
+
+    private func saveMetadataCacheNow() {
+        guard let data = encodedCurrentSnapshot() else { return }
+        _ = writeMetadataCache(data)
+    }
+
+    @discardableResult
+    private func writeMetadataCache(_ data: Data) -> Bool {
+        guard usesICloudMetadataCache else { return true }
+        do {
+            try FileManager.default.createDirectory(
+                at: metadataCacheURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            try data.write(to: metadataCacheURL, options: .atomic)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: metadataCacheURL.path
+            )
+            return true
+        } catch {
+            logger.error(
+                "Failed to save local clipboard metadata cache: \(error.localizedDescription, privacy: .public)"
+            )
+            return false
+        }
     }
 
     private func resolvePendingConflictVersionsIfNeeded() {
@@ -1418,25 +1489,18 @@ final class ClipboardStore {
 
         let targetNeedsMaterialization = fm.fileExists(atPath: newStore.path)
             && ClipImageMaterializer.isDataLess(at: newStore)
-        let targetSnapshot = fm.fileExists(atPath: newStore.path)
-            && !targetNeedsMaterialization
+        let targetSnapshot = !enabled
+            && fm.fileExists(atPath: newStore.path)
             ? readSnapshot(at: newStore)
             : nil
-        if enabled, !targetNeedsMaterialization,
-           targetSnapshot?.configuration == nil {
-            let configuration = Settings.shared.publishCurrentHistoryRetention(
-                effectiveAt: Date().addingTimeInterval(HistoryRetentionPolicy.trimDelay)
-            )
-            historyRetentionDidChange(
-                effectiveAt: configuration.effectiveAt,
-                configurationChanged: false
-            )
-        }
 
         copyImages(from: imagesDir, to: newImages)
         baseDir = target; imagesDir = newImages; storeURL = newStore
-        if targetNeedsMaterialization {
-            beginICloudStoreMaterialization()
+        if enabled {
+            beginICloudStoreBackgroundLoad(
+                requiresMaterialization: targetNeedsMaterialization
+            )
+            saveNow()
         } else if let snap = targetSnapshot {
             _ = mergeExternal(snap)
             saveNow()
@@ -1693,12 +1757,6 @@ final class ClipboardStore {
         while let task = diskReconciliationTask {
             await task.value
         }
-    }
-
-    func retryICloudStoreLoad() {
-        guard iCloudStoreLoadState == .failed
-                || storeNeedsMaterializationBeforeReading else { return }
-        beginICloudStoreMaterialization()
     }
 
     func waitForICloudStoreLoadForAutomatedTest() async {

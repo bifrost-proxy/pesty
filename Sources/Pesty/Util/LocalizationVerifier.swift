@@ -91,14 +91,6 @@ enum LocalizationVerifier {
                     L10n.iCloudImageDownloadFailed,
                     "The image could not be downloaded from iCloud."
                 ),
-                (
-                    L10n.downloadingICloudHistory,
-                    "Downloading clipboard history from iCloud…"
-                ),
-                (
-                    L10n.iCloudHistoryDownloadFailed,
-                    "Clipboard history could not be downloaded from iCloud."
-                ),
                 (L10n.retry, "Retry"),
                 (L10n.version("1.2.3"), "Version 1.2.3"),
                 (L10n.translation, "Translation"),
@@ -253,14 +245,6 @@ enum LocalizationVerifier {
                 (
                     L10n.iCloudImageDownloadFailed,
                     "无法从 iCloud 下载这张图片。"
-                ),
-                (
-                    L10n.downloadingICloudHistory,
-                    "正在从 iCloud 下载剪贴板历史记录…"
-                ),
-                (
-                    L10n.iCloudHistoryDownloadFailed,
-                    "无法从 iCloud 下载剪贴板历史记录。"
                 ),
                 (L10n.retry, "重试"),
                 (L10n.version("1.2.3"), "版本 1.2.3"),
