@@ -70,6 +70,9 @@ jobs:
       - name: Verify local image OCR translation
         run: scripts/test_image_translation.sh .build/debug/Pesty
 
+      - name: Verify iCloud image loading UI
+        run: scripts/test_icloud_image_loading.sh .build/debug/Pesty
+
       - name: Verify deletion survives stale sync snapshots
         run: scripts/test_deletion_sync.sh .build/debug/Pesty
 

@@ -7,6 +7,7 @@ struct ClipThumbnailView: View {
     let item: ClipItem
 
     @State private var image: NSImage?
+    @State private var loadPhase: ClipImageLoadPhase = .checkingICloud
     private var palette: ThemePalette { Theme.palette(for: colorScheme) }
 
     var body: some View {
@@ -17,18 +18,64 @@ struct ClipThumbnailView: View {
                     .interpolation(.medium)
                     .scaledToFit()
             } else {
-                Image(systemName: "photo")
-                    .font(.system(size: 30))
-                    .foregroundStyle(palette.textTertiary.swiftUIColor)
+                statusView
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task(id: item.imageFileName) {
             image = nil
+            loadPhase = .checkingICloud
             guard let url = ClipboardStore.shared.imageURL(for: item) else { return }
-            let thumbnail = await ClipThumbnailProvider.shared.thumbnail(for: url)
+            let thumbnail = await ClipThumbnailProvider.shared.thumbnail(
+                for: url
+            ) { phase in
+                loadPhase = phase
+            }
             guard !Task.isCancelled else { return }
             image = thumbnail
+            loadPhase = thumbnail == nil ? .failed : .ready
+        }
+    }
+
+    @ViewBuilder
+    private var statusView: some View {
+        VStack(spacing: 7) {
+            if loadPhase == .checkingICloud || loadPhase == .reading {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(
+                    systemName: loadPhase == .downloadingICloud
+                        ? "icloud.and.arrow.down"
+                        : loadPhase == .failed
+                            ? "icloud.slash"
+                            : "photo"
+                )
+                .font(.system(size: 28))
+            }
+
+            if loadPhase == .downloadingICloud {
+                Text("iCloud")
+                    .font(.system(size: 11, weight: .medium))
+            } else if loadPhase == .failed {
+                Text(L10n.previewUnavailable)
+                    .font(.system(size: 10))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 12)
+            }
+        }
+        .foregroundStyle(palette.textTertiary.swiftUIColor)
+        .accessibilityLabel(accessibilityStatus)
+    }
+
+    private var accessibilityStatus: String {
+        switch loadPhase {
+        case .checkingICloud: return L10n.checkingICloudImage
+        case .downloadingICloud: return L10n.downloadingICloudImage
+        case .reading: return L10n.readingImage
+        case .ready: return L10n.image
+        case .failed: return L10n.iCloudImageDownloadFailed
         }
     }
 }
@@ -45,12 +92,18 @@ private final class ClipThumbnailProvider {
         cache.totalCostLimit = 4_000_000
     }
 
-    func thumbnail(for url: URL) async -> NSImage? {
+    func thumbnail(
+        for url: URL,
+        phase: @escaping ClipImageMaterializer.PhaseHandler
+    ) async -> NSImage? {
         let key = url.lastPathComponent as NSString
         if let cached = cache.object(forKey: key) {
+            phase(.ready)
             return cached
         }
 
+        guard await ClipImageMaterializer.prepare(at: url, phase: phase),
+              !Task.isCancelled else { return nil }
         guard let cgImage = await decoder.thumbnail(at: url),
               !Task.isCancelled else { return nil }
 
@@ -116,19 +169,29 @@ private final class ClipThumbnailDecoder: @unchecked Sendable {
     }
 
     private static func decodeThumbnail(at url: URL) -> CGImage? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
-            return nil
+        var result: CGImage?
+        var coordinationError: NSError?
+        NSFileCoordinator().coordinate(
+            readingItemAt: url,
+            options: [],
+            error: &coordinationError
+        ) { coordinatedURL in
+            guard let source = CGImageSourceCreateWithURL(
+                coordinatedURL as CFURL,
+                nil
+            ) else { return }
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: 512
+            ]
+            result = CGImageSourceCreateThumbnailAtIndex(
+                source,
+                0,
+                options as CFDictionary
+            )
         }
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceShouldCacheImmediately: true,
-            kCGImageSourceThumbnailMaxPixelSize: 512
-        ]
-        return CGImageSourceCreateThumbnailAtIndex(
-            source,
-            0,
-            options as CFDictionary
-        )
+        return coordinationError == nil ? result : nil
     }
 }

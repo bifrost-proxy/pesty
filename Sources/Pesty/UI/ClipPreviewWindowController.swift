@@ -58,6 +58,7 @@ struct ClipPreviewAutomationSnapshot {
     let textNeedsVerticalScrolling: Bool
     let imageSourcePixelSize: NSSize?
     let imageDecodedPixelSize: NSSize?
+    let imageLoadPhase: ClipImageLoadPhase?
     let quickLookURL: URL?
 }
 
@@ -161,9 +162,8 @@ private struct ClipPreviewPlacement {
     let arrowTipX: CGFloat
 }
 
-private func previewImagePixelSize(at url: URL) -> NSSize? {
-    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-          let properties = CGImageSourceCopyPropertiesAtIndex(
+private func previewImagePixelSize(from source: CGImageSource) -> NSSize? {
+    guard let properties = CGImageSourceCopyPropertiesAtIndex(
             source,
             0,
             nil
@@ -214,7 +214,7 @@ private final class ClipPreviewImageDecoder: @unchecked Sendable {
                         return
                     }
                     let size = autoreleasepool {
-                        previewImagePixelSize(at: url)
+                        Self.pixelSizeSynchronously(at: url)
                     }
                     continuation.resume(
                         returning: request.isCancelled ? nil : size
@@ -254,35 +254,62 @@ private final class ClipPreviewImageDecoder: @unchecked Sendable {
         }
     }
 
+    private static func pixelSizeSynchronously(at url: URL) -> NSSize? {
+        var result: NSSize?
+        var coordinationError: NSError?
+        NSFileCoordinator().coordinate(
+            readingItemAt: url,
+            options: [],
+            error: &coordinationError
+        ) { coordinatedURL in
+            guard let source = CGImageSourceCreateWithURL(
+                coordinatedURL as CFURL,
+                nil
+            ) else { return }
+            result = previewImagePixelSize(from: source)
+        }
+        return coordinationError == nil ? result : nil
+    }
+
     private static func decodeSynchronously(
         at url: URL,
         maximumPixelDimension: Int
     ) -> DecodedPreviewImage? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let sourceSize = previewImagePixelSize(at: url) else {
-            return nil
-        }
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceShouldCacheImmediately: true,
-            kCGImageSourceThumbnailMaxPixelSize: max(1, maximumPixelDimension),
-        ]
-        guard let image = CGImageSourceCreateThumbnailAtIndex(
-            source,
-            0,
-            options as CFDictionary
-        ) else {
-            return nil
-        }
-        return DecodedPreviewImage(
-            image: image,
-            sourcePixelSize: sourceSize,
-            decodedPixelSize: NSSize(
-                width: image.width,
-                height: image.height
+        var result: DecodedPreviewImage?
+        var coordinationError: NSError?
+        NSFileCoordinator().coordinate(
+            readingItemAt: url,
+            options: [],
+            error: &coordinationError
+        ) { coordinatedURL in
+            guard let source = CGImageSourceCreateWithURL(
+                coordinatedURL as CFURL,
+                nil
+            ), let sourceSize = previewImagePixelSize(from: source) else {
+                return
+            }
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize:
+                    min(2_047, max(1, maximumPixelDimension)),
+            ]
+            guard let image = CGImageSourceCreateThumbnailAtIndex(
+                source,
+                0,
+                options as CFDictionary
+            ) else { return }
+            result = DecodedPreviewImage(
+                image: image,
+                sourcePixelSize: sourceSize,
+                decodedPixelSize: NSSize(
+                    width: image.width,
+                    height: image.height
+                )
             )
-        )
+        }
+        return coordinationError == nil ? result : nil
     }
 }
 
@@ -301,6 +328,7 @@ final class ClipPreviewWindowController:
     private var imageTask: Task<Void, Never>?
     private var imageSourcePixelSize: NSSize?
     private var imageDecodedPixelSize: NSSize?
+    private var imageLoadPhase: ClipImageLoadPhase?
     private var quickLookView: QLPreviewView?
     private var quickLookItem: FilePreviewItem?
     private var quickLookURL: URL?
@@ -441,6 +469,7 @@ final class ClipPreviewWindowController:
                 textNeedsVerticalScrolling: false,
                 imageSourcePixelSize: nil,
                 imageDecodedPixelSize: nil,
+                imageLoadPhase: nil,
                 quickLookURL: nil
             )
         }
@@ -473,6 +502,7 @@ final class ClipPreviewWindowController:
             textNeedsVerticalScrolling: needsVerticalScrolling,
             imageSourcePixelSize: imageSourcePixelSize,
             imageDecodedPixelSize: imageDecodedPixelSize,
+            imageLoadPhase: imageLoadPhase,
             quickLookURL: quickLookURL
         )
     }
@@ -508,6 +538,7 @@ final class ClipPreviewWindowController:
         textView = nil
         imageSourcePixelSize = nil
         imageDecodedPixelSize = nil
+        imageLoadPhase = nil
         fallbackURL = nil
         previewedItem = context.item
         previewContext = context
@@ -715,6 +746,44 @@ final class ClipPreviewWindowController:
         progress.controlSize = .small
         progress.startAnimation(nil)
 
+        let statusIcon = NSImageView()
+        statusIcon.image = NSImage(
+            systemSymbolName: "icloud",
+            accessibilityDescription: nil
+        )
+        statusIcon.symbolConfiguration = NSImage.SymbolConfiguration(
+            pointSize: 26,
+            weight: .regular
+        )
+        statusIcon.contentTintColor = .secondaryLabelColor
+
+        let statusLabel = NSTextField(
+            wrappingLabelWithString: L10n.checkingICloudImage
+        )
+        statusLabel.alignment = .center
+        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.setAccessibilityIdentifier(
+            "pesty-preview-image-loading-status"
+        )
+
+        let retryButton = NSButton(
+            title: L10n.retry,
+            target: self,
+            action: #selector(retryImagePreview)
+        )
+        retryButton.bezelStyle = .rounded
+        retryButton.isHidden = true
+        retryButton.setAccessibilityIdentifier(
+            "pesty-preview-image-retry"
+        )
+
+        let statusStack = NSStackView(
+            views: [statusIcon, progress, statusLabel, retryButton]
+        )
+        statusStack.orientation = .vertical
+        statusStack.alignment = .centerX
+        statusStack.spacing = 8
+
         let errorLabel = NSTextField(
             wrappingLabelWithString: L10n.previewUnavailable
         )
@@ -722,7 +791,7 @@ final class ClipPreviewWindowController:
         errorLabel.textColor = .secondaryLabelColor
         errorLabel.isHidden = true
 
-        [imageView, progress, errorLabel].forEach {
+        [imageView, statusStack, errorLabel].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview($0)
         }
@@ -731,8 +800,9 @@ final class ClipPreviewWindowController:
             imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
             imageView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
             imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12),
-            progress.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            progress.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            statusStack.centerXAnchor.constraint(equalTo: container.centerXAnchor),
+            statusStack.centerYAnchor.constraint(equalTo: container.centerYAnchor),
+            statusLabel.widthAnchor.constraint(lessThanOrEqualTo: container.widthAnchor, constant: -48),
             errorLabel.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             errorLabel.centerYAnchor.constraint(equalTo: container.centerYAnchor),
             errorLabel.leadingAnchor.constraint(
@@ -755,16 +825,42 @@ final class ClipPreviewWindowController:
         }
 
         imageTask = Task {
-            [weak self, weak imageView, weak progress, weak errorLabel] in
+            [weak self, weak imageView, weak statusStack, weak statusIcon,
+             weak progress, weak statusLabel, weak retryButton,
+             weak errorLabel] in
             guard let self else { return }
+            let prepared = await ClipImageMaterializer.prepare(at: url) {
+                [weak self, weak statusIcon, weak progress, weak statusLabel,
+                 weak retryButton] phase in
+                self?.imageLoadPhase = phase
+                if phase == .failed {
+                    self?.contentKind = .unavailable
+                }
+                self?.updateImageLoadingUI(
+                    phase,
+                    icon: statusIcon,
+                    progress: progress,
+                    label: statusLabel,
+                    retryButton: retryButton
+                )
+            }
+            guard prepared, !Task.isCancelled else { return }
             let sourcePixelSize =
                 await ClipPreviewImageDecoder.shared.pixelSize(at: url)
             guard !Task.isCancelled else { return }
             guard let sourcePixelSize else {
                 progress?.stopAnimation(nil)
                 progress?.isHidden = true
-                errorLabel?.isHidden = false
+                errorLabel?.isHidden = true
                 self.contentKind = .unavailable
+                self.imageLoadPhase = .failed
+                self.updateImageLoadingUI(
+                    .failed,
+                    icon: statusIcon,
+                    progress: progress,
+                    label: statusLabel,
+                    retryButton: retryButton
+                )
                 return
             }
             self.imageSourcePixelSize = sourcePixelSize
@@ -776,10 +872,17 @@ final class ClipPreviewWindowController:
             )
             guard !Task.isCancelled else { return }
             progress?.stopAnimation(nil)
-            progress?.isHidden = true
             guard let decoded else {
                 self.contentKind = .unavailable
-                errorLabel?.isHidden = false
+                errorLabel?.isHidden = true
+                self.imageLoadPhase = .failed
+                self.updateImageLoadingUI(
+                    .failed,
+                    icon: statusIcon,
+                    progress: progress,
+                    label: statusLabel,
+                    retryButton: retryButton
+                )
                 return
             }
             self.imageSourcePixelSize = decoded.sourcePixelSize
@@ -796,8 +899,72 @@ final class ClipPreviewWindowController:
                 )
             )
             imageView?.image = image
+            self.imageLoadPhase = .ready
+            statusStack?.isHidden = true
         }
         return container
+    }
+
+    private func updateImageLoadingUI(
+        _ phase: ClipImageLoadPhase,
+        icon: NSImageView?,
+        progress: NSProgressIndicator?,
+        label: NSTextField?,
+        retryButton: NSButton?
+    ) {
+        switch phase {
+        case .checkingICloud:
+            icon?.image = NSImage(
+                systemSymbolName: "icloud",
+                accessibilityDescription: nil
+            )
+            icon?.isHidden = false
+            progress?.isHidden = false
+            progress?.startAnimation(nil)
+            label?.stringValue = L10n.checkingICloudImage
+            retryButton?.isHidden = true
+        case .downloadingICloud:
+            icon?.image = NSImage(
+                systemSymbolName: "icloud.and.arrow.down",
+                accessibilityDescription: nil
+            )
+            icon?.isHidden = false
+            progress?.isHidden = false
+            progress?.startAnimation(nil)
+            label?.stringValue = L10n.downloadingICloudImage
+            retryButton?.isHidden = true
+        case .reading:
+            icon?.image = NSImage(
+                systemSymbolName: "photo",
+                accessibilityDescription: nil
+            )
+            icon?.isHidden = false
+            progress?.isHidden = false
+            progress?.startAnimation(nil)
+            label?.stringValue = L10n.readingImage
+            retryButton?.isHidden = true
+        case .ready:
+            icon?.isHidden = true
+            progress?.stopAnimation(nil)
+            progress?.isHidden = true
+            label?.stringValue = ""
+            retryButton?.isHidden = true
+        case .failed:
+            icon?.image = NSImage(
+                systemSymbolName: "icloud.slash",
+                accessibilityDescription: nil
+            )
+            icon?.isHidden = false
+            progress?.stopAnimation(nil)
+            progress?.isHidden = true
+            label?.stringValue = L10n.iCloudImageDownloadFailed
+            retryButton?.isHidden = false
+        }
+    }
+
+    @objc private func retryImagePreview() {
+        guard let previewContext else { return }
+        configure(context: previewContext)
     }
 
     private func constrainWindowForImage(_ sourcePixelSize: NSSize) -> Int {

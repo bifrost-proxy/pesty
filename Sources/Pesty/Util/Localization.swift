@@ -671,6 +671,22 @@ enum L10n {
             "无法预览这条剪贴板内容。"
         )
     }
+    static var checkingICloudImage: String {
+        text("Checking iCloud…", "正在检查 iCloud…")
+    }
+    static var downloadingICloudImage: String {
+        text("Downloading image from iCloud…", "正在从 iCloud 下载图片…")
+    }
+    static var readingImage: String {
+        text("Reading image…", "正在读取图片…")
+    }
+    static var iCloudImageDownloadFailed: String {
+        text(
+            "The image could not be downloaded from iCloud.",
+            "无法从 iCloud 下载这张图片。"
+        )
+    }
+    static var retry: String { text("Retry", "重试") }
     static var previewFileUnavailable: String {
         text(
             "The original file is no longer available.",

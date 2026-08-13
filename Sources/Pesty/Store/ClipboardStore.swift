@@ -1161,11 +1161,30 @@ final class ClipboardStore {
     func storeImageData(_ data: Data) -> String? {
         let name = "\(UUID().uuidString).png"
         let url = imagesDir.appendingPathComponent(name)
-        do {
-            try data.write(to: url)
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-            return name
-        } catch { return nil }
+        var coordinationError: NSError?
+        var writeError: Error?
+        NSFileCoordinator().coordinate(
+            writingItemAt: url,
+            options: [],
+            error: &coordinationError
+        ) { coordinatedURL in
+            do {
+                try data.write(to: coordinatedURL, options: .atomic)
+            } catch {
+                writeError = error
+            }
+        }
+        if let error = writeError ?? coordinationError {
+            logger.error(
+                "Failed to save clipboard image id=\(name, privacy: .public) domain=\((error as NSError).domain, privacy: .public) code=\((error as NSError).code)"
+            )
+            return nil
+        }
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: url.path
+        )
+        return name
     }
 
     private func duplicateImageFile(_ item: ClipItem) -> String? {

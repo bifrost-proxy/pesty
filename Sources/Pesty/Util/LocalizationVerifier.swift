@@ -81,6 +81,17 @@ enum LocalizationVerifier {
                 (L10n.items(2), "2 items"),
                 (L10n.fileCount(1), "1 file"),
                 (L10n.fileCount(2), "2 files"),
+                (L10n.checkingICloudImage, "Checking iCloud…"),
+                (
+                    L10n.downloadingICloudImage,
+                    "Downloading image from iCloud…"
+                ),
+                (L10n.readingImage, "Reading image…"),
+                (
+                    L10n.iCloudImageDownloadFailed,
+                    "The image could not be downloaded from iCloud."
+                ),
+                (L10n.retry, "Retry"),
                 (L10n.version("1.2.3"), "Version 1.2.3"),
                 (L10n.translation, "Translation"),
                 (L10n.translationAndExplanation, "Translate & Explain"),
@@ -225,6 +236,17 @@ enum LocalizationVerifier {
                 ),
                 (L10n.items(2), "2 项"),
                 (L10n.fileCount(2), "2 个文件"),
+                (L10n.checkingICloudImage, "正在检查 iCloud…"),
+                (
+                    L10n.downloadingICloudImage,
+                    "正在从 iCloud 下载图片…"
+                ),
+                (L10n.readingImage, "正在读取图片…"),
+                (
+                    L10n.iCloudImageDownloadFailed,
+                    "无法从 iCloud 下载这张图片。"
+                ),
+                (L10n.retry, "重试"),
                 (L10n.version("1.2.3"), "版本 1.2.3"),
                 (L10n.translation, "翻译"),
                 (L10n.translationAndExplanation, "翻译&解释"),
