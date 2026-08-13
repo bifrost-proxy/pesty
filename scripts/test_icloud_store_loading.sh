@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/bin/bash
 set -euo pipefail
 
 binary="${1:-.build/debug/Pesty}"
@@ -20,8 +20,8 @@ seed_output="$({
   PESTY_AUTOMATED_TEST_ID="$run_id" \
     "$binary"
 } 2>&1)"
-print -r -- "$seed_output"
-print -r -- "$seed_output" \
+printf '%s\n' "$seed_output"
+printf '%s\n' "$seed_output" \
   | grep 'AUTOMATED_UI_TEST_RESULT' \
   | sed 's/^AUTOMATED_UI_TEST_RESULT //' \
   | jq -e '.success == true and .persistedMatches == 4' >/dev/null
@@ -34,8 +34,8 @@ loading_output="$({
   PESTY_AUTOMATED_TEST_ID="$run_id" \
     "$binary"
 } 2>&1)"
-print -r -- "$loading_output"
-print -r -- "$loading_output" \
+printf '%s\n' "$loading_output"
+printf '%s\n' "$loading_output" \
   | grep 'AUTOMATED_ICLOUD_STORE_LOADING_RESULT' \
   | sed 's/^AUTOMATED_ICLOUD_STORE_LOADING_RESULT //' \
   | jq -e '
