@@ -438,8 +438,11 @@ enum AutomatedUITestRunner {
         let previewStayedWithinScreen: Bool
         let rightArrowConsumed: Bool
         let imageSelectionUpdatedPreview: Bool
+        let imageShowedICloudLoading: Bool
         let imageDecoded: Bool
         let imageDecodeStayedBounded: Bool
+        let imageSourcePixelWidth: Double?
+        let imageDecodedPixelWidth: Double?
         let fileSelectionUpdatedPreview: Bool
         let quickLookURLMatched: Bool
         let escapeClosedPreview: Bool
@@ -1855,7 +1858,23 @@ enum AutomatedUITestRunner {
             let secondRightConsumed = right.map {
                 controller.handleKey($0) == nil
             } ?? false
-            try? await Task.sleep(nanoseconds: 700_000_000)
+            try? await Task.sleep(nanoseconds: 300_000_000)
+
+            let imageLoadingSnapshot =
+                ClipPreviewWindowController.shared.automationSnapshot()
+            let expectsSimulatedICloudDownload =
+                ProcessInfo.processInfo.environment[
+                    "PESTY_AUTOMATED_IMAGE_DOWNLOAD_DELAY_MS"
+                ]?.isEmpty == false
+            let imageShowedICloudLoading =
+                !expectsSimulatedICloudDownload
+                || imageLoadingSnapshot.imageLoadPhase == .downloadingICloud
+
+            try? await Task.sleep(
+                nanoseconds: expectsSimulatedICloudDownload
+                    ? 1_700_000_000
+                    : 400_000_000
+            )
 
             let imageSnapshot =
                 ClipPreviewWindowController.shared.automationSnapshot()
@@ -1868,6 +1887,7 @@ enum AutomatedUITestRunner {
             let imageDecoded =
                 imageSnapshot.imageSourcePixelSize != nil
                 && imageSnapshot.imageDecodedPixelSize != nil
+                && imageSnapshot.imageLoadPhase == .ready
             let imageDecodeStayedBounded: Bool
             if let source = imageSnapshot.imageSourcePixelSize,
                let decoded = imageSnapshot.imageDecodedPixelSize {
@@ -1978,6 +1998,7 @@ enum AutomatedUITestRunner {
                     && translucentBackground
                     && rightArrowConsumed
                     && imageSelectionUpdatedPreview
+                    && imageShowedICloudLoading
                     && imageDecoded
                     && imageDecodeStayedBounded
                     && fileSelectionUpdatedPreview
@@ -2018,8 +2039,15 @@ enum AutomatedUITestRunner {
                 rightArrowConsumed: rightArrowConsumed,
                 imageSelectionUpdatedPreview:
                     imageSelectionUpdatedPreview,
+                imageShowedICloudLoading: imageShowedICloudLoading,
                 imageDecoded: imageDecoded,
                 imageDecodeStayedBounded: imageDecodeStayedBounded,
+                imageSourcePixelWidth: imageSnapshot.imageSourcePixelSize.map {
+                    Double($0.width)
+                },
+                imageDecodedPixelWidth: imageSnapshot.imageDecodedPixelSize.map {
+                    Double($0.width)
+                },
                 fileSelectionUpdatedPreview:
                     fileSelectionUpdatedPreview,
                 quickLookURLMatched: quickLookURLMatched,
@@ -2660,8 +2688,11 @@ enum AutomatedUITestRunner {
             previewStayedWithinScreen: false,
             rightArrowConsumed: false,
             imageSelectionUpdatedPreview: false,
+            imageShowedICloudLoading: false,
             imageDecoded: false,
             imageDecodeStayedBounded: false,
+            imageSourcePixelWidth: nil,
+            imageDecodedPixelWidth: nil,
             fileSelectionUpdatedPreview: false,
             quickLookURLMatched: false,
             escapeClosedPreview: false,
