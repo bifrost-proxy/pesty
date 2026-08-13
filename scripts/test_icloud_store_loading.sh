@@ -22,7 +22,7 @@ seed_output="$({
 } 2>&1)"
 print -r -- "$seed_output"
 print -r -- "$seed_output" \
-  | rg 'AUTOMATED_UI_TEST_RESULT' \
+  | grep 'AUTOMATED_UI_TEST_RESULT' \
   | sed 's/^AUTOMATED_UI_TEST_RESULT //' \
   | jq -e '.success == true and .persistedMatches == 4' >/dev/null
 
@@ -36,7 +36,7 @@ loading_output="$({
 } 2>&1)"
 print -r -- "$loading_output"
 print -r -- "$loading_output" \
-  | rg 'AUTOMATED_ICLOUD_STORE_LOADING_RESULT' \
+  | grep 'AUTOMATED_ICLOUD_STORE_LOADING_RESULT' \
   | sed 's/^AUTOMATED_ICLOUD_STORE_LOADING_RESULT //' \
   | jq -e '
       .success == true
