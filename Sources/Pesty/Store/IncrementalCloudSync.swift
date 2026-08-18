@@ -180,6 +180,16 @@ actor IncrementalCloudSync {
         )
     }
 
+    /// Makes local clipboard changes crash-safe without waiting for File
+    /// Provider downloads or a complete remote reconciliation. The durable
+    /// outbox is flushed by the normal background sync or the next launch.
+    func persistLocalSnapshot(_ snapshot: ClipboardStoreSnapshot) async {
+        prepareDirectories()
+        var changed = loadStateIfNeeded()
+        changed = await record(snapshot) || changed
+        if changed { persistState() }
+    }
+
     private func contains(
         _ migrated: ClipboardStoreSnapshot,
         allRecordsFrom expected: ClipboardStoreSnapshot
@@ -436,7 +446,7 @@ actor IncrementalCloudSync {
         hasRemoteChanges: Bool,
         decodedCount: Int
     ) {
-        guard var current = state else { return (false, false, 0) }
+        guard let initialState = state else { return (false, false, 0) }
         let keys: Set<URLResourceKey> = [
             .isRegularFileKey,
         ]
@@ -451,10 +461,12 @@ actor IncrementalCloudSync {
                 options: [.skipsHiddenFiles]
             ) else { return (false, false, 0) }
 
-        var directoryDates = current.batchDirectoryModificationDates ?? [:]
+        var directoryDates = initialState.batchDirectoryModificationDates
+            ?? [:]
         let originalDirectoryDates = directoryDates
+        let initiallyApplied = initialState.appliedBatchVersions
         var existingDeviceKeys = Set<String>()
-        var candidates: [(URL, Batch)] = []
+        var candidates: [Batch] = []
         var decodedCount = 0
 
         for directory in deviceDirectories {
@@ -486,7 +498,7 @@ actor IncrementalCloudSync {
                 }
                 // A device/sequence path is immutable. Once its batch ID has
                 // been applied, no later scan needs to open or decode it.
-                guard current.appliedBatchVersions[pathKey] == nil else {
+                guard initiallyApplied[pathKey] == nil else {
                     continue
                 }
                 if ClipImageMaterializer.isDataLess(at: url) {
@@ -503,7 +515,7 @@ actor IncrementalCloudSync {
                     continue
                 }
                 decodedCount += 1
-                candidates.append((url, batch))
+                candidates.append(batch)
             }
             guard directoryWasReadSuccessfully else { continue }
             directoryDates[deviceKey] = directoryModifiedAt
@@ -513,32 +525,37 @@ actor IncrementalCloudSync {
             existingDeviceKeys.contains($0.key)
         }
         let inventoryChanged = directoryDates != originalDirectoryDates
+        guard var current = state else { return (false, false, decodedCount) }
         current.batchDirectoryModificationDates = directoryDates
         candidates.sort {
-            if $0.1.createdAt != $1.1.createdAt {
-                return $0.1.createdAt < $1.1.createdAt
+            if $0.createdAt != $1.createdAt {
+                return $0.createdAt < $1.createdAt
             }
-            if $0.1.deviceID != $1.1.deviceID {
-                return $0.1.deviceID.uuidString < $1.1.deviceID.uuidString
+            if $0.deviceID != $1.deviceID {
+                return $0.deviceID.uuidString < $1.deviceID.uuidString
             }
-            return $0.1.sequence < $1.1.sequence
+            return $0.sequence < $1.sequence
         }
-        for (_, batch) in candidates {
+        var appliedAny = false
+        for batch in candidates {
+            let key = batchVersionKey(batch)
+            guard current.appliedBatchVersions[key] == nil else { continue }
             apply(batch, to: &current)
-            current.appliedBatchVersions[batchVersionKey(batch)] = batch.id
+            current.appliedBatchVersions[key] = batch.id
+            appliedAny = true
         }
         state = current
         return (
-            inventoryChanged || !candidates.isEmpty,
-            !candidates.isEmpty,
+            inventoryChanged || appliedAny,
+            appliedAny,
             decodedCount
         )
     }
 
     private func pullRemoteCheckpoints() async -> Bool {
-        guard var current = state else { return false }
+        guard let initialState = state else { return false }
         var candidates: [(CheckpointManifest, CheckpointPayload)] = []
-        let appliedIDs = current.appliedCheckpointIDs ?? []
+        let appliedIDs = initialState.appliedCheckpointIDs ?? []
         for manifestURL in checkpointManifestURLs() {
             if let checkpointID = UUID(
                 uuidString: manifestURL.deletingLastPathComponent()
@@ -557,7 +574,6 @@ actor IncrementalCloudSync {
                 CheckpointManifest.self,
                 from: manifestURL
             ), manifest.formatVersion == 2,
-                  !(current.appliedCheckpointIDs ?? []).contains(manifest.id),
                   let payload = await readCheckpoint(
                     manifest,
                     manifestURL: manifestURL
@@ -570,10 +586,16 @@ actor IncrementalCloudSync {
             }
             return $0.0.id.uuidString < $1.0.id.uuidString
         }
+        guard var current = state else { return false }
+        var appliedAny = false
         for (manifest, payload) in candidates {
+            guard !(current.appliedCheckpointIDs ?? []).contains(
+                manifest.id
+            ) else { continue }
             applyCheckpoint(payload, manifest: manifest, to: &current)
+            appliedAny = true
         }
-        guard !candidates.isEmpty else { return false }
+        guard appliedAny else { return false }
         state = current
         return true
     }
@@ -655,7 +677,7 @@ actor IncrementalCloudSync {
         completed: Bool,
         stateChanged: Bool
     ) {
-        guard var current = state, outboxFiles().isEmpty else {
+        guard let current = state, outboxFiles().isEmpty else {
             return (false, false)
         }
         let compactionStartedAt = Date()
@@ -741,21 +763,22 @@ actor IncrementalCloudSync {
                 allRecordsFrom: current.snapshot
               ) else { return (false, false) }
 
-        var applied = current.appliedCheckpointIDs ?? []
+        guard var latest = state else { return (false, false) }
+        var applied = latest.appliedCheckpointIDs ?? []
         applied.insert(checkpointID)
-        current.appliedCheckpointIDs = applied
-        var verifiedRetirements = current.verifiedRetiredImageVersions ?? [:]
+        latest.appliedCheckpointIDs = applied
+        var verifiedRetirements = latest.verifiedRetiredImageVersions ?? [:]
         mergeVersions(
             verifiedPayload.retiredImageVersions,
             into: &verifiedRetirements
         )
-        current.verifiedRetiredImageVersions = verifiedRetirements
-        state = current
+        latest.verifiedRetiredImageVersions = verifiedRetirements
+        state = latest
         garbageCollectBatches(coveredBy: manifest, inventory: inventory)
         garbageCollectCheckpoints(includedBy: manifest)
         garbageCollectImages(
-            referencedBy: current.snapshot,
-            retiredImageVersions: current.verifiedRetiredImageVersions ?? [:],
+            referencedBy: latest.snapshot,
+            retiredImageVersions: latest.verifiedRetiredImageVersions ?? [:],
             olderThan: compactionStartedAt.addingTimeInterval(
                 -imageRetirementGrace
             )

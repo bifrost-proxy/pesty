@@ -1987,9 +1987,12 @@ final class ClipboardStore {
     }
 
     func flushPendingWrites() async {
-        saveNow()
-        while let task = incrementalSyncTask {
-            await task.value
+        saveWorkItem?.cancel()
+        saveWorkItem = nil
+        if let incrementalCloudSync {
+            await incrementalCloudSync.persistLocalSnapshot(currentSnapshot)
+        } else {
+            _ = writeSnapshot()
         }
     }
 
