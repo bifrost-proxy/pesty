@@ -10,6 +10,14 @@ actor IncrementalCloudSync {
     struct SyncResult: Sendable {
         let snapshot: ClipboardStoreSnapshot
         let requestedCompactionCompleted: Bool
+        let hasRemoteChanges: Bool
+        let persistedState: Bool
+        let decodedBatchCount: Int
+    }
+
+    private struct BatchFileFingerprint: Codable, Equatable, Sendable {
+        let byteCount: Int
+        let modifiedAt: Date
     }
 
     struct MigrationReceipt: Codable, Sendable {
@@ -33,6 +41,8 @@ actor IncrementalCloudSync {
         var appliedCheckpointIDs: Set<UUID>?
         var retiredImageVersions: [String: Date]?
         var verifiedRetiredImageVersions: [String: Date]?
+        var batchFileFingerprints: [String: BatchFileFingerprint]?
+        var batchDirectoryModificationDates: [String: Date]?
     }
 
     private struct Batch: Codable, Sendable {
@@ -100,6 +110,7 @@ actor IncrementalCloudSync {
         category: "incremental-cloud-sync"
     )
     private var state: State?
+    private var lastImageGarbageCollectionAt: Date?
 
     init(
         localDirectory: URL,
@@ -141,28 +152,52 @@ actor IncrementalCloudSync {
 
     func synchronize(
         _ snapshot: ClipboardStoreSnapshot,
-        requestsCompaction: Bool = false
+        requestsCompaction: Bool = false,
+        recordLocalChanges: Bool = true,
+        forceRemoteScan: Bool = false
     ) async
         -> SyncResult? {
         prepareDirectories()
-        loadStateIfNeeded()
-        await record(snapshot)
+        var stateChanged = loadStateIfNeeded()
+        if recordLocalChanges {
+            stateChanged = await record(snapshot) || stateChanged
+        }
         await flushOutbox()
-        await pullRemoteCheckpoints()
-        await pullRemoteBatches()
-        let compacted = await compactIfNeeded(force: requestsCompaction)
-        if let current = state {
+        let checkpointChanges = await pullRemoteCheckpoints()
+        stateChanged = checkpointChanges || stateChanged
+        let batchChanges = await pullRemoteBatches(forceScan: forceRemoteScan)
+        stateChanged = batchChanges.stateChanged || stateChanged
+        let compaction: (completed: Bool, stateChanged: Bool)
+        if stateChanged || requestsCompaction {
+            compaction = await compactIfNeeded(force: requestsCompaction)
+        } else {
+            compaction = (true, false)
+        }
+        stateChanged = compaction.stateChanged || stateChanged
+        if stateChanged {
+            persistState()
+        }
+        let imageCleanupIsDue = lastImageGarbageCollectionAt.map {
+            Date().timeIntervalSince($0) >= 600
+        } ?? true
+        if let current = state, stateChanged || imageCleanupIsDue {
             garbageCollectImages(
                 referencedBy: current.snapshot,
                 retiredImageVersions: current.verifiedRetiredImageVersions
                     ?? [:],
                 olderThan: Date().addingTimeInterval(-imageRetirementGrace)
             )
+            lastImageGarbageCollectionAt = Date()
         }
         guard let snapshot = state?.snapshot else { return nil }
         return SyncResult(
             snapshot: snapshot,
-            requestedCompactionCompleted: !requestsCompaction || compacted
+            requestedCompactionCompleted: !requestsCompaction
+                || compaction.completed,
+            hasRemoteChanges: checkpointChanges
+                || batchChanges.hasRemoteChanges,
+            persistedState: stateChanged,
+            decodedBatchCount: batchChanges.decodedCount
         )
     }
 
@@ -259,13 +294,14 @@ actor IncrementalCloudSync {
         }
     }
 
-    private func loadStateIfNeeded() {
-        guard state == nil else { return }
+    @discardableResult
+    private func loadStateIfNeeded() -> Bool {
+        guard state == nil else { return false }
         if let decoded = try? Data(contentsOf: stateURL),
            let saved = try? JSONDecoder().decode(State.self, from: decoded),
            saved.formatVersion == 2 {
             state = saved
-            return
+            return false
         }
         state = State(
             deviceID: UUID(),
@@ -278,49 +314,34 @@ actor IncrementalCloudSync {
             activeBatch: nil,
             appliedCheckpointIDs: [],
             retiredImageVersions: [:],
-            verifiedRetiredImageVersions: [:]
+            verifiedRetiredImageVersions: [:],
+            batchFileFingerprints: [:],
+            batchDirectoryModificationDates: [:]
         )
-        persistState()
+        return true
     }
 
-    private func record(_ snapshot: ClipboardStoreSnapshot) async {
-        guard var current = state else { return }
+    private func record(_ snapshot: ClipboardStoreSnapshot) async -> Bool {
+        guard var current = state else { return false }
         let records = difference(from: current.snapshot, to: snapshot)
-        guard !records.isEmpty else {
-            current.snapshot = snapshot
-            state = current
-            persistState()
-            return
-        }
+        guard !records.isEmpty else { return false }
 
         for chunk in chunked(records) {
-            let existingRecords = current.activeBatch?.records ?? []
-            let canAppend = !existingRecords.isEmpty
-                && existingRecords.count + chunk.count <= 100
-                && encodedBytes(existingRecords) + encodedBytes(chunk)
-                    <= 256_000
-            let sequence: UInt64
-            let combinedRecords: [Record]
-            if canAppend, let active = current.activeBatch {
-                sequence = active.sequence
-                combinedRecords = existingRecords + chunk
-            } else {
-                sequence = current.nextSequence
-                current.nextSequence &+= 1
-                combinedRecords = chunk
-            }
+            // Published batches are immutable. Every local delta gets a new
+            // sequence instead of rewriting an existing cloud object. Older
+            // clients may still update an active batch, so the reader keeps
+            // file fingerprints for backwards compatibility.
+            let sequence = current.nextSequence
+            current.nextSequence &+= 1
             let batch = Batch(
                 formatVersion: 2,
                 id: UUID(),
                 deviceID: current.deviceID,
                 sequence: sequence,
                 createdAt: Date(),
-                records: combinedRecords
+                records: chunk
             )
-            current.activeBatch = combinedRecords.count < 100
-                    && encodedBytes(combinedRecords) < 256_000
-                ? batch
-                : nil
+            current.activeBatch = nil
             current.appliedBatchVersions[batchVersionKey(batch)] = batch.id
             apply(batch, to: &current)
             let url = outboxDirectory.appendingPathComponent(
@@ -337,7 +358,7 @@ actor IncrementalCloudSync {
                 logger.error(
                     "Failed to queue incremental sync batch domain=\((error as NSError).domain, privacy: .public) code=\((error as NSError).code)"
                 )
-                return
+                return false
             }
         }
         // Preserve the exact local ordering after the semantic operations have
@@ -345,7 +366,7 @@ actor IncrementalCloudSync {
         // item timestamps.
         current.snapshot = snapshot
         state = current
-        persistState()
+        return true
     }
 
     private func difference(
@@ -469,32 +490,109 @@ actor IncrementalCloudSync {
         }
     }
 
-    private func pullRemoteBatches() async {
-        guard var current = state else { return }
-        let keys: [URLResourceKey] = [.isRegularFileKey]
-        guard let enumerator = FileManager.default.enumerator(
-            at: batchesDirectory,
-            includingPropertiesForKeys: keys,
-            options: [.skipsHiddenFiles]
-        ) else { return }
+    private func pullRemoteBatches(forceScan: Bool) async -> (
+        stateChanged: Bool,
+        hasRemoteChanges: Bool,
+        decodedCount: Int
+    ) {
+        guard var current = state else { return (false, false, 0) }
+        let keys: Set<URLResourceKey> = [
+            .isRegularFileKey,
+            .fileSizeKey,
+            .contentModificationDateKey,
+        ]
+        let directoryKeys: Set<URLResourceKey> = [
+            .isDirectoryKey,
+            .contentModificationDateKey,
+        ]
+        guard let deviceDirectories = try? FileManager.default
+            .contentsOfDirectory(
+                at: batchesDirectory,
+                includingPropertiesForKeys: Array(directoryKeys),
+                options: [.skipsHiddenFiles]
+            ) else { return (false, false, 0) }
 
-        let urls = enumerator.compactMap { $0 as? URL }
-            .filter { $0.pathExtension == "json" }
+        var directoryDates = current.batchDirectoryModificationDates ?? [:]
+        let originalDirectoryDates = directoryDates
+        var existingDeviceKeys = Set<String>()
+        var fingerprints = current.batchFileFingerprints ?? [:]
+        let originalFingerprints = fingerprints
         var candidates: [(URL, Batch)] = []
-        for url in urls {
-            if ClipImageMaterializer.isDataLess(at: url) {
-                _ = await ClipImageMaterializer.prepare(
-                    at: url,
-                    kind: .history,
-                    timeout: .seconds(30)
-                ) { _ in }
+        var decodedCount = 0
+
+        for directory in deviceDirectories {
+            let deviceKey = directory.lastPathComponent.lowercased()
+            guard UUID(uuidString: deviceKey) != nil,
+                  let directoryValues = try? directory.resourceValues(
+                    forKeys: directoryKeys
+                  ), directoryValues.isDirectory == true,
+                  let directoryModifiedAt = directoryValues
+                    .contentModificationDate else { continue }
+            existingDeviceKeys.insert(deviceKey)
+            guard forceScan
+                    || directoryDates[deviceKey] != directoryModifiedAt else {
+                continue
             }
-            guard let batch = coordinatedRead(Batch.self, from: url),
-                  batch.formatVersion == 2,
-                  current.appliedBatchVersions[batchVersionKey(batch)]
-                    != batch.id else { continue }
-            candidates.append((url, batch))
+            guard let urls = try? FileManager.default.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: Array(keys),
+                options: [.skipsHiddenFiles]
+            ) else { continue }
+
+            var directoryWasReadSuccessfully = true
+            var seenPathKeys = Set<String>()
+            for url in urls where url.pathExtension == "json" {
+                guard let pathKey = batchPathKey(url),
+                      let values = try? url.resourceValues(forKeys: keys),
+                      values.isRegularFile == true,
+                      let byteCount = values.fileSize,
+                      let modifiedAt = values.contentModificationDate else {
+                    directoryWasReadSuccessfully = false
+                    continue
+                }
+                seenPathKeys.insert(pathKey)
+                let fingerprint = BatchFileFingerprint(
+                    byteCount: byteCount,
+                    modifiedAt: modifiedAt
+                )
+                guard fingerprints[pathKey] != fingerprint else { continue }
+                if ClipImageMaterializer.isDataLess(at: url) {
+                    _ = await ClipImageMaterializer.prepare(
+                        at: url,
+                        kind: .history,
+                        timeout: .seconds(30)
+                    ) { _ in }
+                }
+                guard let batch = coordinatedRead(Batch.self, from: url),
+                      batch.formatVersion == 2 else {
+                    directoryWasReadSuccessfully = false
+                    continue
+                }
+                decodedCount += 1
+                fingerprints[pathKey] = fingerprint
+                if current.appliedBatchVersions[batchVersionKey(batch)]
+                    != batch.id {
+                    candidates.append((url, batch))
+                }
+            }
+            guard directoryWasReadSuccessfully else { continue }
+            fingerprints = fingerprints.filter { key, _ in
+                !key.hasPrefix("\(deviceKey):") || seenPathKeys.contains(key)
+            }
+            directoryDates[deviceKey] = directoryModifiedAt
         }
+
+        directoryDates = directoryDates.filter {
+            existingDeviceKeys.contains($0.key)
+        }
+        fingerprints = fingerprints.filter { key, _ in
+            guard let separator = key.firstIndex(of: ":") else { return false }
+            return existingDeviceKeys.contains(String(key[..<separator]))
+        }
+        let fingerprintsChanged = fingerprints != originalFingerprints
+            || directoryDates != originalDirectoryDates
+        current.batchFileFingerprints = fingerprints
+        current.batchDirectoryModificationDates = directoryDates
         candidates.sort {
             if $0.1.createdAt != $1.1.createdAt {
                 return $0.1.createdAt < $1.1.createdAt
@@ -509,13 +607,24 @@ actor IncrementalCloudSync {
             current.appliedBatchVersions[batchVersionKey(batch)] = batch.id
         }
         state = current
-        persistState()
+        return (
+            fingerprintsChanged || !candidates.isEmpty,
+            !candidates.isEmpty,
+            decodedCount
+        )
     }
 
-    private func pullRemoteCheckpoints() async {
-        guard var current = state else { return }
+    private func pullRemoteCheckpoints() async -> Bool {
+        guard var current = state else { return false }
         var candidates: [(CheckpointManifest, CheckpointPayload)] = []
+        let appliedIDs = current.appliedCheckpointIDs ?? []
         for manifestURL in checkpointManifestURLs() {
+            if let checkpointID = UUID(
+                uuidString: manifestURL.deletingLastPathComponent()
+                    .lastPathComponent
+            ), appliedIDs.contains(checkpointID) {
+                continue
+            }
             if ClipImageMaterializer.isDataLess(at: manifestURL) {
                 _ = await ClipImageMaterializer.prepare(
                     at: manifestURL,
@@ -543,8 +652,9 @@ actor IncrementalCloudSync {
         for (manifest, payload) in candidates {
             applyCheckpoint(payload, manifest: manifest, to: &current)
         }
+        guard !candidates.isEmpty else { return false }
         state = current
-        persistState()
+        return true
     }
 
     private func applyCheckpoint(
@@ -620,8 +730,13 @@ actor IncrementalCloudSync {
         state.verifiedRetiredImageVersions = verifiedRetirements
     }
 
-    private func compactIfNeeded(force: Bool) async -> Bool {
-        guard var current = state, outboxFiles().isEmpty else { return false }
+    private func compactIfNeeded(force: Bool) async -> (
+        completed: Bool,
+        stateChanged: Bool
+    ) {
+        guard var current = state, outboxFiles().isEmpty else {
+            return (false, false)
+        }
         let compactionStartedAt = Date()
         let inventory = batchInventory()
         let sealedCount = inventory.count - Set(
@@ -629,7 +744,7 @@ actor IncrementalCloudSync {
         ).count
         let totalBytes = inventory.reduce(0) { $0 + $1.byteCount }
         guard force || sealedCount >= 8 || totalBytes >= 2_000_000 else {
-            return true
+            return (true, false)
         }
 
         let checkpointID = UUID()
@@ -645,7 +760,7 @@ actor IncrementalCloudSync {
             retiredImageVersions: current.retiredImageVersions ?? [:]
         )
         guard let payloadData = try? JSONEncoder().encode(payload) else {
-            return false
+            return (false, false)
         }
         let checkpointDirectory = checkpointsDirectory
             .appendingPathComponent(
@@ -664,14 +779,16 @@ actor IncrementalCloudSync {
             )
         } catch {
             logCheckpointError("create", error: error)
-            return false
+            return (false, false)
         }
 
         var chunks: [CheckpointChunk] = []
         for (index, data) in splitCheckpointPayload(payloadData).enumerated() {
             let name = String(format: "chunk-%05d.part", index)
             let url = checkpointDirectory.appendingPathComponent(name)
-            guard coordinatedWrite(data, to: url) else { return false }
+            guard coordinatedWrite(data, to: url) else {
+                return (false, false)
+            }
             chunks.append(CheckpointChunk(
                 name: name,
                 byteCount: data.count,
@@ -703,7 +820,7 @@ actor IncrementalCloudSync {
               contains(
                 verifiedPayload.snapshot,
                 allRecordsFrom: current.snapshot
-              ) else { return false }
+              ) else { return (false, false) }
 
         var applied = current.appliedCheckpointIDs ?? []
         applied.insert(checkpointID)
@@ -715,7 +832,6 @@ actor IncrementalCloudSync {
         )
         current.verifiedRetiredImageVersions = verifiedRetirements
         state = current
-        persistState()
         garbageCollectBatches(coveredBy: manifest, inventory: inventory)
         garbageCollectCheckpoints(includedBy: manifest)
         garbageCollectImages(
@@ -725,7 +841,7 @@ actor IncrementalCloudSync {
                 -imageRetirementGrace
             )
         )
-        return true
+        return (true, true)
     }
 
     private func readCheckpoint(
@@ -910,6 +1026,14 @@ actor IncrementalCloudSync {
 
     private func batchVersionKey(_ batch: Batch) -> String {
         "\(batch.deviceID.uuidString.lowercased()):\(batch.sequence)"
+    }
+
+    private func batchPathKey(_ url: URL) -> String? {
+        let device = url.deletingLastPathComponent().lastPathComponent
+        guard UUID(uuidString: device) != nil,
+              let sequence = UInt64(url.deletingPathExtension()
+                .lastPathComponent) else { return nil }
+        return "\(device.lowercased()):\(sequence)"
     }
 
     private struct BatchInventoryItem {

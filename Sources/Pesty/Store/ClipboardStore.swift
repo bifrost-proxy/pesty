@@ -411,6 +411,8 @@ final class ClipboardStore {
     @ObservationIgnored private var incrementalSyncTask: Task<Void, Never>?
     @ObservationIgnored private var incrementalSyncPollTask: Task<Void, Never>?
     @ObservationIgnored private var incrementalSyncRequested = false
+    @ObservationIgnored private var incrementalLocalChangesRequested = false
+    @ObservationIgnored private var incrementalRemoteScanRequested = false
     @ObservationIgnored private var incrementalCompactionRequested = false
     @ObservationIgnored private var legacyMigrationTask: Task<Void, Never>?
     @ObservationIgnored private var diskReconciliationRequested = false
@@ -1376,7 +1378,10 @@ final class ClipboardStore {
         if usesIncrementalCloudSync {
             // The local snapshot is the launch source of truth. Cloud batches
             // and the legacy monolith are consumed only in background tasks.
-            scheduleIncrementalSync()
+            scheduleIncrementalSync(
+                localDataChanged: true,
+                forceRemoteScan: true
+            )
             beginLegacyStoreMigration()
         } else if loadsFromMetadataCache {
             if FileManager.default.fileExists(atPath: storeURL.path) {
@@ -1600,7 +1605,7 @@ final class ClipboardStore {
         guard let data = encodedCurrentSnapshot() else { return false }
         let metadataCacheSaved = writeMetadataCache(data)
         if usesIncrementalCloudSync {
-            scheduleIncrementalSync()
+            scheduleIncrementalSync(localDataChanged: true)
             refreshStorageUsage()
             return metadataCacheSaved
         }
@@ -1662,9 +1667,18 @@ final class ClipboardStore {
         )
     }
 
-    private func scheduleIncrementalSync() {
+    private func scheduleIncrementalSync(
+        localDataChanged: Bool = false,
+        forceRemoteScan: Bool = false
+    ) {
         guard incrementalCloudSync != nil else { return }
         incrementalSyncRequested = true
+        if localDataChanged {
+            incrementalLocalChangesRequested = true
+        }
+        if forceRemoteScan {
+            incrementalRemoteScanRequested = true
+        }
         guard incrementalSyncTask == nil else { return }
         incrementalSyncTask = Task { [weak self] in
             guard let self else { return }
@@ -1672,16 +1686,23 @@ final class ClipboardStore {
                 self.incrementalSyncRequested = false
                 guard let sync = self.incrementalCloudSync else { break }
                 let local = self.currentSnapshot
+                let recordLocalChanges = self.incrementalLocalChangesRequested
+                self.incrementalLocalChangesRequested = false
+                let forceRemoteScan = self.incrementalRemoteScanRequested
+                self.incrementalRemoteScanRequested = false
                 let requestsCompaction = self.incrementalCompactionRequested
                 let result = await sync.synchronize(
                     local,
-                    requestsCompaction: requestsCompaction
+                    requestsCompaction: requestsCompaction,
+                    recordLocalChanges: recordLocalChanges,
+                    forceRemoteScan: forceRemoteScan
                 )
                 guard !Task.isCancelled else { break }
                 if let result {
                     if result.requestedCompactionCompleted {
                         self.incrementalCompactionRequested = false
                     }
+                    guard result.hasRemoteChanges else { continue }
                     let merged = result.snapshot
                     let pinboardsWereUnchanged = self.pinboards
                         == local.pinboards
@@ -1694,6 +1715,7 @@ final class ClipboardStore {
                     if changed {
                         self.saveMetadataCacheNow()
                         self.incrementalSyncRequested = true
+                        self.incrementalLocalChangesRequested = true
                     }
                 }
             }
@@ -1766,6 +1788,8 @@ final class ClipboardStore {
         incrementalSyncPollTask?.cancel()
         incrementalSyncPollTask = nil
         incrementalSyncRequested = false
+        incrementalLocalChangesRequested = false
+        incrementalRemoteScanRequested = false
         incrementalCompactionRequested = false
         legacyMigrationTask?.cancel()
         legacyMigrationTask = nil
@@ -2136,7 +2160,7 @@ final class ClipboardStore {
             let needsReattach = event.contains(.rename) || event.contains(.delete)
 
             if self.usesIncrementalCloudSync {
-                self.scheduleIncrementalSync()
+                self.scheduleIncrementalSync(forceRemoteScan: true)
                 self.refreshStorageUsage()
             } else if Date() >= self.ignoreWatchUntil {
                 self.reconcileFromDiskInBackground()
