@@ -4161,6 +4161,9 @@ enum AutomatedUITestRunner {
                 )
             }
             if let originalItems {
+                // Restoring the user's pasteboard is test cleanup, not a new
+                // clipboard event that should enter history.
+                controller.monitor.stop()
                 restore(originalItems, to: .general)
             }
             let finish = {
