@@ -3089,12 +3089,13 @@ enum AutomatedUITestRunner {
         ] == "1",
            let local = ProcessInfo.processInfo.environment[
             "PESTY_AUTOMATED_INCREMENTAL_LOCAL_DIR"
-           ], !local.isEmpty,
-           let data = try? Data(contentsOf: URL(fileURLWithPath: local)
-            .appendingPathComponent("icloud-metadata-cache.json")) {
-            return try? JSONDecoder().decode(
-                ClipboardStoreSnapshot.self,
-                from: data
+           ], !local.isEmpty {
+            return IncrementalCloudSync.localSnapshot(
+                in: URL(fileURLWithPath: local, isDirectory: true)
+                    .appendingPathComponent(
+                        "sync-v2-local",
+                        isDirectory: true
+                    )
             )
         }
         guard let url = ClipboardStore.automatedTestBase?

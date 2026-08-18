@@ -188,7 +188,7 @@ enum IncrementalSyncCompactionVerifier {
                 && limitedResult?.snapshot.history.count == 100
                 && clearedResult?.requestedCompactionCompleted == true
                 && clearedResult?.snapshot.history.isEmpty == true
-                && batchFilesAfterLimit == 1
+                && batchFilesAfterLimit == 0
                 && checkpointFilesAfterLimit == 1
                 && checkpointFilesAfterClear == 1
                 && unreferencedImageDeleted

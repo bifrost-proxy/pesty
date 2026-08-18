@@ -2,10 +2,9 @@ import CryptoKit
 import Foundation
 import OSLog
 
-/// The v2 iCloud format uses small rolling, device-owned segments. A device may
-/// append to its current segment until it reaches the size limit, but never
-/// rewrites another device's files. The UI always reads the local materialized
-/// snapshot instead of waiting for File Provider.
+/// The v2 iCloud format uses small immutable, device-owned event batches. The
+/// UI always reads the local materialized snapshot instead of waiting for File
+/// Provider.
 actor IncrementalCloudSync {
     struct SyncResult: Sendable {
         let snapshot: ClipboardStoreSnapshot
@@ -13,19 +12,6 @@ actor IncrementalCloudSync {
         let hasRemoteChanges: Bool
         let persistedState: Bool
         let decodedBatchCount: Int
-    }
-
-    private struct BatchFileFingerprint: Codable, Equatable, Sendable {
-        let byteCount: Int
-        let modifiedAt: Date
-    }
-
-    struct MigrationReceipt: Codable, Sendable {
-        let formatVersion: Int
-        let legacySHA256: String
-        let migratedAt: Date
-        let historyCount: Int
-        let pinboardCount: Int
     }
 
     private struct State: Codable, Sendable {
@@ -37,11 +23,9 @@ actor IncrementalCloudSync {
         var boardVersions: [String: Date]
         var deletedBoardVersions: [String: Date]
         var appliedBatchVersions: [String: UUID]
-        var activeBatch: Batch?
         var appliedCheckpointIDs: Set<UUID>?
         var retiredImageVersions: [String: Date]?
         var verifiedRetiredImageVersions: [String: Date]?
-        var batchFileFingerprints: [String: BatchFileFingerprint]?
         var batchDirectoryModificationDates: [String: Date]?
     }
 
@@ -103,7 +87,6 @@ actor IncrementalCloudSync {
     private let batchesDirectory: URL
     private let checkpointsDirectory: URL
     private let imagesDirectory: URL
-    private let migrationDirectory: URL
     private let imageRetirementGrace: TimeInterval
     private let logger = Logger(
         subsystem: "com.bifrostproxy.pesty",
@@ -135,10 +118,6 @@ actor IncrementalCloudSync {
         )
         imagesDirectory = cloudDirectory.deletingLastPathComponent()
             .appendingPathComponent("images", isDirectory: true)
-        migrationDirectory = cloudDirectory.appendingPathComponent(
-            "migration",
-            isDirectory: true
-        )
     }
 
     nonisolated static func localSnapshot(in localDirectory: URL)
@@ -201,38 +180,6 @@ actor IncrementalCloudSync {
         )
     }
 
-    /// Persists all migration records, verifies that no local batch remains in
-    /// the outbox, then writes a small receipt that can be inspected on future
-    /// launches. The caller still verifies the legacy file before deleting it.
-    func commitLegacyMigration(
-        snapshot: ClipboardStoreSnapshot,
-        legacySHA256: String
-    ) async -> Bool {
-        _ = await synchronize(snapshot)
-        guard outboxFiles().isEmpty,
-              let migrated = state?.snapshot,
-              contains(migrated, allRecordsFrom: snapshot) else {
-            return false
-        }
-
-        let receipt = MigrationReceipt(
-            formatVersion: 2,
-            legacySHA256: legacySHA256,
-            migratedAt: Date(),
-            historyCount: snapshot.history.count,
-            pinboardCount: snapshot.pinboards.count
-        )
-        let receiptURL = migrationDirectory.appendingPathComponent(
-            "legacy-store-\(legacySHA256).json"
-        )
-        guard coordinatedWrite(receipt, to: receiptURL),
-              coordinatedRead(MigrationReceipt.self, from: receiptURL)
-                == receipt else {
-            return false
-        }
-        return true
-    }
-
     private func contains(
         _ migrated: ClipboardStoreSnapshot,
         allRecordsFrom expected: ClipboardStoreSnapshot
@@ -278,7 +225,6 @@ actor IncrementalCloudSync {
             cloudDirectory,
             batchesDirectory,
             checkpointsDirectory,
-            migrationDirectory,
         ] {
             do {
                 try FileManager.default.createDirectory(
@@ -311,11 +257,9 @@ actor IncrementalCloudSync {
             boardVersions: [:],
             deletedBoardVersions: [:],
             appliedBatchVersions: [:],
-            activeBatch: nil,
             appliedCheckpointIDs: [],
             retiredImageVersions: [:],
             verifiedRetiredImageVersions: [:],
-            batchFileFingerprints: [:],
             batchDirectoryModificationDates: [:]
         )
         return true
@@ -328,9 +272,7 @@ actor IncrementalCloudSync {
 
         for chunk in chunked(records) {
             // Published batches are immutable. Every local delta gets a new
-            // sequence instead of rewriting an existing cloud object. Older
-            // clients may still update an active batch, so the reader keeps
-            // file fingerprints for backwards compatibility.
+            // sequence instead of rewriting an existing cloud object.
             let sequence = current.nextSequence
             current.nextSequence &+= 1
             let batch = Batch(
@@ -341,7 +283,6 @@ actor IncrementalCloudSync {
                 createdAt: Date(),
                 records: chunk
             )
-            current.activeBatch = nil
             current.appliedBatchVersions[batchVersionKey(batch)] = batch.id
             apply(batch, to: &current)
             let url = outboxDirectory.appendingPathComponent(
@@ -498,8 +439,6 @@ actor IncrementalCloudSync {
         guard var current = state else { return (false, false, 0) }
         let keys: Set<URLResourceKey> = [
             .isRegularFileKey,
-            .fileSizeKey,
-            .contentModificationDateKey,
         ]
         let directoryKeys: Set<URLResourceKey> = [
             .isDirectoryKey,
@@ -515,8 +454,6 @@ actor IncrementalCloudSync {
         var directoryDates = current.batchDirectoryModificationDates ?? [:]
         let originalDirectoryDates = directoryDates
         var existingDeviceKeys = Set<String>()
-        var fingerprints = current.batchFileFingerprints ?? [:]
-        let originalFingerprints = fingerprints
         var candidates: [(URL, Batch)] = []
         var decodedCount = 0
 
@@ -540,22 +477,18 @@ actor IncrementalCloudSync {
             ) else { continue }
 
             var directoryWasReadSuccessfully = true
-            var seenPathKeys = Set<String>()
             for url in urls where url.pathExtension == "json" {
                 guard let pathKey = batchPathKey(url),
                       let values = try? url.resourceValues(forKeys: keys),
-                      values.isRegularFile == true,
-                      let byteCount = values.fileSize,
-                      let modifiedAt = values.contentModificationDate else {
+                      values.isRegularFile == true else {
                     directoryWasReadSuccessfully = false
                     continue
                 }
-                seenPathKeys.insert(pathKey)
-                let fingerprint = BatchFileFingerprint(
-                    byteCount: byteCount,
-                    modifiedAt: modifiedAt
-                )
-                guard fingerprints[pathKey] != fingerprint else { continue }
+                // A device/sequence path is immutable. Once its batch ID has
+                // been applied, no later scan needs to open or decode it.
+                guard current.appliedBatchVersions[pathKey] == nil else {
+                    continue
+                }
                 if ClipImageMaterializer.isDataLess(at: url) {
                     _ = await ClipImageMaterializer.prepare(
                         at: url,
@@ -564,34 +497,22 @@ actor IncrementalCloudSync {
                     ) { _ in }
                 }
                 guard let batch = coordinatedRead(Batch.self, from: url),
-                      batch.formatVersion == 2 else {
+                      batch.formatVersion == 2,
+                      batchVersionKey(batch) == pathKey else {
                     directoryWasReadSuccessfully = false
                     continue
                 }
                 decodedCount += 1
-                fingerprints[pathKey] = fingerprint
-                if current.appliedBatchVersions[batchVersionKey(batch)]
-                    != batch.id {
-                    candidates.append((url, batch))
-                }
+                candidates.append((url, batch))
             }
             guard directoryWasReadSuccessfully else { continue }
-            fingerprints = fingerprints.filter { key, _ in
-                !key.hasPrefix("\(deviceKey):") || seenPathKeys.contains(key)
-            }
             directoryDates[deviceKey] = directoryModifiedAt
         }
 
         directoryDates = directoryDates.filter {
             existingDeviceKeys.contains($0.key)
         }
-        fingerprints = fingerprints.filter { key, _ in
-            guard let separator = key.firstIndex(of: ":") else { return false }
-            return existingDeviceKeys.contains(String(key[..<separator]))
-        }
-        let fingerprintsChanged = fingerprints != originalFingerprints
-            || directoryDates != originalDirectoryDates
-        current.batchFileFingerprints = fingerprints
+        let inventoryChanged = directoryDates != originalDirectoryDates
         current.batchDirectoryModificationDates = directoryDates
         candidates.sort {
             if $0.1.createdAt != $1.1.createdAt {
@@ -608,7 +529,7 @@ actor IncrementalCloudSync {
         }
         state = current
         return (
-            fingerprintsChanged || !candidates.isEmpty,
+            inventoryChanged || !candidates.isEmpty,
             !candidates.isEmpty,
             decodedCount
         )
@@ -739,9 +660,7 @@ actor IncrementalCloudSync {
         }
         let compactionStartedAt = Date()
         let inventory = batchInventory()
-        let sealedCount = inventory.count - Set(
-            inventory.map { $0.batch.deviceID }
-        ).count
+        let sealedCount = inventory.count
         let totalBytes = inventory.reduce(0) { $0 + $1.byteCount }
         guard force || sealedCount >= 8 || totalBytes >= 2_000_000 else {
             return (true, false)
@@ -1091,19 +1010,8 @@ actor IncrementalCloudSync {
         coveredBy manifest: CheckpointManifest,
         inventory: [BatchInventoryItem]
     ) {
-        let highestSequence = Dictionary(
-            grouping: inventory,
-            by: { $0.batch.deviceID }
-        ).mapValues { items in
-            items.map(\.batch.sequence).max() ?? 0
-        }
         for item in inventory {
-            // The highest sequence may still be receiving appends. Retain one
-            // such segment for every device even though the checkpoint covers
-            // its current contents.
-            guard item.batch.sequence
-                    < (highestSequence[item.batch.deviceID] ?? 0),
-                  manifest.coveredBatchVersions[
+            guard manifest.coveredBatchVersions[
                     batchVersionKey(item.batch)
                   ] == item.batch.id else { continue }
             _ = coordinatedDeleteBatchIfMatches(
@@ -1367,122 +1275,5 @@ actor IncrementalCloudSync {
             readData = try? Data(contentsOf: coordinatedURL)
         }
         return coordinatorError == nil ? readData : nil
-    }
-}
-
-extension IncrementalCloudSync.MigrationReceipt: Equatable {}
-
-enum LegacyStoreMigrationIO {
-    struct ReadResult: Sendable {
-        let snapshots: [ClipboardStoreSnapshot]
-        let versionDigests: [String]
-    }
-
-    static func readAllSnapshots(at url: URL) -> ReadResult? {
-        let urls = [url] + (NSFileVersion.unresolvedConflictVersionsOfItem(
-            at: url
-        ) ?? []).map(\.url)
-        var snapshots: [ClipboardStoreSnapshot] = []
-        var digests: [String] = []
-        for candidate in urls {
-            guard let data = readData(at: candidate),
-                  let snapshot = try? JSONDecoder().decode(
-                    ClipboardStoreSnapshot.self,
-                    from: data
-                  ) else {
-                return nil
-            }
-            snapshots.append(snapshot)
-            digests.append(SHA256.hash(data: data)
-                .map { String(format: "%02x", $0) }
-                .joined())
-        }
-        return ReadResult(
-            snapshots: snapshots,
-            versionDigests: digests.sorted()
-        )
-    }
-
-    private static func readData(at url: URL) -> Data? {
-        var coordinatorError: NSError?
-        var data: Data?
-        NSFileCoordinator().coordinate(
-            readingItemAt: url,
-            options: [],
-            error: &coordinatorError
-        ) { coordinatedURL in
-            data = try? Data(contentsOf: coordinatedURL)
-        }
-        return coordinatorError == nil ? data : nil
-    }
-
-    static func resolveConflictVersionsAfterMigration(
-        at url: URL,
-        expectedVersionDigests: [String]
-    ) -> Bool {
-        let conflicts = NSFileVersion.unresolvedConflictVersionsOfItem(
-            at: url
-        ) ?? []
-        let urls = [url] + conflicts.map(\.url)
-        let currentDigests = urls.compactMap { candidate in
-            readData(at: candidate).map { data in
-                SHA256.hash(data: data)
-                    .map { String(format: "%02x", $0) }
-                    .joined()
-            }
-        }.sorted()
-        guard currentDigests == expectedVersionDigests else { return false }
-        guard !conflicts.isEmpty else { return true }
-        for version in conflicts { version.isResolved = true }
-        do {
-            try NSFileVersion.removeOtherVersionsOfItem(at: url)
-            return (NSFileVersion.unresolvedConflictVersionsOfItem(at: url)
-                ?? []).isEmpty
-        } catch {
-            return false
-        }
-    }
-
-    static func sha256(at url: URL) -> String? {
-        var coordinatorError: NSError?
-        var digest: String?
-        NSFileCoordinator().coordinate(
-            readingItemAt: url,
-            options: [],
-            error: &coordinatorError
-        ) { coordinatedURL in
-            guard let data = try? Data(contentsOf: coordinatedURL) else {
-                return
-            }
-            digest = SHA256.hash(data: data)
-                .map { String(format: "%02x", $0) }
-                .joined()
-        }
-        return coordinatorError == nil ? digest : nil
-    }
-
-    /// Deletes only the exact legacy monolith, and only if it is unchanged
-    /// since the verified v2 migration. Conflict versions cause a safe retry
-    /// instead of being discarded here.
-    static func deleteIfUnchanged(at url: URL, sha256 expected: String) -> Bool {
-        guard (NSFileVersion.unresolvedConflictVersionsOfItem(at: url) ?? [])
-            .isEmpty,
-              sha256(at: url) == expected else { return false }
-        var coordinatorError: NSError?
-        var removalError: Error?
-        NSFileCoordinator().coordinate(
-            writingItemAt: url,
-            options: .forDeleting,
-            error: &coordinatorError
-        ) { coordinatedURL in
-            do {
-                try FileManager.default.removeItem(at: coordinatedURL)
-            } catch {
-                removalError = error
-            }
-        }
-        return coordinatorError == nil
-            && removalError == nil
-            && !FileManager.default.fileExists(atPath: url.path)
     }
 }
