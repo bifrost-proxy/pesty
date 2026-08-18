@@ -16,6 +16,9 @@ enum IncrementalSyncCompactionVerifier {
         let pinnedImagePreserved: Bool
         let freshDeviceRebuiltLimit: Bool
         let freshDeviceRebuiltClear: Bool
+        let idleSyncSkippedPersistence: Bool
+        let idleSyncDecodedBatchCount: Int
+        let publishedBatchesAreImmutable: Bool
     }
 
     static func run() async throws -> Result {
@@ -77,6 +80,16 @@ enum IncrementalSyncCompactionVerifier {
             deletions: nil
         )
         _ = await deviceA.synchronize(initial)
+        let idleResult = await deviceA.synchronize(
+            initial,
+            recordLocalChanges: false
+        )
+        let idleSyncSkippedPersistence = idleResult?.persistedState == false
+            && idleResult?.hasRemoteChanges == false
+            && idleResult?.decodedBatchCount == 0
+        let publishedBatchesAreImmutable = await verifyImmutableBatches(
+            below: root.appendingPathComponent("immutable-batches")
+        )
 
         let retained = Array(allItems.prefix(100))
         let removed = Array(allItems.dropFirst(100))
@@ -175,7 +188,7 @@ enum IncrementalSyncCompactionVerifier {
                 && limitedResult?.snapshot.history.count == 100
                 && clearedResult?.requestedCompactionCompleted == true
                 && clearedResult?.snapshot.history.isEmpty == true
-                && batchFilesAfterLimit == 1
+                && batchFilesAfterLimit == 0
                 && checkpointFilesAfterLimit == 1
                 && checkpointFilesAfterClear == 1
                 && unreferencedImageDeleted
@@ -184,7 +197,9 @@ enum IncrementalSyncCompactionVerifier {
                 && retainedImagePreserved
                 && pinnedImagePreserved
                 && freshDeviceRebuiltLimit
-                && freshDeviceRebuiltClear,
+                && freshDeviceRebuiltClear
+                && idleSyncSkippedPersistence
+                && publishedBatchesAreImmutable,
             historyAfterLimit: limitedResult?.snapshot.history.count ?? -1,
             historyAfterClear: clearedResult?.snapshot.history.count ?? -1,
             batchFilesAfterLimit: batchFilesAfterLimit,
@@ -196,7 +211,10 @@ enum IncrementalSyncCompactionVerifier {
             retainedImagePreserved: retainedImagePreserved,
             pinnedImagePreserved: pinnedImagePreserved,
             freshDeviceRebuiltLimit: freshDeviceRebuiltLimit,
-            freshDeviceRebuiltClear: freshDeviceRebuiltClear
+            freshDeviceRebuiltClear: freshDeviceRebuiltClear,
+            idleSyncSkippedPersistence: idleSyncSkippedPersistence,
+            idleSyncDecodedBatchCount: idleResult?.decodedBatchCount ?? -1,
+            publishedBatchesAreImmutable: publishedBatchesAreImmutable
         )
         return result
     }
@@ -208,6 +226,48 @@ enum IncrementalSyncCompactionVerifier {
             configuration: nil,
             deletions: nil
         )
+    }
+
+    private static func verifyImmutableBatches(below root: URL) async -> Bool {
+        let cloud = root.appendingPathComponent("cloud/sync-v2")
+        let sync = IncrementalCloudSync(
+            localDirectory: root.appendingPathComponent("local"),
+            cloudDirectory: cloud
+        )
+        let first = ClipItem(type: .text, text: "immutable-first")
+        _ = await sync.synchronize(ClipboardStoreSnapshot(
+            history: [first],
+            pinboards: [],
+            configuration: nil,
+            deletions: nil
+        ))
+        let before = batchContents(below: cloud)
+        let second = ClipItem(type: .text, text: "immutable-second")
+        _ = await sync.synchronize(ClipboardStoreSnapshot(
+            history: [second, first],
+            pinboards: [],
+            configuration: nil,
+            deletions: nil
+        ))
+        let after = batchContents(below: cloud)
+        return !before.isEmpty
+            && after.count > before.count
+            && before.allSatisfy { after[$0.key] == $0.value }
+    }
+
+    private static func batchContents(below root: URL) -> [String: Data] {
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else { return [:] }
+        return enumerator.compactMap { value -> (String, Data)? in
+            guard let url = value as? URL,
+                  url.pathExtension == "json",
+                  url.path.contains("/batches/"),
+                  let data = try? Data(contentsOf: url) else { return nil }
+            return (url.path, data)
+        }.reduce(into: [:]) { $0[$1.0] = $1.1 }
     }
 
     private static func contentDigest(_ item: ClipItem) -> String {

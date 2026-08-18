@@ -3089,12 +3089,13 @@ enum AutomatedUITestRunner {
         ] == "1",
            let local = ProcessInfo.processInfo.environment[
             "PESTY_AUTOMATED_INCREMENTAL_LOCAL_DIR"
-           ], !local.isEmpty,
-           let data = try? Data(contentsOf: URL(fileURLWithPath: local)
-            .appendingPathComponent("icloud-metadata-cache.json")) {
-            return try? JSONDecoder().decode(
-                ClipboardStoreSnapshot.self,
-                from: data
+           ], !local.isEmpty {
+            return IncrementalCloudSync.localSnapshot(
+                in: URL(fileURLWithPath: local, isDirectory: true)
+                    .appendingPathComponent(
+                        "sync-v2-local",
+                        isDirectory: true
+                    )
             )
         }
         guard let url = ClipboardStore.automatedTestBase?
@@ -4160,6 +4161,9 @@ enum AutomatedUITestRunner {
                 )
             }
             if let originalItems {
+                // Restoring the user's pasteboard is test cleanup, not a new
+                // clipboard event that should enter history.
+                controller.monitor.stop()
                 restore(originalItems, to: .general)
             }
             let finish = {
@@ -4167,13 +4171,8 @@ enum AutomatedUITestRunner {
                 write(result)
                 exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
             }
-            if cleanupResult != nil {
-                Task {
-                    await controller.store
-                        .waitForIncrementalSyncForAutomatedTest()
-                    finish()
-                }
-            } else {
+            Task {
+                await controller.store.flushPendingWrites()
                 finish()
             }
         }
