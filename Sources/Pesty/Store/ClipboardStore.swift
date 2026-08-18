@@ -1986,6 +1986,13 @@ final class ClipboardStore {
         await storeMaterializationTask?.value
     }
 
+    func flushPendingWrites() async {
+        saveNow()
+        while let task = incrementalSyncTask {
+            await task.value
+        }
+    }
+
     func waitForIncrementalSyncForAutomatedTest() async {
         guard ClipboardStore.automatedTestBase != nil else { return }
         while let task = incrementalSyncTask {

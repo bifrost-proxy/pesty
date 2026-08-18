@@ -4168,13 +4168,8 @@ enum AutomatedUITestRunner {
                 write(result)
                 exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
             }
-            if cleanupResult != nil {
-                Task {
-                    await controller.store
-                        .waitForIncrementalSyncForAutomatedTest()
-                    finish()
-                }
-            } else {
+            Task {
+                await controller.store.flushPendingWrites()
                 finish()
             }
         }

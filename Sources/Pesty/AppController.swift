@@ -32,6 +32,8 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var updateObserver: NSObjectProtocol?
     private var presentedUpdateError: String?
     private var pendingGlobalTranslationCaptureID: UUID?
+    private var terminationFlushInProgress = false
+    private var terminationFlushCompleted = false
 
     private(set) var previousApp: NSRunningApplication?
     private(set) var lastActiveApp: NSRunningApplication?
@@ -193,8 +195,31 @@ final class AppController: NSObject, NSApplicationDelegate {
         AccessibilitySettingsGuideController.shared.dismiss()
 #endif
         SelectionGestureTracker.shared.stop()
-        store.saveNow()
+        if !terminationFlushCompleted {
+            store.saveNow()
+        }
         stopKeyMonitor()
+    }
+
+    func applicationShouldTerminate(
+        _ sender: NSApplication
+    ) -> NSApplication.TerminateReply {
+        if terminationFlushCompleted { return .terminateNow }
+        if terminationFlushInProgress { return .terminateLater }
+
+        terminationFlushInProgress = true
+        monitor.stop()
+        Task { [weak self] in
+            guard let self else {
+                sender.reply(toApplicationShouldTerminate: true)
+                return
+            }
+            await store.flushPendingWrites()
+            terminationFlushCompleted = true
+            terminationFlushInProgress = false
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     private func setupStatusItem() {
