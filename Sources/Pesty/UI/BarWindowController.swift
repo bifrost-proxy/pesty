@@ -14,6 +14,13 @@ final class BarHostingView: NSHostingView<BarView> {
 @MainActor
 final class BarWindowController: NSWindowController, NSWindowDelegate {
 
+    /// Full-screen Spaces can place their content above the Dock window level.
+    /// Keep the clipboard panel above ordinary application and system overlay
+    /// content while remaining below WindowServer's shielding windows.
+    private static let presentationLevel = NSWindow.Level(
+        rawValue: Int(CGWindowLevelForKey(.screenSaverWindow)) + 1
+    )
+
     private var isPresenting = false
     private var isDismissing = false
     private var hideCompletions: [() -> Void] = []
@@ -32,18 +39,20 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
         )
         let panel = BarPanel(
             contentRect: initialFrame,
-            styleMask: [.borderless],
+            styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false)
         panel.isFloatingPanel = true
-        panel.level = NSWindow.Level(
-            rawValue: Int(CGWindowLevelForKey(.dockWindow)) + 1
-        )
+        panel.level = Self.presentationLevel
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
         panel.hidesOnDeactivate = false
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        panel.collectionBehavior = [
+            .canJoinAllSpaces,
+            .fullScreenAuxiliary,
+            .stationary,
+        ]
         panel.isMovable = false
         panel.contentView = BarHostingView(rootView: BarView())
         super.init(window: panel)
@@ -68,8 +77,16 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
         panel.makeFirstResponder(nil)
         panel.alphaValue = 0
         panel.setFrame(onScreen, display: false)
-        NSApp.activate(ignoringOtherApps: true)
-        panel.makeKeyAndOrderFront(nil)
+        // Reassert the level on every presentation because macOS can reorder
+        // an auxiliary panel while entering or leaving a full-screen Space.
+        panel.level = Self.presentationLevel
+        panel.collectionBehavior = [
+            .canJoinAllSpaces,
+            .fullScreenAuxiliary,
+            .stationary,
+        ]
+        panel.orderFrontRegardless()
+        panel.makeKey()
         panel.makeFirstResponder(nil)
         startOutsideClickMonitoring()
 
