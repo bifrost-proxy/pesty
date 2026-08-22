@@ -15,6 +15,27 @@ private enum GlobalAssistantAction {
     }
 }
 
+private final class MainRunLoopAction: @unchecked Sendable {
+    private let action: @MainActor () -> Void
+
+    @MainActor
+    init(_ action: @escaping @MainActor () -> Void) {
+        self.action = action
+    }
+
+    nonisolated func schedule() {
+        CFRunLoopPerformBlock(
+            CFRunLoopGetMain(),
+            CFRunLoopMode.commonModes.rawValue
+        ) {
+            MainActor.assumeIsolated {
+                self.action()
+            }
+        }
+        CFRunLoopWakeUp(CFRunLoopGetMain())
+    }
+}
+
 @MainActor
 final class AppController: NSObject, NSApplicationDelegate {
     static let shared = AppController()
@@ -199,6 +220,10 @@ final class AppController: NSObject, NSApplicationDelegate {
             store.saveNow()
         }
         stopKeyMonitor()
+        if ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"]
+                == "update-termination" {
+            print("AUTOMATED_UPDATE_TERMINATION_RESULT {\"success\":true}")
+        }
     }
 
     func applicationShouldTerminate(
@@ -209,15 +234,17 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         terminationFlushInProgress = true
         monitor.stop()
-        Task { [weak self] in
+        let reply = MainRunLoopAction { [weak self] in
             guard let self else {
                 sender.reply(toApplicationShouldTerminate: true)
                 return
             }
-            await store.flushPendingWrites()
             terminationFlushCompleted = true
             terminationFlushInProgress = false
             sender.reply(toApplicationShouldTerminate: true)
+        }
+        store.flushPendingWrites {
+            reply.schedule()
         }
         return .terminateLater
     }

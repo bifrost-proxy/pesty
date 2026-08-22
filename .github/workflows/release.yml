@@ -94,6 +94,9 @@ jobs:
       - name: Verify updater contract
         run: swift run Pesty --verify-updater
 
+      - name: Verify update termination
+        run: scripts/test_update_termination.sh .build/debug/Pesty
+
       - name: Verify release memory performance
         run: |
           swift build -c release
