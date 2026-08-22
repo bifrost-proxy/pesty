@@ -27,7 +27,7 @@ test_pid=$!
 
 timed_out=1
 for _ in {1..150}; do
-  state="$(ps -o state= -p "$test_pid" 2>/dev/null | tr -d ' ')"
+  state="$(ps -o state= -p "$test_pid" 2>/dev/null | tr -d ' ' || true)"
   if [[ -z "$state" || "$state" == Z* ]]; then
     timed_out=0
     break
