@@ -87,6 +87,28 @@ struct ClipItem: Identifiable, Codable, Equatable, Sendable {
             .lowercased()
     }
 
+    var maximumSearchableUTF8Count: Int {
+        let components = [customTitle, text, sourceAppName, colorHex]
+            .compactMap { $0 }
+        let rawBytes = components.reduce(into: 0) { total, value in
+            total += value.utf8.count
+        } + fileURLs.reduce(into: 0) { total, value in
+            total += value.utf8.count
+        }
+        let (bytesWithSeparators, additionOverflow) = rawBytes
+            .addingReportingOverflow(max(0, fileURLs.count - 1))
+        let (sourceBytes, componentOverflow) = bytesWithSeparators
+            .addingReportingOverflow(components.count)
+        // Unicode lowercasing can expand a scalar. Reserving four times the
+        // source byte count keeps the mmap builder bounded without committing
+        // those untouched virtual pages to physical memory.
+        let (maximum, multiplicationOverflow) = sourceBytes
+            .multipliedReportingOverflow(by: 4)
+        return additionOverflow || componentOverflow || multiplicationOverflow
+            ? Int.max
+            : maximum
+    }
+
     func sameContent(as other: ClipItem) -> Bool {
         guard type == other.type else { return false }
         switch type {

@@ -94,6 +94,12 @@ jobs:
       - name: Verify updater contract
         run: swift run Pesty --verify-updater
 
+      - name: Verify release memory and strip performance
+        run: |
+          swift build -c release
+          scripts/test_memory_performance.sh .build/release/Pesty
+          scripts/test_strip_performance.sh .build/release/Pesty
+
       - name: Build ad-hoc signed release
         env:
           VERSION: ${{ steps.version.outputs.value }}

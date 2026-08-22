@@ -135,6 +135,45 @@ enum AutomatedUITestRunner {
         let maximumDurationMilliseconds: Int
     }
 
+    private struct MemorySeedResult: Codable {
+        let phase: String
+        let success: Bool
+        let historyCount: Int
+        let expectedCount: Int
+        let textBytes: Int
+    }
+
+    private struct MemoryPerformanceResult: Codable {
+        let phase: String
+        let success: Bool
+        let historyCount: Int
+        let expectedCount: Int
+        let searchResultCount: Int
+        let firstSearchMilliseconds: Int
+        let maximumFirstSearchMilliseconds: Int
+        let currentFootprintBytes: UInt64
+        let averageIdleFootprintBytes: UInt64
+        let peakFootprintBytes: UInt64
+        let launchFootprintBytes: UInt64
+        let activeSearchFootprintBytes: UInt64
+        let postSearchEvictionFootprintBytes: UInt64
+        let postPersistenceFootprintBytes: UInt64
+        let maximumAverageIdleFootprintBytes: UInt64
+        let maximumPeakFootprintBytes: UInt64
+        let reorderedItemPersisted: Bool
+    }
+
+    private struct MemoryFreshSyncResult: Codable {
+        let phase: String
+        let success: Bool
+        let historyCount: Int
+        let expectedCount: Int
+        let currentFootprintBytes: UInt64
+        let peakFootprintBytes: UInt64
+        let maximumCurrentFootprintBytes: UInt64
+        let maximumPeakFootprintBytes: UInt64
+    }
+
     private struct SettingsRecordCountResult: Codable {
         let phase: String
         let success: Bool
@@ -284,6 +323,9 @@ enum AutomatedUITestRunner {
         let maximumInputCadenceDelayMilliseconds: Int
         let inputCadenceDelayLimitMilliseconds: Int
         let liveMutationSearchUpdated: Bool
+        let liveMutationSearchIndexCount: Int
+        let liveMutationSearchIndexBuildCountDelta: Int
+        let liveMutationFirstResultMatched: Bool
         let unicodeSearchCorrect: Bool
         let caseInsensitiveSearchCorrect: Bool
     }
@@ -486,6 +528,18 @@ enum AutomatedUITestRunner {
         }
         if phase == "performance" {
             runPerformanceTest(controller: controller, runID: runID)
+            return
+        }
+        if phase == "memory-seed" {
+            seedMemoryPerformanceTest(controller: controller, runID: runID)
+            return
+        }
+        if phase == "memory-measure" {
+            runMemoryPerformanceTest(controller: controller, runID: runID)
+            return
+        }
+        if phase == "memory-fresh-sync" {
+            runMemoryFreshSyncTest(controller: controller)
             return
         }
         if phase == "panel-reconciliation" {
@@ -1023,12 +1077,15 @@ enum AutomatedUITestRunner {
                     await controller.store.waitForSearchForAutomatedTest()
                     let liveMutationDiagnostics =
                         controller.store.searchDiagnosticsForAutomatedTest()
+                    let liveMutationFirstResultMatched =
+                        controller.store.visibleItems.first?.id
+                            == liveMutationItem.id
                     let liveMutationSearchUpdated =
-                        liveMutationDiagnostics.indexCount == largeHistoryCount
+                        liveMutationDiagnostics.indexCount
+                            == controller.store.history.count
                         && liveMutationDiagnostics.buildCount
                             == buildCountBeforeLiveMutation + 1
-                        && controller.store.visibleItems.first?.id
-                            == liveMutationItem.id
+                        && liveMutationFirstResultMatched
                     controller.store.searchText = "中文搜索性能"
                     await controller.store.waitForSearchForAutomatedTest()
                     let unicodeSearchCorrect =
@@ -1101,6 +1158,13 @@ enum AutomatedUITestRunner {
                         inputCadenceDelayLimitMilliseconds:
                             inputCadenceDelayLimitMilliseconds,
                         liveMutationSearchUpdated: liveMutationSearchUpdated,
+                        liveMutationSearchIndexCount:
+                            liveMutationDiagnostics.indexCount,
+                        liveMutationSearchIndexBuildCountDelta:
+                            liveMutationDiagnostics.buildCount
+                                - buildCountBeforeLiveMutation,
+                        liveMutationFirstResultMatched:
+                            liveMutationFirstResultMatched,
                         unicodeSearchCorrect: unicodeSearchCorrect,
                         caseInsensitiveSearchCorrect:
                             caseInsensitiveSearchCorrect
@@ -3439,6 +3503,174 @@ enum AutomatedUITestRunner {
         )
     }
 
+    private static func seedMemoryPerformanceTest(
+        controller: AppController,
+        runID: String
+    ) {
+        let itemCount = 2_200
+        let payload = String(repeating: "memory-payload-", count: 1_570)
+        let items = (0..<itemCount).map { index in
+            ClipItem(
+                type: .text,
+                text: "pesty-memory-\(runID)-\(String(format: "%04d", index)) \(payload)",
+                sourceBundleID: "com.bifrostproxy.pesty.memory-test",
+                sourceAppName: "Pesty Memory Test",
+                createdAt: Date(timeIntervalSinceNow: -Double(index))
+            )
+        }
+        let textBytes = items.reduce(into: 0) { total, item in
+            total += item.text?.utf8.count ?? 0
+        }
+        controller.monitor.stop()
+        controller.store.replaceHistoryForAutomatedMemoryTest(items)
+        Task { @MainActor in
+            await controller.store.flushPendingWrites()
+            await controller.store.waitForIncrementalSyncForAutomatedTest()
+            let result = MemorySeedResult(
+                phase: "memory-seed",
+                success: controller.store.history.count == itemCount,
+                historyCount: controller.store.history.count,
+                expectedCount: itemCount,
+                textBytes: textBytes
+            )
+            writeMemorySeed(result)
+            exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+        }
+    }
+
+    private static func runMemoryPerformanceTest(
+        controller: AppController,
+        runID: String
+    ) {
+        let expectedCount = 2_200
+        let maximumFirstSearchMilliseconds = 750
+        let maximumAverageIdleFootprintBytes: UInt64 = 110_000_000
+        let maximumPeakFootprintBytes: UInt64 = 150_000_000
+        controller.monitor.stop()
+
+        Task { @MainActor in
+            await controller.store.waitForIncrementalSyncForAutomatedTest()
+            let launchFootprintBytes = processMemorySnapshot()?.current ?? .max
+            let searchStarted = CFAbsoluteTimeGetCurrent()
+            controller.store.searchText = "pesty-memory-\(runID)-2199"
+            await controller.store.waitForSearchForAutomatedTest()
+            let firstSearchMilliseconds = Int(
+                (CFAbsoluteTimeGetCurrent() - searchStarted) * 1_000
+            )
+            let searchResultCount = controller.store.visibleItems.count
+            let activeSearchFootprintBytes =
+                processMemorySnapshot()?.current ?? .max
+            controller.store.searchText = ""
+
+            // Let the short-lived search cache expire before exercising a
+            // complete incremental-state persist. This matches normal idle
+            // operation while still including both operations in peak usage.
+            try? await Task.sleep(for: .seconds(4))
+            let postSearchEvictionFootprintBytes =
+                processMemorySnapshot()?.current ?? .max
+            let reorderedID = controller.store.history.last?.id
+            if let item = controller.store.history.last {
+                controller.store.promoteToFront(item)
+            }
+            await controller.store.flushPendingWrites()
+            controller.store.requestIncrementalCompactionForAutomatedMemoryTest()
+            await controller.store.waitForIncrementalSyncForAutomatedTest()
+            try? await Task.sleep(for: .seconds(2))
+            let postPersistenceFootprintBytes =
+                processMemorySnapshot()?.current ?? .max
+
+            var footprintSamples: [UInt64] = []
+            for _ in 0..<12 {
+                if let memory = processMemorySnapshot() {
+                    footprintSamples.append(memory.current)
+                }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            let memory = processMemorySnapshot()
+            let averageIdleFootprintBytes = footprintSamples.isEmpty
+                ? UInt64.max
+                : footprintSamples.reduce(0, +) / UInt64(footprintSamples.count)
+            let currentFootprintBytes = memory?.current ?? .max
+            let peakFootprintBytes = memory?.peak ?? .max
+            let reorderedItemPersisted = controller.store.history.first?.id
+                == reorderedID
+            let success = controller.store.history.count == expectedCount
+                && searchResultCount == 1
+                && firstSearchMilliseconds <= maximumFirstSearchMilliseconds
+                && averageIdleFootprintBytes
+                    <= maximumAverageIdleFootprintBytes
+                && peakFootprintBytes <= maximumPeakFootprintBytes
+                && reorderedItemPersisted
+            let result = MemoryPerformanceResult(
+                phase: "memory-measure",
+                success: success,
+                historyCount: controller.store.history.count,
+                expectedCount: expectedCount,
+                searchResultCount: searchResultCount,
+                firstSearchMilliseconds: firstSearchMilliseconds,
+                maximumFirstSearchMilliseconds: maximumFirstSearchMilliseconds,
+                currentFootprintBytes: currentFootprintBytes,
+                averageIdleFootprintBytes: averageIdleFootprintBytes,
+                peakFootprintBytes: peakFootprintBytes,
+                launchFootprintBytes: launchFootprintBytes,
+                activeSearchFootprintBytes: activeSearchFootprintBytes,
+                postSearchEvictionFootprintBytes:
+                    postSearchEvictionFootprintBytes,
+                postPersistenceFootprintBytes:
+                    postPersistenceFootprintBytes,
+                maximumAverageIdleFootprintBytes:
+                    maximumAverageIdleFootprintBytes,
+                maximumPeakFootprintBytes: maximumPeakFootprintBytes,
+                reorderedItemPersisted: reorderedItemPersisted
+            )
+            writeMemoryPerformance(result)
+            exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+        }
+    }
+
+    private static func runMemoryFreshSyncTest(controller: AppController) {
+        let expectedCount = 2_200
+        let maximumCurrentFootprintBytes: UInt64 = 110_000_000
+        let maximumPeakFootprintBytes: UInt64 = 150_000_000
+        controller.monitor.stop()
+        Task { @MainActor in
+            await controller.store.waitForIncrementalSyncForAutomatedTest()
+            try? await Task.sleep(for: .seconds(1))
+            let memory = processMemorySnapshot()
+            let current = memory?.current ?? .max
+            let peak = memory?.peak ?? .max
+            let result = MemoryFreshSyncResult(
+                phase: "memory-fresh-sync",
+                success: controller.store.history.count == expectedCount
+                    && current <= maximumCurrentFootprintBytes
+                    && peak <= maximumPeakFootprintBytes,
+                historyCount: controller.store.history.count,
+                expectedCount: expectedCount,
+                currentFootprintBytes: current,
+                peakFootprintBytes: peak,
+                maximumCurrentFootprintBytes: maximumCurrentFootprintBytes,
+                maximumPeakFootprintBytes: maximumPeakFootprintBytes
+            )
+            writeMemoryFreshSync(result)
+            exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+        }
+    }
+
+    private static func processMemorySnapshot()
+        -> (current: UInt64, peak: UInt64)? {
+        var info = rusage_info_v4()
+        let status = withUnsafeMutablePointer(to: &info) { pointer in
+            let opaquePointer = UnsafeMutableRawPointer(pointer)
+                .assumingMemoryBound(to: rusage_info_t?.self)
+            return proc_pid_rusage(getpid(), RUSAGE_INFO_V4, opaquePointer)
+        }
+        guard status == 0 else { return nil }
+        return (
+            info.ri_phys_footprint,
+            info.ri_lifetime_max_phys_footprint
+        )
+    }
+
     private static func runPerformanceTest(controller: AppController, runID: String) {
         let itemCount = 1_000
         let checkpointIndices = [0, 249, 499, 749, 999]
@@ -4419,6 +4651,43 @@ enum AutomatedUITestRunner {
         encoder.outputFormatting = [.sortedKeys]
         guard let data = try? encoder.encode(result) else { return }
         FileHandle.standardOutput.write(Data("AUTOMATED_PERFORMANCE_TEST_RESULT ".utf8))
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeMemorySeed(_ result: MemorySeedResult) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(
+            Data("AUTOMATED_MEMORY_SEED_RESULT ".utf8)
+        )
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeMemoryPerformance(
+        _ result: MemoryPerformanceResult
+    ) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(
+            Data("AUTOMATED_MEMORY_PERFORMANCE_RESULT ".utf8)
+        )
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writeMemoryFreshSync(
+        _ result: MemoryFreshSyncResult
+    ) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(
+            Data("AUTOMATED_MEMORY_FRESH_SYNC_RESULT ".utf8)
+        )
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data("\n".utf8))
     }

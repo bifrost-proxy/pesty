@@ -461,7 +461,6 @@ final class AppController: NSObject, NSApplicationDelegate {
             barController = BarWindowController()
         }
         barController?.show()
-        store.prepareSearchIndexForPanel()
         store.reconcileFromDiskInBackground()
     }
 

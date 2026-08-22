@@ -187,7 +187,7 @@ private enum ClipboardStoreReconciler {
             var seen = Set<String>()
             var merged: [ClipItem] = []
             for item in combined
-                where seen.insert(contentKey(item)).inserted {
+                where seen.insert(contentDigest(item)).inserted {
                 merged.append(item)
             }
 
@@ -373,7 +373,10 @@ final class ClipboardStore {
                 searchTask = nil
                 searchGeneration &+= 1
                 stripContentRevision &+= 1
+                scheduleSearchIndexEviction()
             } else {
+                searchIndexEvictionTask?.cancel()
+                searchIndexEvictionTask = nil
                 scheduleSearchResultsUpdate(debounce: true)
             }
         }
@@ -398,7 +401,7 @@ final class ClipboardStore {
     @ObservationIgnored private var searchIndexTask: Task<ClipboardSearchIndex?, Never>?
     @ObservationIgnored private var searchIndexGeneration: UInt64 = 0
     @ObservationIgnored private var searchIndexBuildIsDeferred = false
-    @ObservationIgnored private var searchIndexPrewarmingEnabled = false
+    @ObservationIgnored private var searchIndexEvictionTask: Task<Void, Never>?
     @ObservationIgnored private var searchCandidateCache: [String: [Int]] = [:]
     @ObservationIgnored private var searchCandidateCacheOrder: [String] = []
     @ObservationIgnored private var searchTask: Task<Void, Never>?
@@ -579,6 +582,8 @@ final class ClipboardStore {
     private func invalidateSearchIndexAndRefreshResults() {
         searchIndexTask?.cancel()
         searchIndexTask = nil
+        searchIndexEvictionTask?.cancel()
+        searchIndexEvictionTask = nil
         searchIndexGeneration &+= 1
         searchIndexBuildIsDeferred = false
         discardSearchIndexOffMainActor()
@@ -587,30 +592,44 @@ final class ClipboardStore {
         filteredSearchIndices.removeAll(keepingCapacity: true)
 
         if normalizedSearchQuery(searchText).isEmpty {
-            if searchIndexPrewarmingEnabled {
-                scheduleSearchIndexBuild(deferred: true)
-            }
+            // A capture invalidates the complete normalized byte index. Do not
+            // immediately rebuild it while persistence is encoding the same
+            // history. The next real query builds a fresh index on demand.
         } else {
             scheduleSearchResultsUpdate(debounce: false)
         }
     }
 
     private func discardSearchIndexOffMainActor() {
-        let discardedIndex = searchIndex
         searchIndex = nil
-        guard let discardedIndex else { return }
-        Task.detached(priority: .utility) {
-            withExtendedLifetime(discardedIndex) {}
-        }
     }
 
-    func prepareSearchIndexForPanel() {
-        searchIndexPrewarmingEnabled = true
-        let expectedRevision = searchContentRevision(for: source)
-        guard searchIndex?.source != source
-                || searchIndex?.contentRevision != expectedRevision else { return }
-        guard searchIndexTask == nil else { return }
-        scheduleSearchIndexBuild(deferred: true)
+    private func scheduleSearchIndexEviction() {
+        searchIndexEvictionTask?.cancel()
+        guard searchIndex != nil || searchIndexTask != nil else {
+            searchIndexEvictionTask = nil
+            return
+        }
+        searchIndexEvictionTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .seconds(3))
+            } catch {
+                return
+            }
+            guard let self,
+                  self.normalizedSearchQuery(self.searchText).isEmpty else {
+                return
+            }
+            self.searchIndexTask?.cancel()
+            self.searchIndexTask = nil
+            self.searchIndexGeneration &+= 1
+            self.discardSearchIndexOffMainActor()
+            self.searchCandidateCache.removeAll(keepingCapacity: false)
+            self.searchCandidateCacheOrder.removeAll(keepingCapacity: false)
+            self.filteredSearchItems.removeAll(keepingCapacity: false)
+            self.filteredSearchIndices.removeAll(keepingCapacity: false)
+            self.searchIndexEvictionTask = nil
+        }
     }
 
     private func scheduleSearchResultsUpdate(debounce: Bool) {
@@ -807,6 +826,13 @@ final class ClipboardStore {
         guard ClipboardStore.automatedTestBase != nil else { return }
         while let task = searchTask {
             await task.value
+        }
+    }
+
+    func waitForSearchIndexForAutomatedTest() async {
+        guard ClipboardStore.automatedTestBase != nil else { return }
+        while let task = searchIndexTask {
+            _ = await task.value
         }
     }
 
@@ -1048,6 +1074,21 @@ final class ClipboardStore {
         }
         history = items
         pinboards = []
+        source = .history
+        searchText = ""
+        selectedID = items.first?.id
+        saveNow()
+    }
+
+    func replaceHistoryForAutomatedMemoryTest(_ items: [ClipItem]) {
+        guard ClipboardStore.automatedTestBase != nil,
+              ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"]
+                == "memory-seed" else {
+            return
+        }
+        history = items
+        pinboards = []
+        deletionTombstones = [:]
         source = .history
         searchText = ""
         selectedID = items.first?.id
@@ -1352,9 +1393,7 @@ final class ClipboardStore {
         let needsMaterialization = loadsFromMetadataCache
             && storeNeedsMaterializationBeforeReading
         let initialSnapshot = usesIncrementalCloudSync
-            ? IncrementalCloudSync.localSnapshot(
-                in: incrementalLocalDirectory
-            )
+            ? incrementalCloudSync?.initialSnapshot
             : readSnapshot(
                 at: loadsFromMetadataCache ? metadataCacheURL : storeURL
             )
@@ -2001,6 +2040,14 @@ final class ClipboardStore {
         while let task = incrementalSyncTask {
             await task.value
         }
+    }
+
+    func requestIncrementalCompactionForAutomatedMemoryTest() {
+        guard ClipboardStore.automatedTestBase != nil,
+              ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"]
+                == "memory-measure" else { return }
+        incrementalCompactionRequested = true
+        scheduleIncrementalSync()
     }
 
     private var mergeContext: ClipboardMergeContext {
