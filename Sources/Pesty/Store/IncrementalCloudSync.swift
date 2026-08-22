@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 import OSLog
 
@@ -88,11 +89,13 @@ actor IncrementalCloudSync {
     private let checkpointsDirectory: URL
     private let imagesDirectory: URL
     private let imageRetirementGrace: TimeInterval
+    nonisolated let initialSnapshot: ClipboardStoreSnapshot?
     private let logger = Logger(
         subsystem: "com.bifrostproxy.pesty",
         category: "incremental-cloud-sync"
     )
     private var state: State?
+    private var stateRequiresPersistence = false
     private var lastImageGarbageCollectionAt: Date?
 
     init(
@@ -103,7 +106,8 @@ actor IncrementalCloudSync {
         self.localDirectory = localDirectory
         self.cloudDirectory = cloudDirectory
         self.imageRetirementGrace = imageRetirementGrace
-        stateURL = localDirectory.appendingPathComponent("state.json")
+        let resolvedStateURL = localDirectory.appendingPathComponent("state.json")
+        stateURL = resolvedStateURL
         outboxDirectory = localDirectory.appendingPathComponent(
             "outbox",
             isDirectory: true
@@ -118,15 +122,17 @@ actor IncrementalCloudSync {
         )
         imagesDirectory = cloudDirectory.deletingLastPathComponent()
             .appendingPathComponent("images", isDirectory: true)
+        let loaded = Self.loadPersistedState(at: resolvedStateURL)
+        state = loaded.state
+        stateRequiresPersistence = loaded.requiresPersistence
+        initialSnapshot = loaded.state?.snapshot
     }
 
     nonisolated static func localSnapshot(in localDirectory: URL)
         -> ClipboardStoreSnapshot? {
-        let url = localDirectory.appendingPathComponent("state.json")
-        guard let data = try? Data(contentsOf: url),
-              let state = try? JSONDecoder().decode(State.self, from: data),
-              state.formatVersion == 2 else { return nil }
-        return state.snapshot
+        loadPersistedState(
+            at: localDirectory.appendingPathComponent("state.json")
+        ).state?.snapshot
     }
 
     func synchronize(
@@ -195,10 +201,12 @@ actor IncrementalCloudSync {
         allRecordsFrom expected: ClipboardStoreSnapshot
     ) -> Bool {
         let migratedHistory = Dictionary(
-            uniqueKeysWithValues: migrated.history.map { (contentKey($0), $0) }
+            uniqueKeysWithValues: migrated.history.map {
+                (contentVersionKey($0), $0)
+            }
         )
         guard expected.history.allSatisfy({ item in
-            guard let actual = migratedHistory[contentKey(item)] else {
+            guard let actual = migratedHistory[contentVersionKey(item)] else {
                 return false
             }
             return actual.createdAt >= item.createdAt
@@ -212,7 +220,9 @@ actor IncrementalCloudSync {
                   actual.name == board.name,
                   actual.colorHex == board.colorHex else { return false }
             return board.items.allSatisfy { expectedItem in
-                actual.items.contains { contentKey($0) == contentKey(expectedItem) }
+                actual.items.contains {
+                    contentVersionKey($0) == contentVersionKey(expectedItem)
+                }
             }
         }) else { return false }
 
@@ -252,12 +262,17 @@ actor IncrementalCloudSync {
 
     @discardableResult
     private func loadStateIfNeeded() -> Bool {
-        guard state == nil else { return false }
+        guard state == nil else {
+            let requiresPersistence = stateRequiresPersistence
+            stateRequiresPersistence = false
+            return requiresPersistence
+        }
         if let decoded = try? Data(contentsOf: stateURL),
-           let saved = try? JSONDecoder().decode(State.self, from: decoded),
+           var saved = try? JSONDecoder().decode(State.self, from: decoded),
            saved.formatVersion == 2 {
+            let migrated = Self.normalizeHistoryVersionKeys(in: &saved)
             state = saved
-            return false
+            return migrated
         }
         state = State(
             deviceID: UUID(),
@@ -327,12 +342,14 @@ actor IncrementalCloudSync {
         var result: [Record] = []
         let now = Date()
         let oldHistory = Dictionary(
-            uniqueKeysWithValues: previous.history.map { (contentKey($0), $0) }
+            uniqueKeysWithValues: previous.history.map {
+                (contentVersionKey($0), $0)
+            }
         )
         for item in next.history
-            where oldHistory[contentKey(item)] != item {
+            where oldHistory[contentVersionKey(item)] != item {
             result.append(Record(
-                recordedAt: oldHistory[contentKey(item)] == nil
+                recordedAt: oldHistory[contentVersionKey(item)] == nil
                     ? item.createdAt
                     : now,
                 operation: .historyUpsert(item)
@@ -554,7 +571,7 @@ actor IncrementalCloudSync {
 
     private func pullRemoteCheckpoints() async -> Bool {
         guard let initialState = state else { return false }
-        var candidates: [(CheckpointManifest, CheckpointPayload)] = []
+        var candidates: [(URL, CheckpointManifest)] = []
         let appliedIDs = initialState.appliedCheckpointIDs ?? []
         for manifestURL in checkpointManifestURLs() {
             if let checkpointID = UUID(
@@ -573,30 +590,34 @@ actor IncrementalCloudSync {
             guard let manifest = coordinatedRead(
                 CheckpointManifest.self,
                 from: manifestURL
-            ), manifest.formatVersion == 2,
-                  let payload = await readCheckpoint(
-                    manifest,
-                    manifestURL: manifestURL
-                  ) else { continue }
-            candidates.append((manifest, payload))
+            ), manifest.formatVersion == 2 else { continue }
+            candidates.append((manifestURL, manifest))
         }
         candidates.sort {
-            if $0.0.createdAt != $1.0.createdAt {
-                return $0.0.createdAt < $1.0.createdAt
+            if $0.1.createdAt != $1.1.createdAt {
+                return $0.1.createdAt < $1.1.createdAt
             }
-            return $0.0.id.uuidString < $1.0.id.uuidString
+            return $0.1.id.uuidString < $1.1.id.uuidString
         }
         guard var current = state else { return false }
         var appliedAny = false
-        for (manifest, payload) in candidates {
+        for (manifestURL, manifest) in candidates {
             guard !(current.appliedCheckpointIDs ?? []).contains(
                 manifest.id
+            ) else { continue }
+            guard let payload = await readCheckpoint(
+                manifest,
+                manifestURL: manifestURL
             ) else { continue }
             applyCheckpoint(payload, manifest: manifest, to: &current)
             appliedAny = true
         }
         guard appliedAny else { return false }
         state = current
+        // JSONDecoder has released the assembled checkpoint bytes by this
+        // point. Return their now-empty malloc pages so a one-time first sync
+        // does not become the app's permanent idle footprint.
+        _ = malloc_zone_pressure_relief(nil, 0)
         return true
     }
 
@@ -608,7 +629,10 @@ actor IncrementalCloudSync {
         var records: [Record] = []
         records += payload.snapshot.history.map { item in
             Record(
-                recordedAt: payload.historyVersions[contentKey(item)]
+                recordedAt: historyVersion(
+                    for: item,
+                    in: payload.historyVersions
+                )
                     ?? item.createdAt,
                 operation: .historyUpsert(item)
             )
@@ -700,9 +724,6 @@ actor IncrementalCloudSync {
             includedCheckpointIDs: included,
             retiredImageVersions: current.retiredImageVersions ?? [:]
         )
-        guard let payloadData = try? JSONEncoder().encode(payload) else {
-            return (false, false)
-        }
         let checkpointDirectory = checkpointsDirectory
             .appendingPathComponent(
                 current.deviceID.uuidString.lowercased(),
@@ -723,26 +744,17 @@ actor IncrementalCloudSync {
             return (false, false)
         }
 
-        var chunks: [CheckpointChunk] = []
-        for (index, data) in splitCheckpointPayload(payloadData).enumerated() {
-            let name = String(format: "chunk-%05d.part", index)
-            let url = checkpointDirectory.appendingPathComponent(name)
-            guard coordinatedWrite(data, to: url) else {
-                return (false, false)
-            }
-            chunks.append(CheckpointChunk(
-                name: name,
-                byteCount: data.count,
-                sha256: sha256(data)
-            ))
-        }
+        guard let streamedPayload = writeCheckpointPayload(
+            payload,
+            to: checkpointDirectory
+        ) else { return (false, false) }
         let manifest = CheckpointManifest(
             formatVersion: 2,
             id: checkpointID,
             deviceID: current.deviceID,
             createdAt: Date(),
-            payloadSHA256: sha256(payloadData),
-            chunks: chunks,
+            payloadSHA256: streamedPayload.sha256,
+            chunks: streamedPayload.chunks,
             coveredBatchVersions: current.appliedBatchVersions,
             includedCheckpointIDs: included
         )
@@ -754,14 +766,12 @@ actor IncrementalCloudSync {
                 CheckpointManifest.self,
                 from: manifestURL
               ),
-              let verifiedPayload = await readCheckpoint(
+              verifyCheckpointChunks(
                 verifiedManifest,
-                manifestURL: manifestURL
+                in: checkpointDirectory
               ),
-              contains(
-                verifiedPayload.snapshot,
-                allRecordsFrom: current.snapshot
-              ) else { return (false, false) }
+              contains(payload.snapshot, allRecordsFrom: current.snapshot)
+        else { return (false, false) }
 
         guard var latest = state else { return (false, false) }
         var applied = latest.appliedCheckpointIDs ?? []
@@ -769,7 +779,7 @@ actor IncrementalCloudSync {
         latest.appliedCheckpointIDs = applied
         var verifiedRetirements = latest.verifiedRetiredImageVersions ?? [:]
         mergeVersions(
-            verifiedPayload.retiredImageVersions,
+            payload.retiredImageVersions,
             into: &verifiedRetirements
         )
         latest.verifiedRetiredImageVersions = verifiedRetirements
@@ -818,7 +828,7 @@ actor IncrementalCloudSync {
         for record in batch.records {
             switch record.operation {
             case .historyUpsert(let item):
-                let key = contentKey(item)
+                let key = contentVersionKey(item)
                 guard record.recordedAt >= (state.historyVersions[key]
                     ?? .distantPast) else { continue }
                 if let deletion = deletionMap(state.snapshot)[
@@ -828,7 +838,7 @@ actor IncrementalCloudSync {
                 }
                 state.historyVersions[key] = record.recordedAt
                 state.snapshot.history.removeAll {
-                    contentKey($0) == key
+                    contentVersionKey($0) == key
                 }
                 state.snapshot.history.append(item)
                 state.snapshot.history.sort { $0.createdAt > $1.createdAt }
@@ -918,6 +928,52 @@ actor IncrementalCloudSync {
         )
     }
 
+    private nonisolated static func loadPersistedState(
+        at url: URL
+    ) -> (state: State?, requiresPersistence: Bool) {
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
+              var saved = try? JSONDecoder().decode(State.self, from: data),
+              saved.formatVersion == 2 else {
+            return (nil, false)
+        }
+        let migrated = normalizeHistoryVersionKeys(in: &saved)
+        return (saved, migrated)
+    }
+
+    private nonisolated static func normalizeHistoryVersionKeys(
+        in state: inout State
+    ) -> Bool {
+        var normalized: [String: Date] = [:]
+        normalized.reserveCapacity(state.historyVersions.count)
+        var changed = false
+        for (key, date) in state.historyVersions {
+            let normalizedKey: String
+            if key.utf8.count == 64,
+               key.utf8.allSatisfy({ byte in
+                   (48...57).contains(byte) || (97...102).contains(byte)
+               }) {
+                normalizedKey = key
+            } else {
+                normalizedKey = digestContentKey(key)
+            }
+            normalized[normalizedKey] = max(
+                normalized[normalizedKey] ?? .distantPast,
+                date
+            )
+            changed = changed || normalizedKey != key
+        }
+        if changed {
+            state.historyVersions = normalized
+        }
+        return changed
+    }
+
+    private nonisolated static func digestContentKey(_ key: String) -> String {
+        SHA256.hash(data: Data(key.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+    }
+
     private func deletionMap(_ snapshot: ClipboardStoreSnapshot)
         -> [String: ClipDeletionTombstone] {
         Dictionary(uniqueKeysWithValues: (snapshot.deletions ?? []).map {
@@ -942,7 +998,7 @@ actor IncrementalCloudSync {
         }
     }
 
-    private func contentKey(_ item: ClipItem) -> String {
+    private func legacyContentKey(_ item: ClipItem) -> String {
         switch item.type {
         case .image:
             "img:" + (item.imageHash ?? item.imageFileName
@@ -956,10 +1012,20 @@ actor IncrementalCloudSync {
         }
     }
 
+    private func contentVersionKey(_ item: ClipItem) -> String {
+        contentDigest(item)
+    }
+
+    private func historyVersion(
+        for item: ClipItem,
+        in versions: [String: Date]
+    ) -> Date? {
+        versions[contentVersionKey(item)]
+            ?? versions[legacyContentKey(item)]
+    }
+
     private func contentDigest(_ item: ClipItem) -> String {
-        SHA256.hash(data: Data(contentKey(item).utf8))
-            .map { String(format: "%02x", $0) }
-            .joined()
+        Self.digestContentKey(legacyContentKey(item))
     }
 
     private func batchFileName(_ batch: Batch) -> String {
@@ -1016,17 +1082,124 @@ actor IncrementalCloudSync {
             .filter { $0.lastPathComponent == "manifest.json" }
     }
 
-    private func splitCheckpointPayload(_ data: Data) -> [Data] {
+    private func writeCheckpointPayload(
+        _ payload: CheckpointPayload,
+        to directory: URL
+    ) -> (chunks: [CheckpointChunk], sha256: String)? {
         let chunkSize = 256_000
-        guard !data.isEmpty else { return [Data()] }
-        var chunks: [Data] = []
-        var offset = 0
-        while offset < data.count {
-            let end = min(data.count, offset + chunkSize)
-            chunks.append(data.subdata(in: offset..<end))
-            offset = end
+        let encoder = JSONEncoder()
+        var buffer = Data()
+        buffer.reserveCapacity(chunkSize)
+        var chunks: [CheckpointChunk] = []
+        var payloadHasher = SHA256()
+
+        func flushChunk() throws {
+            guard !buffer.isEmpty else { return }
+            let name = String(format: "chunk-%05d.part", chunks.count)
+            let url = directory.appendingPathComponent(name)
+            guard coordinatedWrite(buffer, to: url) else {
+                throw CocoaError(.fileWriteUnknown)
+            }
+            chunks.append(CheckpointChunk(
+                name: name,
+                byteCount: buffer.count,
+                sha256: sha256(buffer)
+            ))
+            buffer = Data()
+            buffer.reserveCapacity(chunkSize)
         }
-        return chunks
+
+        func append(_ data: Data) throws {
+            payloadHasher.update(data: data)
+            var offset = data.startIndex
+            while offset < data.endIndex {
+                let available = chunkSize - buffer.count
+                let end = min(data.endIndex, offset + available)
+                buffer.append(contentsOf: data[offset..<end])
+                offset = end
+                if buffer.count == chunkSize {
+                    try flushChunk()
+                }
+            }
+        }
+
+        func append(_ literal: String) throws {
+            try append(Data(literal.utf8))
+        }
+
+        func appendEncoded<T: Encodable>(_ value: T) throws {
+            try append(encoder.encode(value))
+        }
+
+        func appendArray<T: Encodable>(_ values: [T]) throws {
+            try append("[")
+            for (index, value) in values.enumerated() {
+                if index > 0 { try append(",") }
+                try appendEncoded(value)
+            }
+            try append("]")
+        }
+
+        do {
+            try append("{\"formatVersion\":")
+            try appendEncoded(payload.formatVersion)
+            try append(",\"snapshot\":{\"history\":")
+            try appendArray(payload.snapshot.history)
+            try append(",\"pinboards\":")
+            try appendArray(payload.snapshot.pinboards)
+            try append(",\"configuration\":")
+            if let configuration = payload.snapshot.configuration {
+                try appendEncoded(configuration)
+            } else {
+                try append("null")
+            }
+            try append(",\"deletions\":")
+            if let deletions = payload.snapshot.deletions {
+                try appendArray(deletions)
+            } else {
+                try append("null")
+            }
+            try append("},\"historyVersions\":")
+            try appendEncoded(payload.historyVersions)
+            try append(",\"boardVersions\":")
+            try appendEncoded(payload.boardVersions)
+            try append(",\"deletedBoardVersions\":")
+            try appendEncoded(payload.deletedBoardVersions)
+            try append(",\"coveredBatchVersions\":")
+            try appendEncoded(payload.coveredBatchVersions)
+            try append(",\"includedCheckpointIDs\":")
+            try appendEncoded(payload.includedCheckpointIDs)
+            try append(",\"retiredImageVersions\":")
+            try appendEncoded(payload.retiredImageVersions)
+            try append("}")
+            try flushChunk()
+        } catch {
+            logCheckpointError("stream", error: error)
+            return nil
+        }
+
+        let digest = payloadHasher.finalize()
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return (chunks, digest)
+    }
+
+    private func verifyCheckpointChunks(
+        _ manifest: CheckpointManifest,
+        in directory: URL
+    ) -> Bool {
+        var payloadHasher = SHA256()
+        for chunk in manifest.chunks {
+            guard let data = coordinatedReadData(
+                from: directory.appendingPathComponent(chunk.name)
+            ), data.count == chunk.byteCount,
+               sha256(data) == chunk.sha256 else { return false }
+            payloadHasher.update(data: data)
+        }
+        let digest = payloadHasher.finalize()
+            .map { String(format: "%02x", $0) }
+            .joined()
+        return digest == manifest.payloadSHA256
     }
 
     private func garbageCollectBatches(
@@ -1232,17 +1405,109 @@ actor IncrementalCloudSync {
 
     private func persistState() {
         guard let state else { return }
+        let temporaryURL = stateURL.deletingLastPathComponent()
+            .appendingPathComponent(".state-\(UUID().uuidString).tmp")
         do {
-            let data = try JSONEncoder().encode(state)
-            try data.write(to: stateURL, options: .atomic)
+            try writeState(state, to: temporaryURL)
             try FileManager.default.setAttributes(
                 [.posixPermissions: 0o600],
-                ofItemAtPath: stateURL.path
+                ofItemAtPath: temporaryURL.path
             )
+            guard rename(temporaryURL.path, stateURL.path) == 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
         } catch {
+            try? FileManager.default.removeItem(at: temporaryURL)
             logger.error(
                 "Failed to persist incremental sync state domain=\((error as NSError).domain, privacy: .public) code=\((error as NSError).code)"
             )
+        }
+    }
+
+    private func writeState(_ state: State, to url: URL) throws {
+        let fm = FileManager.default
+        guard fm.createFile(atPath: url.path, contents: nil) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        let handle = try FileHandle(forWritingTo: url)
+        let encoder = JSONEncoder()
+
+        func write(_ literal: String) throws {
+            try handle.write(contentsOf: Data(literal.utf8))
+        }
+        func writeEncoded<T: Encodable>(_ value: T) throws {
+            try handle.write(contentsOf: encoder.encode(value))
+        }
+        func writeArray<T: Encodable>(_ values: [T]) throws {
+            try write("[")
+            for (index, value) in values.enumerated() {
+                if index > 0 { try write(",") }
+                try writeEncoded(value)
+            }
+            try write("]")
+        }
+
+        do {
+            try write("{\"formatVersion\":")
+            try writeEncoded(state.formatVersion)
+            try write(",\"deviceID\":")
+            try writeEncoded(state.deviceID)
+            try write(",\"nextSequence\":")
+            try writeEncoded(state.nextSequence)
+            try write(",\"snapshot\":{\"history\":")
+            try writeArray(state.snapshot.history)
+            try write(",\"pinboards\":")
+            try writeArray(state.snapshot.pinboards)
+            try write(",\"configuration\":")
+            if let configuration = state.snapshot.configuration {
+                try writeEncoded(configuration)
+            } else {
+                try write("null")
+            }
+            try write(",\"deletions\":")
+            if let deletions = state.snapshot.deletions {
+                try writeArray(deletions)
+            } else {
+                try write("null")
+            }
+            try write("},\"historyVersions\":")
+            try writeEncoded(state.historyVersions)
+            try write(",\"boardVersions\":")
+            try writeEncoded(state.boardVersions)
+            try write(",\"deletedBoardVersions\":")
+            try writeEncoded(state.deletedBoardVersions)
+            try write(",\"appliedBatchVersions\":")
+            try writeEncoded(state.appliedBatchVersions)
+            try write(",\"appliedCheckpointIDs\":")
+            if let ids = state.appliedCheckpointIDs {
+                try writeEncoded(ids)
+            } else {
+                try write("null")
+            }
+            try write(",\"retiredImageVersions\":")
+            if let versions = state.retiredImageVersions {
+                try writeEncoded(versions)
+            } else {
+                try write("null")
+            }
+            try write(",\"verifiedRetiredImageVersions\":")
+            if let versions = state.verifiedRetiredImageVersions {
+                try writeEncoded(versions)
+            } else {
+                try write("null")
+            }
+            try write(",\"batchDirectoryModificationDates\":")
+            if let dates = state.batchDirectoryModificationDates {
+                try writeEncoded(dates)
+            } else {
+                try write("null")
+            }
+            try write("}")
+            try handle.synchronize()
+            try handle.close()
+        } catch {
+            try? handle.close()
+            throw error
         }
     }
 

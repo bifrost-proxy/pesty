@@ -27,6 +27,34 @@ PESTY_AUTOMATED_TEST_ID="$current_id" \
 
 test ! -e "$cloud_dir/store.json"
 
+# Existing 1.7.0-1.7.3 states used the complete clipboard content as each
+# historyVersions key. Rewrite this isolated synthetic state into that legacy
+# shape, then prove the next launch migrates every key to a fixed digest without
+# losing history.
+device_a_state="$test_root/device-a/sync-v2-local/state.json"
+legacy_state="$test_root/legacy-state.json"
+jq '
+    (.historyVersions | to_entries | map(.value) | max) as $latest
+    | .historyVersions = reduce .snapshot.history[] as $item
+        ({}; .["txt:" + ($item.text // "")] = $latest)
+  ' "$device_a_state" >"$legacy_state"
+mv "$legacy_state" "$device_a_state"
+
+PESTY_AUTOMATED_TEST_DATA_DIR="$cloud_dir" \
+PESTY_AUTOMATED_INCREMENTAL_SYNC=1 \
+PESTY_AUTOMATED_INCREMENTAL_LOCAL_DIR="$test_root/device-a" \
+PESTY_AUTOMATED_TEST_DEFAULTS_SUITE="$suite" \
+PESTY_AUTOMATED_UI_TEST=restart-1 \
+PESTY_AUTOMATED_TEST_ID="$current_id" \
+  "$binary"
+
+jq -e '
+    (.historyVersions | keys | length) == 4
+    and all(.historyVersions | keys[]; test("^[0-9a-f]{64}$"))
+    and ([.snapshot.history[].text // ""
+        | select(startswith("pesty-auto-"))] | length) == 4
+  ' "$device_a_state" >/dev/null
+
 # A fresh device reconstructs the baseline from current checkpoints and event
 # batches only. Legacy monolithic stores are intentionally unsupported.
 PESTY_AUTOMATED_TEST_DATA_DIR="$cloud_dir" \
