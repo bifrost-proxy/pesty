@@ -2035,6 +2035,23 @@ final class ClipboardStore {
         }
     }
 
+    func flushPendingWrites(
+        completion: @escaping @Sendable () -> Void
+    ) {
+        saveWorkItem?.cancel()
+        saveWorkItem = nil
+        if let incrementalCloudSync {
+            let snapshot = currentSnapshot
+            Task.detached {
+                await incrementalCloudSync.persistLocalSnapshot(snapshot)
+                completion()
+            }
+        } else {
+            _ = writeSnapshot()
+            completion()
+        }
+    }
+
     func waitForIncrementalSyncForAutomatedTest() async {
         guard ClipboardStore.automatedTestBase != nil else { return }
         while let task = incrementalSyncTask {

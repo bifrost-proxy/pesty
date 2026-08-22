@@ -60,6 +60,20 @@ enum UpdatePresentation {
     }
 }
 
+@MainActor
+enum UpdateRelaunch {
+    static func terminateCurrentApplication() {
+        // NSApplication.terminate(_:) synchronously waits for the app delegate's
+        // asynchronous persistence flush. Calling it from the installer's
+        // MainActor task keeps that task on the actor while AppKit waits, so the
+        // flush task can never run. Queue termination after the installer task
+        // returns and releases the MainActor.
+        DispatchQueue.main.async {
+            NSApp.terminate(nil)
+        }
+    }
+}
+
 @Observable
 @MainActor
 final class UpdateManager {
@@ -227,7 +241,7 @@ final class UpdateManager {
                 activity = .installing
                 notifyStateChanged()
                 try plan.launch()
-                NSApp.terminate(nil)
+                UpdateRelaunch.terminateCurrentApplication()
             } catch {
                 let message = error.localizedDescription
                 lastInstallationError = message

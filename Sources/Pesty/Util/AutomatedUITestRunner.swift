@@ -522,6 +522,12 @@ enum AutomatedUITestRunner {
         let environment = ProcessInfo.processInfo.environment
         let phase = environment["PESTY_AUTOMATED_UI_TEST"] ?? "verify"
         let runID = environment["PESTY_AUTOMATED_TEST_ID"] ?? "default"
+        if phase == "update-termination" {
+            Task {
+                UpdateRelaunch.terminateCurrentApplication()
+            }
+            return
+        }
         if phase == "quick-paste" {
             verifyQuickPaste(controller: controller, phase: phase)
             return
