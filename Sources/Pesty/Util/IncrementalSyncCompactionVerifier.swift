@@ -19,6 +19,8 @@ enum IncrementalSyncCompactionVerifier {
         let idleSyncSkippedPersistence: Bool
         let idleSyncDecodedBatchCount: Int
         let publishedBatchesAreImmutable: Bool
+        let duplicateSnapshotRecovered: Bool
+        let corruptRemoteDataSkipped: Bool
     }
 
     static func run() async throws -> Result {
@@ -89,6 +91,12 @@ enum IncrementalSyncCompactionVerifier {
             && idleResult?.decodedBatchCount == 0
         let publishedBatchesAreImmutable = await verifyImmutableBatches(
             below: root.appendingPathComponent("immutable-batches")
+        )
+        let duplicateSnapshotRecovered = await verifyDuplicateSnapshotRecovery(
+            below: root.appendingPathComponent("duplicate-snapshot")
+        )
+        let corruptRemoteDataSkipped = await verifyCorruptRemoteDataRecovery(
+            below: root.appendingPathComponent("corrupt-remote-data")
         )
 
         let retained = Array(allItems.prefix(100))
@@ -199,7 +207,9 @@ enum IncrementalSyncCompactionVerifier {
                 && freshDeviceRebuiltLimit
                 && freshDeviceRebuiltClear
                 && idleSyncSkippedPersistence
-                && publishedBatchesAreImmutable,
+                && publishedBatchesAreImmutable
+                && duplicateSnapshotRecovered
+                && corruptRemoteDataSkipped,
             historyAfterLimit: limitedResult?.snapshot.history.count ?? -1,
             historyAfterClear: clearedResult?.snapshot.history.count ?? -1,
             batchFilesAfterLimit: batchFilesAfterLimit,
@@ -214,7 +224,9 @@ enum IncrementalSyncCompactionVerifier {
             freshDeviceRebuiltClear: freshDeviceRebuiltClear,
             idleSyncSkippedPersistence: idleSyncSkippedPersistence,
             idleSyncDecodedBatchCount: idleResult?.decodedBatchCount ?? -1,
-            publishedBatchesAreImmutable: publishedBatchesAreImmutable
+            publishedBatchesAreImmutable: publishedBatchesAreImmutable,
+            duplicateSnapshotRecovered: duplicateSnapshotRecovered,
+            corruptRemoteDataSkipped: corruptRemoteDataSkipped
         )
         return result
     }
@@ -253,6 +265,175 @@ enum IncrementalSyncCompactionVerifier {
         return !before.isEmpty
             && after.count > before.count
             && before.allSatisfy { after[$0.key] == $0.value }
+    }
+
+    private static func verifyDuplicateSnapshotRecovery(
+        below root: URL
+    ) async -> Bool {
+        let cloud = root.appendingPathComponent("cloud/sync-v2")
+        let local = root.appendingPathComponent("local")
+        let sync = IncrementalCloudSync(
+            localDirectory: local,
+            cloudDirectory: cloud
+        )
+        let older = ClipItem(
+            type: .text,
+            text: "duplicate-content",
+            createdAt: Date(timeIntervalSince1970: 100)
+        )
+        let newer = ClipItem(
+            type: .text,
+            text: "duplicate-content",
+            createdAt: Date(timeIntervalSince1970: 200)
+        )
+        let collidingID = UUID()
+        let olderIDCollision = ClipItem(
+            id: collidingID,
+            type: .text,
+            text: "id-collision-older",
+            createdAt: Date(timeIntervalSince1970: 150)
+        )
+        let newerIDCollision = ClipItem(
+            id: collidingID,
+            type: .text,
+            text: "id-collision-newer",
+            createdAt: Date(timeIntervalSince1970: 250)
+        )
+        let boardID = UUID()
+        let firstBoard = Pinboard(
+            id: boardID,
+            name: "B",
+            colorHex: "#BBBBBB",
+            items: [older]
+        )
+        let secondBoard = Pinboard(
+            id: boardID,
+            name: "A",
+            colorHex: "#AAAAAA",
+            items: [newer, older]
+        )
+        let digest = contentDigest(older)
+        let firstDeletion = ClipDeletionTombstone(
+            contentDigest: digest,
+            historyDeletedAt: Date(timeIntervalSince1970: 10),
+            pinboardDeletedAt: nil
+        )
+        let secondDeletion = ClipDeletionTombstone(
+            contentDigest: digest,
+            historyDeletedAt: Date(timeIntervalSince1970: 20),
+            pinboardDeletedAt: Date(timeIntervalSince1970: 30)
+        )
+        let duplicateSnapshot = ClipboardStoreSnapshot(
+            history: [older, newer, olderIDCollision, newerIDCollision],
+            pinboards: [firstBoard, secondBoard],
+            configuration: nil,
+            deletions: [firstDeletion, secondDeletion]
+        )
+        await sync.persistLocalSnapshot(duplicateSnapshot)
+
+        let reloaded = IncrementalCloudSync(
+            localDirectory: local,
+            cloudDirectory: cloud
+        )
+        guard let result = await reloaded.synchronize(
+            duplicateSnapshot,
+            recordLocalChanges: false
+        ) else { return false }
+        let snapshot = result.snapshot
+        let deletion = snapshot.deletions?.first
+        return snapshot.history.count == 2
+            && snapshot.history.first?.id == newerIDCollision.id
+            && snapshot.history.first?.text == newerIDCollision.text
+            && snapshot.history.last?.id == newer.id
+            && snapshot.pinboards.count == 1
+            && snapshot.pinboards.first?.id == boardID
+            && snapshot.pinboards.first?.name == "A"
+            && snapshot.pinboards.first?.items.count == 1
+            && snapshot.pinboards.first?.items.first?.id == newer.id
+            && snapshot.deletions?.count == 1
+            && deletion?.historyDeletedAt
+                == secondDeletion.historyDeletedAt
+            && deletion?.pinboardDeletedAt
+                == secondDeletion.pinboardDeletedAt
+    }
+
+    private static func verifyCorruptRemoteDataRecovery(
+        below root: URL
+    ) async -> Bool {
+        let cloud = root.appendingPathComponent("cloud/sync-v2")
+        let batches = cloud.appendingPathComponent("batches")
+        let corruptDeviceID = UUID()
+        let corruptDeviceDirectory = batches.appendingPathComponent(
+            corruptDeviceID.uuidString.lowercased(),
+            isDirectory: true
+        )
+        let checkpointID = UUID()
+        let checkpointDirectory = cloud
+            .appendingPathComponent("checkpoints")
+            .appendingPathComponent(
+                corruptDeviceID.uuidString.lowercased(),
+                isDirectory: true
+            )
+            .appendingPathComponent(
+                checkpointID.uuidString.lowercased(),
+                isDirectory: true
+            )
+        do {
+            try FileManager.default.createDirectory(
+                at: corruptDeviceDirectory,
+                withIntermediateDirectories: true
+            )
+            try Data("not-json".utf8).write(
+                to: corruptDeviceDirectory.appendingPathComponent(
+                    "00000000000000000001.json"
+                )
+            )
+            try FileManager.default.createDirectory(
+                at: checkpointDirectory,
+                withIntermediateDirectories: true
+            )
+            let manifest: [String: Any] = [
+                "formatVersion": 2,
+                "id": checkpointID.uuidString,
+                "deviceID": corruptDeviceID.uuidString,
+                "createdAt": 0,
+                "payloadSHA256": String(repeating: "0", count: 64),
+                "chunks": [[
+                    "name": "missing.part",
+                    "byteCount": 1,
+                    "sha256": String(repeating: "0", count: 64),
+                ]],
+                "coveredBatchVersions": [:],
+                "includedCheckpointIDs": [],
+            ]
+            try JSONSerialization.data(withJSONObject: manifest).write(
+                to: checkpointDirectory.appendingPathComponent("manifest.json")
+            )
+        } catch {
+            return false
+        }
+
+        let sync = IncrementalCloudSync(
+            localDirectory: root.appendingPathComponent("local"),
+            cloudDirectory: cloud
+        )
+        let first = ClipItem(type: .text, text: "recovery-first")
+        guard let initial = await sync.synchronize(ClipboardStoreSnapshot(
+            history: [first],
+            pinboards: [],
+            configuration: nil,
+            deletions: nil
+        )), initial.snapshot.history.count == 1 else { return false }
+
+        let second = ClipItem(type: .text, text: "recovery-second")
+        guard let recovered = await sync.synchronize(ClipboardStoreSnapshot(
+            history: [second, first],
+            pinboards: [],
+            configuration: nil,
+            deletions: nil
+        ), forceRemoteScan: true) else { return false }
+        return recovered.snapshot.history.count == 2
+            && recovered.snapshot.history.first?.id == second.id
     }
 
     private static func batchContents(below root: URL) -> [String: Data] {

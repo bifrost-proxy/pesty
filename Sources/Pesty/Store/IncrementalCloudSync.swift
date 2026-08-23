@@ -200,11 +200,7 @@ actor IncrementalCloudSync {
         _ migrated: ClipboardStoreSnapshot,
         allRecordsFrom expected: ClipboardStoreSnapshot
     ) -> Bool {
-        let migratedHistory = Dictionary(
-            uniqueKeysWithValues: migrated.history.map {
-                (contentVersionKey($0), $0)
-            }
-        )
+        let migratedHistory = historyIndex(migrated.history)
         guard expected.history.allSatisfy({ item in
             guard let actual = migratedHistory[contentVersionKey(item)] else {
                 return false
@@ -212,8 +208,8 @@ actor IncrementalCloudSync {
             return actual.createdAt >= item.createdAt
         }) else { return false }
 
-        let migratedBoards = Dictionary(
-            uniqueKeysWithValues: migrated.pinboards.map { ($0.id, $0) }
+        let migratedBoards = Self.canonicalPinboardIndex(
+            migrated.pinboards
         )
         guard expected.pinboards.allSatisfy({ board in
             guard let actual = migratedBoards[board.id],
@@ -292,8 +288,27 @@ actor IncrementalCloudSync {
 
     private func record(_ snapshot: ClipboardStoreSnapshot) async -> Bool {
         guard var current = state else { return false }
-        let records = difference(from: current.snapshot, to: snapshot)
-        guard !records.isEmpty else { return false }
+        var normalizedSnapshot = snapshot
+        let snapshotWasNormalized = Self.normalizeSnapshot(
+            &normalizedSnapshot
+        )
+        if snapshotWasNormalized {
+            logger.notice(
+                "Normalized incremental sync snapshot history=\(normalizedSnapshot.history.count) pinboards=\(normalizedSnapshot.pinboards.count) deletions=\(normalizedSnapshot.deletions?.count ?? 0)"
+            )
+        }
+        let records = difference(
+            from: current.snapshot,
+            to: normalizedSnapshot
+        )
+        guard !records.isEmpty else {
+            guard snapshotWasNormalized else {
+                return false
+            }
+            current.snapshot = normalizedSnapshot
+            state = current
+            return true
+        }
 
         for chunk in chunked(records) {
             // Published batches are immutable. Every local delta gets a new
@@ -330,7 +345,7 @@ actor IncrementalCloudSync {
         // Preserve the exact local ordering after the semantic operations have
         // been recorded. Remote devices reconstruct the same ordering from the
         // item timestamps.
-        current.snapshot = snapshot
+        current.snapshot = normalizedSnapshot
         state = current
         return true
     }
@@ -341,12 +356,8 @@ actor IncrementalCloudSync {
     ) -> [Record] {
         var result: [Record] = []
         let now = Date()
-        let oldHistory = Dictionary(
-            uniqueKeysWithValues: previous.history.map {
-                (contentVersionKey($0), $0)
-            }
-        )
-        for item in next.history
+        let oldHistory = historyIndex(previous.history)
+        for item in Self.canonicalHistory(next.history)
             where oldHistory[contentVersionKey(item)] != item {
             result.append(Record(
                 recordedAt: oldHistory[contentVersionKey(item)] == nil
@@ -356,12 +367,8 @@ actor IncrementalCloudSync {
             ))
         }
 
-        let oldDeletions = Dictionary(
-            uniqueKeysWithValues: (previous.deletions ?? []).map {
-                ($0.contentDigest, $0)
-            }
-        )
-        for deletion in next.deletions ?? []
+        let oldDeletions = deletionMap(previous)
+        for deletion in Self.canonicalDeletions(next.deletions ?? [])
             where oldDeletions[deletion.contentDigest] != deletion {
             result.append(Record(
                 recordedAt: max(
@@ -372,13 +379,9 @@ actor IncrementalCloudSync {
             ))
         }
 
-        let oldBoards = Dictionary(
-            uniqueKeysWithValues: previous.pinboards.map { ($0.id, $0) }
-        )
-        let newBoards = Dictionary(
-            uniqueKeysWithValues: next.pinboards.map { ($0.id, $0) }
-        )
-        for board in next.pinboards where oldBoards[board.id] != board {
+        let oldBoards = Self.canonicalPinboardIndex(previous.pinboards)
+        let newBoards = Self.canonicalPinboardIndex(next.pinboards)
+        for board in newBoards.values where oldBoards[board.id] != board {
             result.append(Record(
                 recordedAt: now,
                 operation: .pinboardUpsert(board)
@@ -528,6 +531,9 @@ actor IncrementalCloudSync {
                 guard let batch = coordinatedRead(Batch.self, from: url),
                       batch.formatVersion == 2,
                       batchVersionKey(batch) == pathKey else {
+                    logger.error(
+                        "Skipped unreadable incremental sync batch device=\(deviceKey, privacy: .public) file=\(url.lastPathComponent, privacy: .public)"
+                    )
                     directoryWasReadSuccessfully = false
                     continue
                 }
@@ -590,7 +596,12 @@ actor IncrementalCloudSync {
             guard let manifest = coordinatedRead(
                 CheckpointManifest.self,
                 from: manifestURL
-            ), manifest.formatVersion == 2 else { continue }
+            ), manifest.formatVersion == 2 else {
+                logger.error(
+                    "Skipped unreadable incremental sync checkpoint manifest directory=\(manifestURL.deletingLastPathComponent().lastPathComponent, privacy: .public)"
+                )
+                continue
+            }
             candidates.append((manifestURL, manifest))
         }
         candidates.sort {
@@ -813,14 +824,29 @@ actor IncrementalCloudSync {
             }
             guard let chunkData = coordinatedReadData(from: url),
                   chunkData.count == chunk.byteCount,
-                  sha256(chunkData) == chunk.sha256 else { return nil }
+                  sha256(chunkData) == chunk.sha256 else {
+                logger.error(
+                    "Skipped incomplete incremental sync checkpoint id=\(manifest.id.uuidString, privacy: .public) chunk=\(chunk.name, privacy: .public)"
+                )
+                return nil
+            }
             data.append(chunkData)
         }
-        guard sha256(data) == manifest.payloadSHA256,
-              let payload = try? JSONDecoder().decode(
-                CheckpointPayload.self,
-                from: data
-              ), payload.formatVersion == 2 else { return nil }
+        guard sha256(data) == manifest.payloadSHA256 else {
+            logger.error(
+                "Skipped incremental sync checkpoint with invalid digest id=\(manifest.id.uuidString, privacy: .public)"
+            )
+            return nil
+        }
+        guard let payload = try? JSONDecoder().decode(
+            CheckpointPayload.self,
+            from: data
+        ), payload.formatVersion == 2 else {
+            logger.error(
+                "Skipped undecodable incremental sync checkpoint id=\(manifest.id.uuidString, privacy: .public)"
+            )
+            return nil
+        }
         return payload
     }
 
@@ -965,7 +991,110 @@ actor IncrementalCloudSync {
         if changed {
             state.historyVersions = normalized
         }
+        return normalizeSnapshot(&state.snapshot) || changed
+    }
+
+    private nonisolated static func normalizeSnapshot(
+        _ snapshot: inout ClipboardStoreSnapshot
+    ) -> Bool {
+        let history = canonicalHistory(snapshot.history)
+        let deletions = canonicalDeletions(snapshot.deletions ?? [])
+        let pinboards = canonicalPinboards(snapshot.pinboards)
+        let changed = history != snapshot.history
+            || deletions != (snapshot.deletions ?? [])
+            || pinboards != snapshot.pinboards
+        snapshot.history = history
+        snapshot.deletions = deletions.isEmpty ? nil : deletions
+        snapshot.pinboards = pinboards
         return changed
+    }
+
+    private nonisolated static func canonicalHistory(
+        _ history: [ClipItem]
+    ) -> [ClipItem] {
+        let sorted = history.sorted {
+            if $0.createdAt != $1.createdAt {
+                return $0.createdAt > $1.createdAt
+            }
+            if $0.id != $1.id {
+                return $0.id.uuidString < $1.id.uuidString
+            }
+            return digestContentKey(legacyContentKey($0))
+                < digestContentKey(legacyContentKey($1))
+        }
+        var seenContent = Set<String>()
+        var seenIDs = Set<UUID>()
+        return sorted.filter { item in
+            guard seenIDs.insert(item.id).inserted else {
+                return false
+            }
+            return seenContent.insert(
+                digestContentKey(legacyContentKey(item))
+            ).inserted
+        }
+    }
+
+    private nonisolated static func canonicalDeletions(
+        _ deletions: [ClipDeletionTombstone]
+    ) -> [ClipDeletionTombstone] {
+        var byDigest: [String: ClipDeletionTombstone] = [:]
+        byDigest.reserveCapacity(deletions.count)
+        for deletion in deletions {
+            let existing = byDigest[deletion.contentDigest]
+            byDigest[deletion.contentDigest] = ClipDeletionTombstone(
+                contentDigest: deletion.contentDigest,
+                historyDeletedAt: max(
+                    existing?.historyDeletedAt ?? .distantPast,
+                    deletion.historyDeletedAt
+                ),
+                pinboardDeletedAt: maxDate(
+                    existing?.pinboardDeletedAt,
+                    deletion.pinboardDeletedAt
+                )
+            )
+        }
+        return byDigest.values.sorted {
+            $0.contentDigest < $1.contentDigest
+        }
+    }
+
+    private nonisolated static func canonicalPinboards(
+        _ pinboards: [Pinboard]
+    ) -> [Pinboard] {
+        let byID = canonicalPinboardIndex(pinboards)
+        var emitted = Set<UUID>()
+        var result: [Pinboard] = []
+        result.reserveCapacity(byID.count)
+        for board in pinboards where emitted.insert(board.id).inserted {
+            if let canonical = byID[board.id] {
+                result.append(canonical)
+            }
+        }
+        return result
+    }
+
+    private nonisolated static func canonicalPinboardIndex(
+        _ pinboards: [Pinboard]
+    ) -> [UUID: Pinboard] {
+        var byID: [UUID: Pinboard] = [:]
+        byID.reserveCapacity(pinboards.count)
+        for board in pinboards {
+            guard var existing = byID[board.id] else {
+                var normalized = board
+                normalized.items = canonicalHistory(board.items)
+                byID[board.id] = normalized
+                continue
+            }
+            existing.items = canonicalHistory(existing.items + board.items)
+            if board.name < existing.name
+                || (board.name == existing.name
+                    && board.colorHex < existing.colorHex) {
+                existing.name = board.name
+                existing.colorHex = board.colorHex
+            }
+            byID[board.id] = existing
+        }
+        return byID
     }
 
     private nonisolated static func digestContentKey(_ key: String) -> String {
@@ -974,19 +1103,28 @@ actor IncrementalCloudSync {
             .joined()
     }
 
-    private func deletionMap(_ snapshot: ClipboardStoreSnapshot)
+    private nonisolated func deletionMap(_ snapshot: ClipboardStoreSnapshot)
         -> [String: ClipDeletionTombstone] {
-        Dictionary(uniqueKeysWithValues: (snapshot.deletions ?? []).map {
-            ($0.contentDigest, $0)
-        })
+        Dictionary(
+            uniqueKeysWithValues: Self.canonicalDeletions(
+                snapshot.deletions ?? []
+            ).map { ($0.contentDigest, $0) }
+        )
     }
 
-    private func maxDate(_ lhs: Date?, _ rhs: Date?) -> Date? {
+    private nonisolated static func maxDate(
+        _ lhs: Date?,
+        _ rhs: Date?
+    ) -> Date? {
         switch (lhs, rhs) {
         case let (lhs?, rhs?): max(lhs, rhs)
         case let (date?, nil), let (nil, date?): date
         case (nil, nil): nil
         }
+    }
+
+    private func maxDate(_ lhs: Date?, _ rhs: Date?) -> Date? {
+        Self.maxDate(lhs, rhs)
     }
 
     private func mergeVersions(
@@ -998,7 +1136,9 @@ actor IncrementalCloudSync {
         }
     }
 
-    private func legacyContentKey(_ item: ClipItem) -> String {
+    private nonisolated static func legacyContentKey(
+        _ item: ClipItem
+    ) -> String {
         switch item.type {
         case .image:
             "img:" + (item.imageHash ?? item.imageFileName
@@ -1010,6 +1150,18 @@ actor IncrementalCloudSync {
         default:
             "txt:" + (item.text ?? "")
         }
+    }
+
+    private func legacyContentKey(_ item: ClipItem) -> String {
+        Self.legacyContentKey(item)
+    }
+
+    private func historyIndex(_ history: [ClipItem]) -> [String: ClipItem] {
+        Dictionary(
+            uniqueKeysWithValues: Self.canonicalHistory(history).map {
+                (contentVersionKey($0), $0)
+            }
+        )
     }
 
     private func contentVersionKey(_ item: ClipItem) -> String {
