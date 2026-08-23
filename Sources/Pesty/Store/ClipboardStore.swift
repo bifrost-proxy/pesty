@@ -183,11 +183,21 @@ private enum ClipboardStoreReconciler {
                         tombstones: tombstones
                     )
                 }
-                .sorted { $0.createdAt > $1.createdAt }
-            var seen = Set<String>()
+                .sorted {
+                    if $0.createdAt != $1.createdAt {
+                        return $0.createdAt > $1.createdAt
+                    }
+                    if $0.id != $1.id {
+                        return $0.id.uuidString < $1.id.uuidString
+                    }
+                    return contentDigest($0) < contentDigest($1)
+                }
+            var seenContent = Set<String>()
+            var seenIDs = Set<UUID>()
             var merged: [ClipItem] = []
             for item in combined
-                where seen.insert(contentDigest(item)).inserted {
+                where seenContent.insert(contentDigest(item)).inserted
+                    && seenIDs.insert(item.id).inserted {
                 merged.append(item)
             }
 
@@ -206,28 +216,22 @@ private enum ClipboardStoreReconciler {
                 from: pinboards,
                 tombstones: tombstones
             )
-            var byID = Dictionary(
-                uniqueKeysWithValues: pinboards.map { ($0.id, $0) }
-            )
+            var byID = canonicalPinboardIndex(pinboards)
             for board in filteringDeletedPinboardItems(
                 from: snapshot.pinboards,
                 tombstones: tombstones
             ) {
-                if var existing = byID[board.id] {
-                    for item in board.items
-                        where !existing.items.contains(where: {
-                            $0.sameContent(as: item)
-                        }) {
-                        existing.items.append(item)
-                    }
-                    byID[board.id] = existing
-                } else {
-                    byID[board.id] = board
-                }
+                mergePinboard(board, into: &byID)
             }
-            pinboards = pinboards.map { byID[$0.id] ?? $0 }
+            var emitted = Set<UUID>()
+            pinboards = pinboards.compactMap { board in
+                guard emitted.insert(board.id).inserted else { return nil }
+                return byID[board.id]
+            }
                 + byID.values.filter { board in
-                    !pinboards.contains(where: { $0.id == board.id })
+                    !emitted.contains(board.id)
+                }.sorted {
+                    $0.id.uuidString < $1.id.uuidString
                 }
             combined.removeAll()
         }
@@ -277,6 +281,64 @@ private enum ClipboardStoreReconciler {
                 return deletedAt >= $0.createdAt
             }
             return filtered
+        }
+    }
+
+    private static func canonicalPinboardIndex(
+        _ pinboards: [Pinboard]
+    ) -> [UUID: Pinboard] {
+        var byID: [UUID: Pinboard] = [:]
+        byID.reserveCapacity(pinboards.count)
+        for board in pinboards {
+            guard var existing = byID[board.id] else {
+                var normalized = board
+                normalized.items = canonicalItems(board.items)
+                byID[board.id] = normalized
+                continue
+            }
+            existing.items = canonicalItems(existing.items + board.items)
+            if board.name < existing.name
+                || (board.name == existing.name
+                    && board.colorHex < existing.colorHex) {
+                existing.name = board.name
+                existing.colorHex = board.colorHex
+            }
+            byID[board.id] = existing
+        }
+        return byID
+    }
+
+    private static func mergePinboard(
+        _ board: Pinboard,
+        into byID: inout [UUID: Pinboard]
+    ) {
+        guard var existing = byID[board.id] else {
+            var normalized = board
+            normalized.items = canonicalItems(board.items)
+            byID[board.id] = normalized
+            return
+        }
+        existing.items = canonicalItems(existing.items + board.items)
+        byID[board.id] = existing
+    }
+
+    private static func canonicalItems(_ items: [ClipItem]) -> [ClipItem] {
+        let sorted = items.sorted {
+            if $0.createdAt != $1.createdAt {
+                return $0.createdAt > $1.createdAt
+            }
+            if $0.id != $1.id {
+                return $0.id.uuidString < $1.id.uuidString
+            }
+            return contentDigest($0) < contentDigest($1)
+        }
+        var seenContent = Set<String>()
+        var seenIDs = Set<UUID>()
+        return sorted.filter { item in
+            guard seenIDs.insert(item.id).inserted else {
+                return false
+            }
+            return seenContent.insert(contentDigest(item)).inserted
         }
     }
 
