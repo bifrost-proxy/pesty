@@ -462,7 +462,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     func toggleBar() {
-        if let bar = barController, bar.window?.isVisible == true {
+        if let bar = barController, bar.shouldHideForToggle() {
             hideBar()
         } else {
             showBar()
@@ -576,6 +576,15 @@ final class AppController: NSObject, NSApplicationDelegate {
         if barController == nil {
             barController = BarWindowController()
         }
+    }
+
+    func barControllerForAutomatedOverlayTest() -> BarWindowController? {
+        guard ProcessInfo.processInfo.environment["PESTY_AUTOMATED_UI_TEST"]
+                == "panel-overlay-recovery" else { return nil }
+        if barController == nil {
+            barController = BarWindowController()
+        }
+        return barController
     }
 
     /// Importing through the launched app gives the Keychain the same access context that

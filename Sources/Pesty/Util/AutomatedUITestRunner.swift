@@ -198,6 +198,20 @@ enum AutomatedUITestRunner {
         let unchangedSnapshotPreservedRevision: Bool
     }
 
+    private struct PanelOverlayRecoveryResult: Codable {
+        let phase: String
+        let success: Bool
+        let presentationLevel: Int
+        let expectedPresentationLevel: Int
+        let attachedToActiveSpaceSynchronously: Bool
+        let restoredNormalCollectionBehavior: Bool
+        let serverVisibilityChecks: Int
+        let recoveryReattachments: Int
+        let framePreserved: Bool
+        let hiddenRecoveryCancelled: Bool
+        let reshowSurvivedInterruptedDismissal: Bool
+    }
+
     private struct MouseSelectionResult: Codable {
         let phase: String
         let success: Bool
@@ -552,6 +566,10 @@ enum AutomatedUITestRunner {
             runPanelReconciliationTest(controller: controller, runID: runID)
             return
         }
+        if phase == "panel-overlay-recovery" {
+            runPanelOverlayRecoveryTest(controller: controller)
+            return
+        }
         if phase == "icloud-store-loading" {
             runICloudStoreLoadingTest(controller: controller, runID: runID)
             return
@@ -902,6 +920,96 @@ enum AutomatedUITestRunner {
             )
             writePanelReconciliation(result)
             exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+        }
+    }
+
+    private static func runPanelOverlayRecoveryTest(controller: AppController) {
+        controller.monitor.stop()
+        guard let barController = controller.barControllerForAutomatedOverlayTest(),
+              let panel = barController.window else {
+            exit(EXIT_FAILURE)
+        }
+
+        var serverVisibilityChecks = 0
+        var reattachments = 0
+        var attachedSynchronously = false
+        barController.visibilityRecoveryIntervals = [0.02, 0.02, 0.02]
+        barController.panelOnScreenProvider = { _ in
+            serverVisibilityChecks += 1
+            return serverVisibilityChecks >= 3
+        }
+        barController.activeSpaceReattachmentObserver = {
+            reattachments += 1
+            if reattachments == 1,
+               panel.collectionBehavior
+                == BarWindowController.activeSpaceRecoveryCollectionBehavior {
+                attachedSynchronously = true
+            }
+        }
+
+        controller.showBar()
+        let originalFrame = panel.frame
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            let expectedLevel = Int(
+                CGWindowLevelForKey(.assistiveTechHighWindow)
+            )
+            let presentationLevel = panel.level.rawValue
+            let restoredNormalCollectionBehavior =
+                panel.collectionBehavior
+                    == BarWindowController.normalCollectionBehavior
+            let framePreserved = panel.frame == originalFrame
+
+            barController.panelOnScreenProvider = { _ in
+                serverVisibilityChecks += 1
+                return false
+            }
+            // This models the reported failure: AppKit still considers the
+            // panel visible after a Space transition, but WindowServer says
+            // it is detached. A hotkey toggle must present it again instead
+            // of treating the stale local flag as a request to hide.
+            controller.toggleBar()
+            let reattachmentsAtHide = reattachments
+            let checksAtHide = serverVisibilityChecks
+            controller.hideBar()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                let hiddenRecoveryCancelled = !panel.isVisible
+                    && reattachments == reattachmentsAtHide
+                    && serverVisibilityChecks == checksAtHide
+                barController.panelOnScreenProvider = { _ in true }
+                controller.showBar()
+                controller.hideBar()
+                controller.showBar()
+
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                    let reshowSurvivedInterruptedDismissal = panel.isVisible
+                        && panel.alphaValue == 1
+                    let result = PanelOverlayRecoveryResult(
+                        phase: "panel-overlay-recovery",
+                        success: presentationLevel == expectedLevel
+                            && attachedSynchronously
+                            && restoredNormalCollectionBehavior
+                            && serverVisibilityChecks >= checksAtHide
+                            && reattachmentsAtHide == 3
+                            && framePreserved
+                            && hiddenRecoveryCancelled
+                            && reshowSurvivedInterruptedDismissal,
+                        presentationLevel: presentationLevel,
+                        expectedPresentationLevel: expectedLevel,
+                        attachedToActiveSpaceSynchronously: attachedSynchronously,
+                        restoredNormalCollectionBehavior:
+                            restoredNormalCollectionBehavior,
+                        serverVisibilityChecks: serverVisibilityChecks,
+                        recoveryReattachments: reattachments,
+                        framePreserved: framePreserved,
+                        hiddenRecoveryCancelled: hiddenRecoveryCancelled,
+                        reshowSurvivedInterruptedDismissal:
+                            reshowSurvivedInterruptedDismissal
+                    )
+                    writePanelOverlayRecovery(result)
+                    exit(result.success ? EXIT_SUCCESS : EXIT_FAILURE)
+                }
+            }
         }
     }
 
@@ -4706,6 +4814,19 @@ enum AutomatedUITestRunner {
         guard let data = try? encoder.encode(result) else { return }
         FileHandle.standardOutput.write(
             Data("AUTOMATED_PANEL_RECONCILIATION_RESULT ".utf8)
+        )
+        FileHandle.standardOutput.write(data)
+        FileHandle.standardOutput.write(Data("\n".utf8))
+    }
+
+    private static func writePanelOverlayRecovery(
+        _ result: PanelOverlayRecoveryResult
+    ) {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(result) else { return }
+        FileHandle.standardOutput.write(
+            Data("AUTOMATED_PANEL_OVERLAY_RECOVERY_RESULT ".utf8)
         )
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data("\n".utf8))
