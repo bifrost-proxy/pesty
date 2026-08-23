@@ -85,6 +85,9 @@ jobs:
       - name: Verify panel presentation does not wait for reconciliation
         run: scripts/test_panel_reconciliation.sh .build/debug/Pesty
 
+      - name: Verify panel stays above full-screen applications
+        run: scripts/test_panel_overlay_recovery.sh .build/debug/Pesty
+
       - name: Verify system appearance
         run: swift run Pesty --verify-appearance
 
