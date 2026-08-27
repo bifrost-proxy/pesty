@@ -208,13 +208,13 @@ enum TranslationVerifier {
 
         let defaultShortcutMatches = TranslationShortcut.matches(
             keyCode: TranslationShortcut.defaultKeyCode,
-            flags: [.command, .shift],
+            flags: [.option],
             expectedKeyCode: TranslationShortcut.defaultKeyCode,
             expectedModifiers: TranslationShortcut.defaultModifiers
         )
         let shortcutRejectsDifferentKey = !TranslationShortcut.matches(
             keyCode: kVK_ANSI_R,
-            flags: [.command, .shift],
+            flags: [.option],
             expectedKeyCode: TranslationShortcut.defaultKeyCode,
             expectedModifiers: TranslationShortcut.defaultModifiers
         )
@@ -222,21 +222,26 @@ enum TranslationVerifier {
             throw Failure(description: "Translation shortcut matching is incorrect")
         }
         let shortcutMigratesPreviousDefault =
-            TranslationShortcut.shouldMigratePreviousDefault(
+            TranslationShortcut.shouldMigrateShippedDefault(
                 migrationVersion: 0,
-                keyCode: TranslationShortcut.previousDefaultKeyCode,
-                modifiers: TranslationShortcut.previousDefaultModifiers
+                keyCode: kVK_ANSI_T,
+                modifiers: cmdKey
+            )
+            && TranslationShortcut.shouldMigrateShippedDefault(
+                migrationVersion: 1,
+                keyCode: kVK_ANSI_T,
+                modifiers: cmdKey | shiftKey
             )
         let shortcutPreservesUserChoice =
-            !TranslationShortcut.shouldMigratePreviousDefault(
+            !TranslationShortcut.shouldMigrateShippedDefault(
                 migrationVersion: 0,
                 keyCode: kVK_ANSI_R,
                 modifiers: cmdKey | optionKey
             )
-            && !TranslationShortcut.shouldMigratePreviousDefault(
-                migrationVersion: 1,
-                keyCode: TranslationShortcut.previousDefaultKeyCode,
-                modifiers: TranslationShortcut.previousDefaultModifiers
+            && !TranslationShortcut.shouldMigrateShippedDefault(
+                migrationVersion: TranslationShortcut.migrationVersion,
+                keyCode: kVK_ANSI_T,
+                modifiers: cmdKey | shiftKey
             )
         guard shortcutMigratesPreviousDefault,
               shortcutPreservesUserChoice else {
@@ -320,14 +325,14 @@ enum TranslationVerifier {
 
         let explanationShortcutMatches = ExplanationShortcut.matches(
             keyCode: ExplanationShortcut.defaultKeyCode,
-            flags: [.command, .shift],
+            flags: [.option],
             expectedKeyCode: ExplanationShortcut.defaultKeyCode,
             expectedModifiers: ExplanationShortcut.defaultModifiers
         )
         guard explanationShortcutMatches,
               !ExplanationShortcut.matches(
                 keyCode: TranslationShortcut.defaultKeyCode,
-                flags: [.command, .shift],
+                flags: [.option],
                 expectedKeyCode: ExplanationShortcut.defaultKeyCode,
                 expectedModifiers: ExplanationShortcut.defaultModifiers
               ) else {
@@ -336,13 +341,18 @@ enum TranslationVerifier {
         let explanationShortcutMigratesOldDefault =
             Settings.shouldMigrateExplanationShortcutDefault(
                 migrationVersion: 0,
-                keyCode: ExplanationShortcut.previousDefaultKeyCode,
-                modifiers: ExplanationShortcut.previousDefaultModifiers
+                keyCode: kVK_ANSI_E,
+                modifiers: cmdKey
             )
             && Settings.shouldMigrateExplanationShortcutDefault(
                 migrationVersion: 1,
                 keyCode: kVK_ANSI_D,
                 modifiers: cmdKey
+            )
+            && Settings.shouldMigrateExplanationShortcutDefault(
+                migrationVersion: 2,
+                keyCode: kVK_ANSI_D,
+                modifiers: cmdKey | shiftKey
             )
         let explanationShortcutPreservesUserChoice =
             !Settings.shouldMigrateExplanationShortcutDefault(
@@ -362,10 +372,10 @@ enum TranslationVerifier {
         let contextualMenuShortcutsRender = ContextMenuShortcut(
             keyCode: TranslationShortcut.defaultKeyCode,
             carbonModifiers: TranslationShortcut.defaultModifiers
-        )?.display == "⇧⌘T" && ContextMenuShortcut(
+        )?.display == "⌥1" && ContextMenuShortcut(
             keyCode: ExplanationShortcut.defaultKeyCode,
             carbonModifiers: ExplanationShortcut.defaultModifiers
-        )?.display == "⇧⌘D"
+        )?.display == "⌥2"
         guard contextualMenuShortcutsRender else {
             throw Failure(description: "Context-menu shortcut rendering is incorrect")
         }

@@ -417,8 +417,8 @@ enum L10n {
     }
     static var translationShortcutDescription: String {
         text(
-            "Works globally in any app that exposes its text selection. Default: ⇧⌘T.",
-            "可在支持读取文本选区的任意应用中全局使用。默认：⇧⌘T。"
+            "Works globally in any app that exposes its text selection. Default: ⌥1.",
+            "可在支持读取文本选区的任意应用中全局使用。默认：⌥1。"
         )
     }
     static var explanation: String { text("Explain", "解释") }
@@ -444,8 +444,8 @@ enum L10n {
     static var explanationShortcut: String { text("Explanation shortcut", "解释快捷键") }
     static var showExplanationBoard: String { text("Explain selected content", "解释选中内容") }
     static var explanationShortcutDescription: String {
-        text("Works globally with selected text in any app. Requires a configured AI model. Default: ⇧⌘D.",
-             "可在任意应用中全局解释选中文字；需要配置大模型。默认：⇧⌘D。")
+        text("Works globally with selected text in any app. Requires a configured AI model. Default: ⌥2.",
+             "可在任意应用中全局解释选中文字；需要配置大模型。默认：⌥2。")
     }
     static var explaining: String { text("Explaining…", "正在解释…") }
     static var closeExplanation: String { text("Close explanation", "关闭解释") }

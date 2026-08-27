@@ -4,14 +4,14 @@
 
 Pesty can translate selected text directly from any app or translate text from
 clipboard history, without requiring you to paste it elsewhere first. The
-default global translation shortcut is `⇧⌘T`.
+default global translation shortcut is `⌥1`.
 
 ## Quick Start
 
 ### Translate Selected Text from Another App
 
 1. Select a passage in a browser, document editor, or another app.
-2. Press `⇧⌘T`.
+2. Press `⌥1`.
 3. Pesty displays a translation board near the selection and starts translating automatically.
 4. Review the result and click “Copy Translation” to place it on the system clipboard.
 
@@ -23,7 +23,7 @@ selected in secure fields or password fields.
 ### Translate Clipboard History
 
 1. Press `⌘⇧V` to open Pesty and select a text-bearing or image card.
-2. Press `⇧⌘T`, or right-click the card and choose “Translate.”
+2. Press `⌥1`, or right-click the card and choose “Translate.”
 3. The translation board appears above the selected card and starts translating automatically.
 
 Text, rich-text, and link cards enter translation directly. Image cards first
@@ -31,7 +31,7 @@ use macOS Vision to recognize text locally, then use the same translation
 pipeline; you can retry if no readable text is detected. Ordinary files cannot
 currently be translated directly.
 
-The default `⇧⌘T` shortcut works both globally and inside the Pesty panel. You
+The default `⌥1` shortcut works both globally and inside the Pesty panel. You
 can change it under “Settings → Translate & Explain → Translation shortcut.”
 
 ## Supported Languages
@@ -76,7 +76,7 @@ Apple Translation does not require an API key in Pesty:
 4. Choose the default source and target languages.
 5. Under “Apple Translate language packs,” inspect “Required baseline” and “Current language selection.”
 6. Click “Download” for each pack marked “Not downloaded,” and keep Settings open until it reports “Downloaded and ready.”
-7. Select text in any app, or select a text or image card in Pesty, then press `⇧⌘T`.
+7. Select text in any app, or select a text or image card in Pesty, then press `⌥1`.
 
 If the selected language pair is unavailable, choose different source or target
 languages or configure Doubao. In Automatic mode, Pesty attempts to fall back

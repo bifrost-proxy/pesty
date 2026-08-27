@@ -1327,8 +1327,8 @@ enum AutomatedUITestRunner {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             let translationEvent = makeKeyEvent(
                 keyCode: UInt16(TranslationShortcut.defaultKeyCode),
-                characters: "t",
-                modifierFlags: [.command, .shift]
+                characters: "1",
+                modifierFlags: [.option]
             )
             let shortcutWasConsumed = translationEvent.map {
                 controller.handleKey($0) == nil
@@ -1338,8 +1338,8 @@ enum AutomatedUITestRunner {
 
             let secondTranslationEvent = makeKeyEvent(
                 keyCode: UInt16(TranslationShortcut.defaultKeyCode),
-                characters: "t",
-                modifierFlags: [.command, .shift]
+                characters: "1",
+                modifierFlags: [.option]
             )
             let shortcutClosedBoard = (secondTranslationEvent.map {
                 controller.handleKey($0) == nil
@@ -2360,8 +2360,8 @@ enum AutomatedUITestRunner {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             let explanationEvent = makeKeyEvent(
                 keyCode: UInt16(ExplanationShortcut.defaultKeyCode),
-                characters: "d",
-                modifierFlags: [.command, .shift]
+                characters: "2",
+                modifierFlags: [.option]
             )
             let shortcutOpenedBoard = (explanationEvent.map {
                 controller.handleKey($0) == nil
@@ -2369,8 +2369,8 @@ enum AutomatedUITestRunner {
 
             let secondExplanationEvent = makeKeyEvent(
                 keyCode: UInt16(ExplanationShortcut.defaultKeyCode),
-                characters: "d",
-                modifierFlags: [.command, .shift]
+                characters: "2",
+                modifierFlags: [.option]
             )
             let shortcutClosedBoard = (secondExplanationEvent.map {
                 controller.handleKey($0) == nil

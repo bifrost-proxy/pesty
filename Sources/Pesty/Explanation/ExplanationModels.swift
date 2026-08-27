@@ -19,14 +19,13 @@ enum ExplanationProvider {
 }
 
 enum ExplanationShortcut {
-    static let defaultKeyCode = kVK_ANSI_D
-    static let defaultModifiers = cmdKey | shiftKey
-    static let migrationVersion = 2
-    static let previousDefaultKeyCode = kVK_ANSI_E
-    static let previousDefaultModifiers = cmdKey
+    static let defaultKeyCode = kVK_ANSI_2
+    static let defaultModifiers = optionKey
+    static let migrationVersion = 3
     static let shippedDefaults: [(keyCode: Int, modifiers: Int)] = [
         (kVK_ANSI_E, cmdKey),
         (kVK_ANSI_D, cmdKey),
+        (kVK_ANSI_D, cmdKey | shiftKey),
     ]
 
     static func matches(

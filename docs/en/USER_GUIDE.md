@@ -40,8 +40,8 @@ Common shortcuts:
 | Shortcut | Action |
 | --- | --- |
 | `⌘⇧V` | Open or close the panel; customizable in Settings |
-| `⇧⌘T` | Globally translate selected text, or translate the selected text or image card while the panel is open; customizable in Settings |
-| `⇧⌘D` | Globally explain selected text, or explain the selected text card while the panel is open; customizable in Settings |
+| `⌥1` | Globally translate selected text, or translate the selected text or image card while the panel is open; customizable in Settings |
+| `⌥2` | Globally explain selected text, or explain the selected text card while the panel is open; customizable in Settings |
 | `T` | Swap source and target languages while the translation board is open and the source language is explicit |
 | `←` `→` `↑` `↓` | Move the selection |
 | `Space` | Open or close the preview for the selected item |
@@ -71,7 +71,7 @@ Settings.
 
 ## Translation and Explanation
 
-Select text in any app and press `⇧⌘T` to translate it or `⇧⌘D` to receive a
+Select text in any app and press `⌥1` to translate it or `⌥2` to receive a
 concise explanation. Reading selected text globally requires Accessibility
 permission. Pesty does not read secure text fields.
 

@@ -400,8 +400,8 @@ final class Settings {
         )
     }
 
-    /// Move only the previous shipped default from Command-T to the new global
-    /// Command-Shift-T shortcut. User-customized shortcuts remain untouched.
+    /// Move only shipped translation defaults to the current global shortcut.
+    /// User-customized shortcuts remain untouched.
     private static func migrateTranslationShortcutDefaultIfNeeded(
         defaults: UserDefaults
     ) {
@@ -412,7 +412,7 @@ final class Settings {
         let modifiers = defaults.integer(
             forKey: Keys.translationHotkeyModifiers
         )
-        guard TranslationShortcut.shouldMigratePreviousDefault(
+        guard TranslationShortcut.shouldMigrateShippedDefault(
             migrationVersion: migrationVersion,
             keyCode: keyCode,
             modifiers: modifiers
@@ -428,7 +428,7 @@ final class Settings {
             forKey: Keys.translationHotkeyModifiers
         )
         defaults.set(
-            1,
+            TranslationShortcut.migrationVersion,
             forKey: Keys.translationHotkeyDefaultMigrationVersion
         )
     }
