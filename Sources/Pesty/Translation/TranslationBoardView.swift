@@ -100,21 +100,32 @@ struct TranslationBoardView: View {
                         "pesty-translation-header-provider"
                     )
             }
+            headerActions
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 44)
+        .background(AssistantPopoverDragRegion())
+    }
+
+    private var headerActions: some View {
+        HStack(spacing: 12) {
             moreMenu
             Button {
                 center.dismiss()
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 28, height: 28)
+                    .frame(
+                        width: AssistantPopoverLayout.closeIconSize,
+                        height: AssistantPopoverLayout.closeIconSize
+                    )
             }
             .buttonStyle(.plain)
             .foregroundStyle(palette.textSecondary.swiftUIColor)
             .help(L10n.closeTranslation)
             .accessibilityIdentifier("pesty-translation-close")
         }
-        .padding(.horizontal, 12)
-        .frame(height: 44)
+        .fixedSize()
     }
 
     private func languageMenu(
@@ -180,10 +191,14 @@ struct TranslationBoardView: View {
             Image(systemName: "ellipsis.circle")
                 .font(.system(size: 17, weight: .medium))
                 .foregroundStyle(palette.textSecondary.swiftUIColor)
-                .frame(width: 28, height: 28)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
+        .frame(
+            width: AssistantPopoverLayout.menuIconSize,
+            height: AssistantPopoverLayout.menuIconSize
+        )
+        .contentShape(Rectangle())
         .help(L10n.moreTranslationOptions)
         .accessibilityIdentifier("pesty-translation-more")
     }

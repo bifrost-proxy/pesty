@@ -37,7 +37,16 @@ struct ExplanationBoardView: View {
             Text(L10n.explanation)
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(palette.textPrimary.swiftUIColor)
-            Spacer()
+            Spacer(minLength: 8)
+            headerActions
+        }
+        .padding(.horizontal, 12)
+        .frame(height: 44)
+        .background(AssistantPopoverDragRegion())
+    }
+
+    private var headerActions: some View {
+        HStack(spacing: 12) {
             Menu {
                 Button(L10n.translationSettings) {
                     AppController.shared.showSettings(pane: .translation)
@@ -46,24 +55,32 @@ struct ExplanationBoardView: View {
                 Image(systemName: "ellipsis.circle")
                     .font(.system(size: 17, weight: .medium))
                     .foregroundStyle(palette.textSecondary.swiftUIColor)
-                    .frame(width: 28, height: 28)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
+            .frame(
+                width: AssistantPopoverLayout.menuIconSize,
+                height: AssistantPopoverLayout.menuIconSize
+            )
+            .contentShape(Rectangle())
             .help(L10n.moreExplanationOptions)
+            .accessibilityIdentifier("pesty-explanation-more")
             Button {
                 center.dismiss()
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 28, height: 28)
+                    .frame(
+                        width: AssistantPopoverLayout.closeIconSize,
+                        height: AssistantPopoverLayout.closeIconSize
+                    )
             }
             .buttonStyle(.plain)
             .foregroundStyle(palette.textSecondary.swiftUIColor)
             .help(L10n.closeExplanation)
+            .accessibilityIdentifier("pesty-explanation-close")
         }
-        .padding(.horizontal, 12)
-        .frame(height: 44)
+        .fixedSize()
     }
 
     @ViewBuilder
