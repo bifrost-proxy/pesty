@@ -78,8 +78,11 @@ permission. Pesty does not read secure text fields.
 You can use the same shortcuts after selecting a text card in Pesty. Image
 cards can also be translated after macOS Vision recognizes their text locally.
 You can also choose “Translate” or “Explain” from the card’s context menu.
-Results appear near the selection or card. Click outside the result board to
-dismiss it.
+Results appear near the selection or card. Drag the blank area of the board's
+header to move it. Once moved, it stays floating while you click or scroll the
+original article or hide the clipboard panel. Use the close button in the
+board's upper-right corner to dismiss it. Before dragging, clicking outside
+still dismisses the board.
 
 - Apple Translation is available on macOS 15 and later.
 - Apple Translation requires the relevant language packs, which you can inspect and download under “Settings → Translate & Explain.”

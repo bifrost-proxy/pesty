@@ -17,6 +17,8 @@ enum AssistantPopoverLayout {
     static let translationMaximumHeight: CGFloat = 520
     static let explanationDefaultHeight: CGFloat = 300
     static let explanationMaximumHeight: CGFloat = 460
+    static let menuIconSize: CGFloat = 18
+    static let closeIconSize: CGFloat = 14
 
     static func contentSize(for kind: AssistantPopoverKind) -> NSSize {
         NSSize(
@@ -124,8 +126,23 @@ final class SelectedClipPopoverAnchor {
     }
 }
 
-/// A native, card-anchored popover shared by translation and explanation.
-/// NSPopover supplies the small pointer and handles screen-edge avoidance.
+/// The header's non-interactive background participates in AppKit's native
+/// popover detachment. Controls above it keep their normal hit testing.
+struct AssistantPopoverDragRegion: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { DragView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class DragView: NSView {
+        override var mouseDownCanMoveWindow: Bool { true }
+
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: .openHand)
+        }
+    }
+}
+
+/// A native, detachable popover shared by translation and explanation.
+/// NSPopover supplies positioning, dragging, and the detached window itself.
 @MainActor
 final class AssistantPopoverController: NSObject, NSPopoverDelegate {
     static let shared = AssistantPopoverController()
@@ -137,6 +154,7 @@ final class AssistantPopoverController: NSObject, NSPopoverDelegate {
     private var screenAnchorPanel: NSPanel?
     private var localOutsideClickMonitor: Any?
     private var globalOutsideClickMonitor: Any?
+    private var isClosingProgrammatically = false
 
     private override init() {
         super.init()
@@ -147,6 +165,7 @@ final class AssistantPopoverController: NSObject, NSPopoverDelegate {
     }
 
     var isPresented: Bool { popover.isShown }
+    var isDetached: Bool { popover.isDetached }
     var isWindowVisible: Bool {
         popover.contentViewController?.view.window?.isVisible == true
     }
@@ -194,7 +213,7 @@ final class AssistantPopoverController: NSObject, NSPopoverDelegate {
     /// transient result, so the next shortcut opens a fresh card.
     @discardableResult
     func dismissForPanelInteraction(at screenPoint: NSPoint) -> Bool {
-        guard popover.isShown,
+        guard popover.isShown, !isDetached,
               screenFrame?.contains(screenPoint) != true else {
             return false
         }
@@ -220,12 +239,36 @@ final class AssistantPopoverController: NSObject, NSPopoverDelegate {
         popover.contentViewController?.preferredContentSize = size
     }
 
+    func popoverShouldDetach(_ popover: NSPopover) -> Bool { true }
+
+    func popoverDidDetach(_ popover: NSPopover) {
+        // A moved result stays visible while the user reads or interacts with
+        // the source application. Keep the same hosted content and live task.
+        stopOutsideClickMonitoring()
+        if let window = popover.contentViewController?.view.window {
+            window.standardWindowButton(.closeButton)?.isHidden = true
+            window.hidesOnDeactivate = false
+            window.level = .floating
+            window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        }
+    }
+
     func popoverDidClose(_ notification: Notification) {
+        let closedKind = kind
         kind = nil
         anchor = nil
         remainingAnchorRetries = 0
         releaseScreenAnchor()
         stopOutsideClickMonitoring()
+        // AppKit adds its own close control to a detached popover. Closing that
+        // window must clear the result just like the board's close button.
+        if !isClosingProgrammatically {
+            switch closedKind {
+            case .translation: TranslationCenter.shared.dismiss()
+            case .explanation: ExplanationCenter.shared.dismiss()
+            case nil: break
+            }
+        }
     }
 
     private func configureContent(for kind: AssistantPopoverKind) {
@@ -248,6 +291,8 @@ final class AssistantPopoverController: NSObject, NSPopoverDelegate {
     /// a translucent ghost frame. Opening can still animate; closing is
     /// deliberately synchronous.
     private func closePopoverImmediately() {
+        isClosingProgrammatically = true
+        defer { isClosingProgrammatically = false }
         let shouldAnimateOpening = popover.animates
         popover.animates = false
         popover.close()
@@ -351,6 +396,7 @@ final class AssistantPopoverController: NSObject, NSPopoverDelegate {
             matching: [.leftMouseDown, .rightMouseDown]
         ) { [weak self] event in
             guard let self,
+                  !self.isDetached,
                   self.anchor?.isScreenRect == true,
                   self.screenFrame?.contains(NSEvent.mouseLocation) != true else {
                 return event
@@ -363,6 +409,7 @@ final class AssistantPopoverController: NSObject, NSPopoverDelegate {
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self,
+                      !self.isDetached,
                       self.anchor?.isScreenRect == true,
                       self.screenFrame?.contains(NSEvent.mouseLocation) != true else {
                     return

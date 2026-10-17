@@ -492,8 +492,10 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     func hideBar(completion: (() -> Void)? = nil) {
-        TranslationCenter.shared.dismiss()
-        ExplanationCenter.shared.dismiss()
+        if !AssistantPopoverController.shared.isDetached {
+            TranslationCenter.shared.dismiss()
+            ExplanationCenter.shared.dismiss()
+        }
         ClipPreviewWindowController.shared.dismiss()
         guard let barController else {
             completion?()
